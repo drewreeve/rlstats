@@ -10,3 +10,6 @@ wheels/
 *.sqlite
 db.sqlite3
 db.sqlite3-journal
+
+# Ignore folder for quirky replay files
+problematic/
