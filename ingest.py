@@ -157,10 +157,15 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
         ),
     )
 
-    match_id = conn.execute(
+    row = conn.execute(
         "SELECT id FROM matches WHERE replay_hash = ?",
         (replay_hash,),
-    ).fetchone()[0]
+    ).fetchone()
+
+    if row is None:
+        raise RuntimeError("Match insert failed; no row found for replay_hash")
+
+    match_id = row[0]
 
     for player in props.get("PlayerStats", []):
         steam_id = player.get("OnlineID")
