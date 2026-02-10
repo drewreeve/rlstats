@@ -1,3 +1,6 @@
-# testing
+[settings]
+python.uv_venv_auto = "source"
+
 [tools]
 "github:nickbabcock/rrrocket" = "latest"
+uv = "latest"
