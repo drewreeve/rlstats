@@ -92,8 +92,8 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
     duration = props.get("TotalSecondsPlayed")
     team_size = props.get("TeamSize")
 
-    team0_score = props.get("Team0Score")
-    team1_score = props.get("Team1Score")
+    team0_score = props.get("Team0Score", 0)
+    team1_score = props.get("Team1Score", 0)
 
     # Determine which team the tracked players are on
     tracked_teams = {
