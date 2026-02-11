@@ -71,3 +71,20 @@ def test_win_loss_by_weekday(real_replay):
     """).fetchone()
 
     assert row == ("Thursday", 0, 1)
+
+
+def test_shooting_pct_view(real_replay):
+    conn = in_memory_db()
+    ingest_match(conn, real_replay)
+
+    rows = conn.execute("""
+        SELECT player_name, total_goals, total_shots, shooting_pct
+        FROM v_shooting_pct
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 0, 2, 0.0),
+        ("Jeff", 0, 2, 0.0),
+        ("Steve", 0, 0, None),
+    ]
