@@ -6,46 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Dict
 
-############################
-# schema.sql
-############################
-
-SCHEMA_SQL = """
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS players (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    steam_id TEXT UNIQUE,
-    name TEXT
-);
-
-CREATE TABLE IF NOT EXISTS matches (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    replay_hash TEXT UNIQUE,
-    played_at TEXT,
-    duration_seconds INTEGER,
-    team_size INTEGER,
-    team INTEGER,
-    team_score INTEGER,
-    opponent_score INTEGER,
-    result TEXT,
-    team_mvp_player_id INTEGER,
-    FOREIGN KEY (team_mvp_player_id) REFERENCES players(id)
-);
-
-CREATE TABLE IF NOT EXISTS match_players (
-    match_id INTEGER,
-    player_id INTEGER,
-    team INTEGER,
-    goals INTEGER,
-    assists INTEGER,
-    saves INTEGER,
-    shots INTEGER,
-    PRIMARY KEY (match_id, player_id),
-    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE,
-    FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
-);
-"""
+from db import apply_migrations
 
 TRACKED_PLAYERS = {
     "76561197969365901": "Drew",
@@ -55,10 +16,6 @@ TRACKED_PLAYERS = {
 
 DB_PATH = Path("db/rl_stats.sqlite")
 PARSED_REPLAY_DIR = Path("replays")
-
-
-def ensure_schema(conn: sqlite3.Connection):
-    conn.executescript(SCHEMA_SQL)
 
 
 def get_or_create_player(conn: sqlite3.Connection, steam_id: str, name: str) -> int:
@@ -198,8 +155,7 @@ def ingest_all():
     DB_PATH.parent.mkdir(exist_ok=True)
 
     conn = sqlite3.connect(DB_PATH)
-    ensure_schema(conn)
-    ensure_analytics_views(conn)
+    apply_migrations(conn)
 
     for path in sorted(PARSED_REPLAY_DIR.glob("*.json")):
         with open(path, "r", encoding="utf-8") as f:
@@ -208,71 +164,6 @@ def ingest_all():
 
     conn.commit()
     conn.close()
-
-
-############################
-# analytics_views.sql
-############################
-
-ANALYTICS_VIEWS_SQL = """
--- MVP win rate per player
-CREATE VIEW IF NOT EXISTS v_mvp_win_rate AS
-SELECT
-    p.id AS player_id,
-    p.name AS player_name,
-    COUNT(*) AS mvp_matches,
-    SUM(CASE WHEN m.result = 'win' THEN 1 ELSE 0 END) AS mvp_wins,
-    ROUND(
-        CAST(SUM(CASE WHEN m.result = 'win' THEN 1 ELSE 0 END) AS REAL)
-        / COUNT(*),
-        3
-    ) AS mvp_win_rate
-FROM matches m
-JOIN players p ON p.id = m.team_mvp_player_id
-WHERE m.team_mvp_player_id IS NOT NULL
-GROUP BY p.id, p.name;
-
--- MVPs in losses
-CREATE VIEW IF NOT EXISTS v_mvp_in_losses AS
-SELECT
-    p.id AS player_id,
-    p.name AS player_name,
-    COUNT(*) AS loss_mvps
-FROM matches m
-JOIN players p ON p.id = m.team_mvp_player_id
-WHERE m.result = 'loss'
-GROUP BY p.id, p.name;
-
--- Win/Loss ratio by day of week
-CREATE VIEW IF NOT EXISTS v_win_loss_by_weekday AS
-SELECT
-    CASE strftime('%w', played_at)
-        WHEN '0' THEN 'Sunday'
-        WHEN '1' THEN 'Monday'
-        WHEN '2' THEN 'Tuesday'
-        WHEN '3' THEN 'Wednesday'
-        WHEN '4' THEN 'Thursday'
-        WHEN '5' THEN 'Friday'
-        WHEN '6' THEN 'Saturday'
-    END AS weekday,
-    COUNT(*) AS matches_played,
-    SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
-    SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses,
-    ROUND(
-        CAST(SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS REAL)
-        / NULLIF(SUM(CASE WHEN result IN ('win','loss') THEN 1 ELSE 0 END), 0),
-        3
-    ) AS win_rate
-FROM matches
-WHERE result IN ('win', 'loss')
-  AND played_at IS NOT NULL
-GROUP BY strftime('%w', played_at)
-ORDER BY CAST(strftime('%w', played_at) AS INTEGER);
-"""
-
-
-def ensure_analytics_views(conn: sqlite3.Connection):
-    conn.executescript(ANALYTICS_VIEWS_SQL)
 
 
 if __name__ == "__main__":

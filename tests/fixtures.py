@@ -2,7 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from ingest import ensure_schema, ensure_analytics_views
+from db import apply_migrations
 
 TEST_DATA_DIR = Path(__file__).parent / "data"
 
@@ -15,6 +15,5 @@ def load_replay(name: str):
 
 def in_memory_db():
     conn = sqlite3.connect(":memory:")
-    ensure_schema(conn)
-    ensure_analytics_views(conn)
+    apply_migrations(conn)
     return conn
