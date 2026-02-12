@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RL Stats Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+    <header>
+        <h1>RL Stats</h1>
+    </header>
+    <main class="grid">
+        <section class="card full-width">
+            <h2>Win Rate Over Time</h2>
+            <canvas id="chart-win-rate"></canvas>
+        </section>
+        <section class="card">
+            <h2>Shooting %</h2>
+            <canvas id="chart-shooting"></canvas>
+        </section>
+        <section class="card">
+            <h2>Player Stats</h2>
+            <canvas id="chart-player-stats"></canvas>
+        </section>
+        <section class="card">
+            <h2>MVP in Wins</h2>
+            <canvas id="chart-mvp-wins"></canvas>
+        </section>
+        <section class="card">
+            <h2>MVP in Losses</h2>
+            <canvas id="chart-mvp-losses"></canvas>
+        </section>
+        <section class="card">
+            <h2>Win/Loss by Weekday</h2>
+            <canvas id="chart-weekday"></canvas>
+        </section>
+    </main>
+    <script src="app.js"></script>
+</body>
+</html>

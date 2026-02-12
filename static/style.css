@@ -1,0 +1,67 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #1a1a2e 100%);
+    background-attachment: fixed;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 1rem;
+    min-height: 100vh;
+}
+
+header {
+    text-align: center;
+    padding: 1.5rem 0;
+}
+
+header h1 {
+    font-size: 1.8rem;
+    background: linear-gradient(135deg, #e94560, #f06292, #e94560);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.card {
+    background: linear-gradient(145deg, #1a2744 0%, #16213e 50%, #141d33 100%);
+    border: 1px solid rgba(233, 69, 96, 0.1);
+    border-radius: 12px;
+    padding: 1.25rem;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card:hover {
+    border-color: rgba(233, 69, 96, 0.25);
+    box-shadow: 0 4px 24px rgba(233, 69, 96, 0.08);
+}
+
+.card h2 {
+    font-size: 0.95rem;
+    margin-bottom: 0.75rem;
+    color: #b0b0d0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.full-width {
+    grid-column: 1 / -1;
+}
+
+@media (max-width: 768px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}
