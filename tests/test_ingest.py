@@ -88,3 +88,32 @@ def test_shooting_pct_view(real_replay):
         ("Jeff", 0, 2, 0.0),
         ("Steve", 0, 0, None),
     ]
+
+
+def test_win_loss_daily_view(real_replay):
+    conn = in_memory_db()
+    ingest_match(conn, real_replay)
+
+    row = conn.execute("""
+        SELECT play_date, wins, losses, win_rate
+        FROM v_win_loss_daily
+    """).fetchone()
+
+    assert row == ("2026-02-05", 0, 1, 0.0)
+
+
+def test_player_stats_view(real_replay):
+    conn = in_memory_db()
+    ingest_match(conn, real_replay)
+
+    rows = conn.execute("""
+        SELECT player_name, matches_played, total_goals, total_assists, total_saves, total_shots
+        FROM v_player_stats
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 1, 0, 0, 0, 2),
+        ("Jeff", 1, 0, 0, 2, 2),
+        ("Steve", 1, 0, 0, 0, 0),
+    ]
