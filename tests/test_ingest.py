@@ -2,110 +2,123 @@ import pytest
 from ingest import ingest_match
 from tests.fixtures import in_memory_db, load_replay
 
-
-@pytest.fixture
-def real_replay():
-    return load_replay("17B69BC840267CE2A9A051BDE88D830A.replay.json")
+ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json"]
 
 
-def test_match_row_is_created(real_replay):
+def ingest_fixture(fixture):
     conn = in_memory_db()
-    ingest_match(conn, real_replay)
-
-    count = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
-
-    assert count == 1
+    replay = load_replay(fixture)
+    ingest_match(conn, replay)
+    return conn
 
 
-def test_zero_score_is_not_null(real_replay):
+def ingest_all_fixtures():
     conn = in_memory_db()
-    ingest_match(conn, real_replay)
-
-    row = conn.execute("SELECT team_score, opponent_score FROM matches").fetchone()
-
-    assert row == (0, 2)
+    for name in ALL_FIXTURES:
+        ingest_match(conn, load_replay(name))
+    return conn
 
 
-def test_match_result_win(real_replay):
-    conn = in_memory_db()
-    ingest_match(conn, real_replay)
-
-    result = conn.execute("SELECT result FROM matches").fetchone()[0]
-
-    assert result == "loss"
+# -- Per-fixture: result and scores --
 
 
-def test_team_mvp_is_highest_score(real_replay):
-    conn = in_memory_db()
-    ingest_match(conn, real_replay)
+@pytest.mark.parametrize(
+    "fixture,expected_result,expected_team,expected_opp",
+    [
+        ("zero_score.json", "loss", 0, 2),
+        ("match.json", "win", 5, 4),
+        ("forefeit.json", "win", 4, 0),
+        ("team_size_2.json", "win", 5, 2),
+    ],
+)
+def test_match_result_and_scores(fixture, expected_result, expected_team, expected_opp):
+    conn = ingest_fixture(fixture)
+    row = conn.execute(
+        "SELECT result, team_score, opponent_score FROM matches"
+    ).fetchone()
 
+    assert row == (expected_result, expected_team, expected_opp)
+
+
+# -- Per-fixture: team MVP --
+
+
+@pytest.mark.parametrize(
+    "fixture,expected_mvp",
+    [
+        ("zero_score.json", "Jeff"),
+        ("match.json", "Jeff"),
+        ("forefeit.json", "Drew"),
+        ("team_size_2.json", "Jeff"),
+    ],
+)
+def test_team_mvp(fixture, expected_mvp):
+    conn = ingest_fixture(fixture)
     mvp_name = conn.execute("""
         SELECT p.name
         FROM matches m
         JOIN players p ON p.id = m.team_mvp_player_id
     """).fetchone()[0]
 
-    assert mvp_name == "Jeff"
+    assert mvp_name == expected_mvp
 
 
-def test_mvp_in_loss_view(real_replay):
-    replay = real_replay.copy()
-    replay["properties"]["Team0Score"] = 1
-    replay["properties"]["Team1Score"] = 3
-
-    conn = in_memory_db()
-    ingest_match(conn, replay)
-
-    rows = conn.execute("SELECT player_name, loss_mvps FROM v_mvp_in_losses").fetchall()
-
-    assert rows == [("Jeff", 1)]
+# -- Per-fixture: player stats --
 
 
-def test_win_loss_by_weekday(real_replay):
-    conn = in_memory_db()
-    ingest_match(conn, real_replay)
-
-    row = conn.execute("""
-        SELECT weekday, wins, losses
-        FROM v_win_loss_by_weekday
-    """).fetchone()
-
-    assert row == ("Thursday", 0, 1)
-
-
-def test_shooting_pct_view(real_replay):
-    conn = in_memory_db()
-    ingest_match(conn, real_replay)
-
+@pytest.mark.parametrize(
+    "fixture,expected_stats",
+    [
+        (
+            "zero_score.json",
+            [
+                ("Drew", 0, 0, 0, 2),
+                ("Jeff", 0, 0, 2, 2),
+                ("Steve", 0, 0, 0, 0),
+            ],
+        ),
+        (
+            "match.json",
+            [
+                ("Drew", 2, 0, 0, 3),
+                ("Jeff", 2, 2, 0, 2),
+                ("Steve", 1, 1, 0, 2),
+            ],
+        ),
+        (
+            "forefeit.json",
+            [
+                ("Drew", 2, 1, 0, 4),
+                ("Jeff", 2, 2, 0, 1),
+                ("Steve", 0, 0, 0, 2),
+            ],
+        ),
+        (
+            "team_size_2.json",
+            [
+                ("Drew", 2, 1, 0, 5),
+                ("Jeff", 3, 1, 1, 5),
+            ],
+        ),
+    ],
+)
+def test_player_stats_per_match(fixture, expected_stats):
+    conn = ingest_fixture(fixture)
     rows = conn.execute("""
-        SELECT player_name, total_goals, total_shots, shooting_pct
-        FROM v_shooting_pct
-        ORDER BY player_name
+        SELECT p.name, mp.goals, mp.assists, mp.saves, mp.shots
+        FROM match_players mp
+        JOIN players p ON p.id = mp.player_id
+        ORDER BY p.name
     """).fetchall()
 
-    assert rows == [
-        ("Drew", 0, 2, 0.0),
-        ("Jeff", 0, 2, 0.0),
-        ("Steve", 0, 0, None),
-    ]
+    assert rows == expected_stats
 
 
-def test_win_loss_daily_view(real_replay):
-    conn = in_memory_db()
-    ingest_match(conn, real_replay)
-
-    row = conn.execute("""
-        SELECT play_date, wins, losses, win_rate
-        FROM v_win_loss_daily
-    """).fetchone()
-
-    assert row == ("2026-02-05", 0, 1, 0.0)
+# -- Multi-match: aggregate views --
 
 
-def test_player_stats_view(real_replay):
-    conn = in_memory_db()
-    ingest_match(conn, real_replay)
-
+def test_v_player_stats_all():
+    conn = ingest_all_fixtures()
     rows = conn.execute("""
         SELECT player_name, matches_played, total_goals, total_assists, total_saves, total_shots
         FROM v_player_stats
@@ -113,7 +126,74 @@ def test_player_stats_view(real_replay):
     """).fetchall()
 
     assert rows == [
-        ("Drew", 1, 0, 0, 0, 2),
-        ("Jeff", 1, 0, 0, 2, 2),
-        ("Steve", 1, 0, 0, 0, 0),
+        ("Drew", 4, 6, 2, 0, 14),
+        ("Jeff", 4, 7, 5, 3, 10),
+        ("Steve", 3, 1, 1, 0, 4),
+    ]
+
+
+def test_v_shooting_pct_all():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, total_goals, total_shots, shooting_pct
+        FROM v_shooting_pct
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 6, 14, 0.429),
+        ("Jeff", 7, 10, 0.7),
+        ("Steve", 1, 4, 0.25),
+    ]
+
+
+def test_v_win_loss_by_weekday_all():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT weekday, matches_played, wins, losses, win_rate
+        FROM v_win_loss_by_weekday
+    """).fetchall()
+
+    assert rows == [
+        ("Sunday", 1, 1, 0, 1.0),
+        ("Tuesday", 1, 1, 0, 1.0),
+        ("Thursday", 2, 1, 1, 0.5),
+    ]
+
+
+def test_v_win_loss_daily_all():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT play_date, wins, losses, win_rate
+        FROM v_win_loss_daily
+    """).fetchall()
+
+    assert rows == [
+        ("2026-01-22", 1, 0, 1.0),
+        ("2026-01-27", 1, 0, 1.0),
+        ("2026-02-05", 0, 1, 0.0),
+        ("2026-02-08", 1, 0, 1.0),
+    ]
+
+
+def test_v_mvp_in_losses_all():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, loss_mvps FROM v_mvp_in_losses
+    """).fetchall()
+
+    assert rows == [("Jeff", 1)]
+
+
+def test_v_mvp_win_rate_all():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, mvp_matches, mvp_wins, mvp_win_rate
+        FROM v_mvp_win_rate
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 1, 1, 1.0),
+        ("Jeff", 3, 2, 0.667),
     ]
