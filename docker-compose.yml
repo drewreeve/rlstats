@@ -1,0 +1,20 @@
+services:
+  web:
+    image: ghcr.io/drewreeve/rlstats:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./db:/app/db
+      - ./replays:/app/replays
+    depends_on:
+      ingest:
+        condition: service_started
+
+  ingest:
+    image: ghcr.io/drewreeve/rlstats:latest
+    command: ["sh", "/app/scripts/ingest-loop.sh"]
+    volumes:
+      - ./db:/app/db
+      - ./replays:/app/replays
+    environment:
+      - INGEST_INTERVAL=3600

@@ -110,6 +110,11 @@ def make_handler(conn):
 
 
 def main():
+    import os
+
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", "8080"))
+
     if not DB_PATH.exists():
         print(f"Database not found at {DB_PATH}. Run ingest.py first.")
         raise SystemExit(1)
@@ -118,8 +123,8 @@ def main():
     apply_migrations(conn)
 
     handler = make_handler(conn)
-    server = HTTPServer(("localhost", 8080), handler)
-    print("Serving on http://localhost:8080")
+    server = HTTPServer((host, port), handler)
+    print(f"Serving on http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
