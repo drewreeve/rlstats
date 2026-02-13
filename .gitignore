@@ -8,8 +8,14 @@ wheels/
 
 # DB files
 *.sqlite
-db.sqlite3
-db.sqlite3-journal
+*.sqlite3
+*.db
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Ignore folder for quirky replay files
 problematic/
