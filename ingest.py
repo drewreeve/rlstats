@@ -32,7 +32,7 @@ def get_or_create_player(conn: sqlite3.Connection, steam_id: str, name: str) -> 
 def ingest_match(conn: sqlite3.Connection, replay: Dict):
     props = replay.get("properties", {})
 
-    replay_hash = props.get("Id")
+    replay_hash = props.get("MatchGUID")
     # rrrocket Date is not guaranteed to be SQLite-parseable
     raw_played_at = props.get("Date")
     played_at_sql = None
