@@ -136,8 +136,8 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
             """
             INSERT OR REPLACE INTO match_players (
                 match_id, player_id, team,
-                goals, assists, saves, shots
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                goals, assists, saves, shots, score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 match_id,
@@ -147,6 +147,7 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
                 player.get("Assists", 0),
                 player.get("Saves", 0),
                 player.get("Shots", 0),
+                player.get("Score", 0),
             ),
         )
 

@@ -1,0 +1,1 @@
+ALTER TABLE match_players ADD COLUMN score INTEGER DEFAULT 0;

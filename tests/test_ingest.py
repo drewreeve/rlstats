@@ -72,32 +72,32 @@ def test_team_mvp(fixture, expected_mvp):
         (
             "zero_score.json",
             [
-                ("Drew", 0, 0, 0, 2),
-                ("Jeff", 0, 0, 2, 2),
-                ("Steve", 0, 0, 0, 0),
+                ("Drew", 0, 0, 0, 2, 182),
+                ("Jeff", 0, 0, 2, 2, 340),
+                ("Steve", 0, 0, 0, 0, 104),
             ],
         ),
         (
             "match.json",
             [
-                ("Drew", 2, 0, 0, 3),
-                ("Jeff", 2, 2, 0, 2),
-                ("Steve", 1, 1, 0, 2),
+                ("Drew", 2, 0, 0, 3, 420),
+                ("Jeff", 2, 2, 0, 2, 448),
+                ("Steve", 1, 1, 0, 2, 208),
             ],
         ),
         (
             "forefeit.json",
             [
-                ("Drew", 2, 1, 0, 4),
-                ("Jeff", 2, 2, 0, 1),
-                ("Steve", 0, 0, 0, 2),
+                ("Drew", 2, 1, 0, 4, 388),
+                ("Jeff", 2, 2, 0, 1, 350),
+                ("Steve", 0, 0, 0, 2, 64),
             ],
         ),
         (
             "team_size_2.json",
             [
-                ("Drew", 2, 1, 0, 5),
-                ("Jeff", 3, 1, 1, 5),
+                ("Drew", 2, 1, 0, 5, 511),
+                ("Jeff", 3, 1, 1, 5, 696),
             ],
         ),
     ],
@@ -105,7 +105,7 @@ def test_team_mvp(fixture, expected_mvp):
 def test_player_stats_per_match(fixture, expected_stats):
     conn = ingest_fixture(fixture)
     rows = conn.execute("""
-        SELECT p.name, mp.goals, mp.assists, mp.saves, mp.shots
+        SELECT p.name, mp.goals, mp.assists, mp.saves, mp.shots, mp.score
         FROM match_players mp
         JOIN players p ON p.id = mp.player_id
         ORDER BY p.name
