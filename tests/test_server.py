@@ -19,7 +19,7 @@ def _db_with_replay():
 
 def test_shooting_pct_handler():
     conn = _db_with_replay()
-    data = query_shooting_pct(conn)
+    data = query_shooting_pct(conn, "3v3")
 
     assert len(data) == 3
     names = [d["player"] for d in data]
@@ -29,7 +29,7 @@ def test_shooting_pct_handler():
 
 def test_player_stats_handler():
     conn = _db_with_replay()
-    data = query_player_stats(conn)
+    data = query_player_stats(conn, "3v3")
 
     assert len(data) == 3
     for d in data:
@@ -41,7 +41,7 @@ def test_player_stats_handler():
 
 def test_mvp_wins_handler():
     conn = _db_with_replay()
-    data = query_mvp_wins(conn)
+    data = query_mvp_wins(conn, "3v3")
 
     assert len(data) >= 1
     assert all("player" in d and "win_rate" in d for d in data)
@@ -49,7 +49,7 @@ def test_mvp_wins_handler():
 
 def test_mvp_losses_handler():
     conn = _db_with_replay()
-    data = query_mvp_losses(conn)
+    data = query_mvp_losses(conn, "3v3")
 
     assert len(data) == 1
     assert data[0]["player"] == "Jeff"
@@ -58,7 +58,7 @@ def test_mvp_losses_handler():
 
 def test_weekday_handler():
     conn = _db_with_replay()
-    data = query_weekday(conn)
+    data = query_weekday(conn, "3v3")
 
     assert len(data) == 1
     assert data[0]["weekday"] == "Thursday"
@@ -68,7 +68,7 @@ def test_weekday_handler():
 
 def test_win_loss_daily_handler():
     conn = _db_with_replay()
-    data = query_win_loss_daily(conn)
+    data = query_win_loss_daily(conn, "3v3")
 
     assert len(data) == 1
     assert data[0]["date"] == "2026-02-05"

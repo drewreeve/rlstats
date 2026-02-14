@@ -35,15 +35,25 @@ function areaGradient(canvas, { r, g, b }) {
 Chart.defaults.color = "#a0a0c0";
 Chart.defaults.borderColor = "rgba(255,255,255,0.06)";
 
+let currentMode = "3v3";
+const charts = {};
+
 async function fetchJSON(url) {
     const res = await fetch(url);
     return res.json();
 }
 
+function destroyCharts() {
+    for (const key of Object.keys(charts)) {
+        charts[key].destroy();
+        delete charts[key];
+    }
+}
+
 async function renderShootingPct() {
-    const data = await fetchJSON("/api/shooting-pct");
+    const data = await fetchJSON(`/api/shooting-pct?mode=${currentMode}`);
     const canvas = document.getElementById("chart-shooting");
-    new Chart(canvas, {
+    charts.shooting = new Chart(canvas, {
         type: "bar",
         data: {
             labels: data.map((d) => d.player),
@@ -85,10 +95,10 @@ async function renderShootingPct() {
 }
 
 async function renderWinRateDaily() {
-    const data = await fetchJSON("/api/win-loss-daily");
+    const data = await fetchJSON(`/api/win-loss-daily?mode=${currentMode}`);
     const canvas = document.getElementById("chart-win-rate");
     const lineColor = PLAYER_COLORS.Drew;
-    new Chart(canvas, {
+    charts.winRate = new Chart(canvas, {
         type: "line",
         data: {
             labels: data.map((d) => d.date ?? ""),
@@ -124,9 +134,9 @@ async function renderWinRateDaily() {
 }
 
 async function renderPlayerStats() {
-    const data = await fetchJSON("/api/player-stats");
+    const data = await fetchJSON(`/api/player-stats?mode=${currentMode}`);
     const canvas = document.getElementById("chart-player-stats");
-    new Chart(canvas, {
+    charts.playerStats = new Chart(canvas, {
         type: "bar",
         data: {
             labels: data.map((d) => d.player),
@@ -161,9 +171,9 @@ async function renderPlayerStats() {
 }
 
 async function renderMvpWins() {
-    const data = await fetchJSON("/api/mvp-wins");
+    const data = await fetchJSON(`/api/mvp-wins?mode=${currentMode}`);
     const canvas = document.getElementById("chart-mvp-wins");
-    new Chart(canvas, {
+    charts.mvpWins = new Chart(canvas, {
         type: "bar",
         data: {
             labels: data.map((d) => d.player),
@@ -199,9 +209,9 @@ async function renderMvpWins() {
 }
 
 async function renderMvpLosses() {
-    const data = await fetchJSON("/api/mvp-losses");
+    const data = await fetchJSON(`/api/mvp-losses?mode=${currentMode}`);
     const canvas = document.getElementById("chart-mvp-losses");
-    new Chart(canvas, {
+    charts.mvpLosses = new Chart(canvas, {
         type: "bar",
         data: {
             labels: data.map((d) => d.player),
@@ -227,9 +237,9 @@ async function renderMvpLosses() {
 }
 
 async function renderWeekday() {
-    const data = await fetchJSON("/api/weekday");
+    const data = await fetchJSON(`/api/weekday?mode=${currentMode}`);
     const canvas = document.getElementById("chart-weekday");
-    new Chart(canvas, {
+    charts.weekday = new Chart(canvas, {
         type: "bar",
         data: {
             labels: data.map((d) => d.weekday),
@@ -269,11 +279,36 @@ async function renderWeekday() {
     });
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+function updateCardVisibility() {
+    const is3v3 = currentMode === "3v3";
+    document.getElementById("card-win-rate").style.display = is3v3 ? "" : "none";
+    document.getElementById("card-weekday").style.display = is3v3 ? "" : "none";
+}
+
+async function renderAll() {
+    destroyCharts();
+    updateCardVisibility();
     renderShootingPct();
-    renderWinRateDaily();
+    if (currentMode === "3v3") {
+        renderWinRateDaily();
+    }
     renderPlayerStats();
     renderMvpWins();
     renderMvpLosses();
-    renderWeekday();
+    if (currentMode === "3v3") {
+        renderWeekday();
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    renderAll();
+
+    document.querySelectorAll(".pill").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            document.querySelector(".pill.active").classList.remove("active");
+            btn.classList.add("active");
+            currentMode = btn.dataset.mode;
+            renderAll();
+        });
+    });
 });
