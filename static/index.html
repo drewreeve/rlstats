@@ -5,48 +5,98 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RL Stats Dashboard</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
+    <div class="noise"></div>
+
     <header>
-        <h1>RL Stats</h1>
+        <div class="header-inner">
+            <div class="logo-block">
+                <div class="logo-accent"></div>
+                <h1>RL STATS</h1>
+                <span class="logo-sub">DREW / STEVE / JEFF</span>
+            </div>
+            <nav class="mode-nav">
+                <button class="mode-btn active" data-mode="3v3">
+                    <span class="mode-label">3v3</span>
+                    <span class="mode-indicator"></span>
+                </button>
+                <button class="mode-btn" data-mode="2v2">
+                    <span class="mode-label">2v2</span>
+                    <span class="mode-indicator"></span>
+                </button>
+                <button class="mode-btn" data-mode="hoops">
+                    <span class="mode-label">HOOPS</span>
+                    <span class="mode-indicator"></span>
+                </button>
+            </nav>
+        </div>
+        <div class="header-stripe"></div>
     </header>
-    <nav class="mode-nav">
-        <button class="pill active" data-mode="3v3">3v3</button>
-        <button class="pill" data-mode="2v2">2v2</button>
-        <button class="pill" data-mode="hoops">Hoops</button>
-    </nav>
+
     <main class="grid">
-        <section class="card full-width" id="card-win-rate">
-            <h2>Win Rate Over Time</h2>
-            <canvas id="chart-win-rate"></canvas>
+        <section class="card full-width" id="card-win-rate" style="--i:0">
+            <div class="card-header">
+                <div class="card-tag">TIMELINE</div>
+                <h2>Win Rate Over Time</h2>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-win-rate"></canvas></div>
         </section>
-        <section class="card">
-            <h2>Shooting %</h2>
-            <canvas id="chart-shooting"></canvas>
+
+        <section class="card" style="--i:1">
+            <div class="card-header">
+                <div class="card-tag">ACCURACY</div>
+                <h2>Shooting %</h2>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-shooting"></canvas></div>
         </section>
-        <section class="card">
-            <h2>Avg Score</h2>
-            <canvas id="chart-avg-score"></canvas>
+
+        <section class="card" style="--i:2">
+            <div class="card-header">
+                <div class="card-tag">PERFORMANCE</div>
+                <h2>Avg Score</h2>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-avg-score"></canvas></div>
         </section>
-        <section class="card">
-            <h2>Player Stats</h2>
-            <canvas id="chart-player-stats"></canvas>
+
+        <section class="card" style="--i:3">
+            <div class="card-header">
+                <div class="card-tag">BREAKDOWN</div>
+                <h2>Player Stats</h2>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-player-stats"></canvas></div>
         </section>
-        <section class="card">
-            <h2>MVP in Wins</h2>
-            <canvas id="chart-mvp-wins"></canvas>
+
+        <section class="card" style="--i:4">
+            <div class="card-header">
+                <div class="card-tag">MVP</div>
+                <h2>MVP in Wins</h2>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-mvp-wins"></canvas></div>
         </section>
-        <section class="card">
-            <h2>MVP in Losses</h2>
-            <canvas id="chart-mvp-losses"></canvas>
+
+        <section class="card" style="--i:5">
+            <div class="card-header">
+                <div class="card-tag">MVP</div>
+                <h2>MVP in Losses</h2>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-mvp-losses"></canvas></div>
         </section>
-        <section class="card" id="card-weekday">
-            <h2>Win/Loss by Weekday</h2>
-            <canvas id="chart-weekday"></canvas>
+
+        <section class="card" id="card-weekday" style="--i:6">
+            <div class="card-header">
+                <div class="card-tag">BREAKDOWN</div>
+                <h2>Win/Loss by Weekday</h2>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-weekday"></canvas></div>
         </section>
     </main>
+
     <script src="app.js"></script>
 </body>
 </html>
