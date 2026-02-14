@@ -1,5 +1,7 @@
 from ingest import ingest_match
 from server import (
+    query_match_players,
+    query_matches,
     query_mvp_losses,
     query_mvp_wins,
     query_player_stats,
@@ -15,6 +17,125 @@ def _db_with_replay():
     replay = load_replay("zero_score.json")
     ingest_match(conn, replay)
     return conn
+
+
+def _db_with_all_replays():
+    conn = in_memory_db()
+    for name in ["zero_score.json", "match.json", "forefeit.json"]:
+        ingest_match(conn, load_replay(name))
+    return conn
+
+
+# -- query_matches --
+
+
+def test_query_matches_returns_all():
+    conn = _db_with_all_replays()
+    data = query_matches(conn, {})
+
+    assert data["total"] == 3
+    assert len(data["matches"]) == 3
+    assert data["page"] == 1
+
+
+def test_query_matches_filter_by_result():
+    conn = _db_with_all_replays()
+    data = query_matches(conn, {"result": ["win"]})
+
+    assert data["total"] == 2
+    assert all(m["result"] == "win" for m in data["matches"])
+
+
+def test_query_matches_filter_by_game_mode():
+    conn = _db_with_all_replays()
+    data = query_matches(conn, {"game_mode": ["3v3"]})
+
+    assert data["total"] == 3
+    assert all(m["game_mode"] == "3v3" for m in data["matches"])
+
+
+def test_query_matches_pagination():
+    conn = _db_with_all_replays()
+    data = query_matches(conn, {"per_page": ["2"], "page": ["1"]})
+
+    assert data["total"] == 3
+    assert len(data["matches"]) == 2
+    assert data["per_page"] == 2
+
+    page2 = query_matches(conn, {"per_page": ["2"], "page": ["2"]})
+    assert len(page2["matches"]) == 1
+
+
+def test_query_matches_search_by_mvp_name():
+    conn = _db_with_all_replays()
+    data = query_matches(conn, {"search": ["Drew"]})
+
+    assert data["total"] == 1
+    assert data["matches"][0]["mvp"] == "Drew"
+
+
+def test_query_matches_shape():
+    conn = _db_with_replay()
+    data = query_matches(conn, {})
+    m = data["matches"][0]
+
+    assert "id" in m
+    assert "game_mode" in m
+    assert "result" in m
+    assert "forfeit" in m
+    assert "score" in m
+    assert "played_at" in m
+    assert "mvp" in m
+
+
+# -- query_match_players --
+
+
+def test_query_match_players_returns_tracked_players():
+    conn = _db_with_replay()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    data = query_match_players(conn, match_id)
+
+    assert len(data) == 3
+    names = [d["name"] for d in data]
+    assert names == ["Drew", "Jeff", "Steve"]
+
+
+def test_query_match_players_shape():
+    conn = _db_with_replay()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    data = query_match_players(conn, match_id)
+
+    for player in data:
+        assert "name" in player
+        assert "score" in player
+        assert "goals" in player
+        assert "assists" in player
+        assert "saves" in player
+        assert "shots" in player
+        assert "shooting_pct" in player
+
+
+def test_query_match_players_stats():
+    conn = _db_with_replay()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    data = query_match_players(conn, match_id)
+
+    drew = next(d for d in data if d["name"] == "Drew")
+    assert drew["goals"] == 0
+    assert drew["saves"] == 0
+    assert drew["shots"] == 2
+    assert drew["shooting_pct"] == 0.0
+
+
+def test_query_match_players_nonexistent_match():
+    conn = _db_with_replay()
+    data = query_match_players(conn, 9999)
+
+    assert data == []
+
+
+# -- existing tests --
 
 
 def test_shooting_pct_handler():
