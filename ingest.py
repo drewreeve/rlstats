@@ -48,6 +48,16 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
 
     duration = props.get("TotalSecondsPlayed")
     team_size = props.get("TeamSize")
+    map_name = props.get("MapName")
+
+    if team_size == 3:
+        game_mode = "3v3"
+    elif team_size == 2 and map_name and "hoop" in map_name.lower():
+        game_mode = "hoops"
+    elif team_size == 2:
+        game_mode = "2v2"
+    else:
+        game_mode = None
 
     team0_score = props.get("Team0Score", 0)
     team1_score = props.get("Team1Score", 0)
@@ -98,8 +108,9 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
         INSERT OR IGNORE INTO matches (
             replay_hash,
             played_at, duration_seconds, team_size,
-            team, team_score, opponent_score, result, team_mvp_player_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            team, team_score, opponent_score, result, team_mvp_player_id,
+            map_name, game_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             replay_hash,
@@ -111,6 +122,8 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
             opponent_score,
             result,
             mvp_player_id,
+            map_name,
+            game_mode,
         ),
     )
 

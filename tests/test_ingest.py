@@ -2,7 +2,7 @@ import pytest
 from ingest import ingest_match
 from tests.fixtures import in_memory_db, load_replay
 
-ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json"]
+ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
 
 
 def ingest_fixture(fixture):
@@ -28,7 +28,8 @@ def ingest_all_fixtures():
         ("zero_score.json", "loss", 0, 2),
         ("match.json", "win", 5, 4),
         ("forefeit.json", "win", 4, 0),
-        ("team_size_2.json", "win", 5, 2),
+        ("team_size_2.json", "win", 1, 0),
+        ("hoops.json", "win", 5, 2),
     ],
 )
 def test_match_result_and_scores(fixture, expected_result, expected_team, expected_opp):
@@ -49,7 +50,8 @@ def test_match_result_and_scores(fixture, expected_result, expected_team, expect
         ("zero_score.json", "Jeff"),
         ("match.json", "Jeff"),
         ("forefeit.json", "Drew"),
-        ("team_size_2.json", "Jeff"),
+        ("team_size_2.json", "Drew"),
+        ("hoops.json", "Jeff"),
     ],
 )
 def test_team_mvp(fixture, expected_mvp):
@@ -96,6 +98,13 @@ def test_team_mvp(fixture, expected_mvp):
         (
             "team_size_2.json",
             [
+                ("Drew", 0, 1, 2, 4, 425),
+                ("Steve", 1, 0, 1, 2, 327),
+            ],
+        ),
+        (
+            "hoops.json",
+            [
                 ("Drew", 2, 1, 0, 5, 511),
                 ("Jeff", 3, 1, 1, 5, 696),
             ],
@@ -114,7 +123,7 @@ def test_player_stats_per_match(fixture, expected_stats):
     assert rows == expected_stats
 
 
-# -- Multi-match: aggregate views --
+# -- Multi-match: aggregate 3v3 views --
 
 
 def test_v_player_stats_3v3():
@@ -195,6 +204,94 @@ def test_v_mvp_win_rate_3v3():
     assert rows == [
         ("Drew", 1, 1, 1.0),
         ("Jeff", 2, 1, 0.5),
+    ]
+
+
+# -- Multi-match: aggregate 2v2 views --
+
+
+def test_v_player_stats_2v2():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, matches_played, total_goals, total_assists, total_saves, total_shots
+        FROM v_player_stats_2v2
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 1, 0, 1, 2, 4),
+        ("Steve", 1, 1, 0, 1, 2),
+    ]
+
+
+def test_v_shooting_pct_2v2():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, total_goals, total_shots, shooting_pct
+        FROM v_shooting_pct_2v2
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 0, 4, 0.0),
+        ("Steve", 1, 2, 0.5),
+    ]
+
+
+def test_v_mvp_win_rate_2v2():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, mvp_matches, mvp_wins, mvp_win_rate
+        FROM v_mvp_win_rate_2v2
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 1, 1, 1.0),
+    ]
+
+
+# -- Multi-match: aggregate hoops views --
+
+
+def test_v_player_stats_hoops():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, matches_played, total_goals, total_assists, total_saves, total_shots
+        FROM v_player_stats_hoops
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 1, 2, 1, 0, 5),
+        ("Jeff", 1, 3, 1, 1, 5),
+    ]
+
+
+def test_v_shooting_pct_hoops():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, total_goals, total_shots, shooting_pct
+        FROM v_shooting_pct_hoops
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 2, 5, 0.4),
+        ("Jeff", 3, 5, 0.6),
+    ]
+
+
+def test_v_mvp_win_rate_hoops():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, mvp_matches, mvp_wins, mvp_win_rate
+        FROM v_mvp_win_rate_hoops
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Jeff", 1, 1, 1.0),
     ]
 
 
