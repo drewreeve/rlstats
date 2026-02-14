@@ -106,7 +106,7 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
 
     conn.execute(
         """
-        INSERT OR IGNORE INTO matches (
+        INSERT OR REPLACE INTO matches (
             replay_hash,
             played_at, duration_seconds, forfeit, team_size,
             team, team_score, opponent_score, result, team_mvp_player_id,
