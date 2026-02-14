@@ -94,6 +94,46 @@ async function renderShootingPct() {
     });
 }
 
+async function renderAvgScore() {
+    const data = await fetchJSON(`/api/avg-score?mode=${currentMode}`);
+    const canvas = document.getElementById("chart-avg-score");
+    charts.avgScore = new Chart(canvas, {
+        type: "bar",
+        data: {
+            labels: data.map((d) => d.player),
+            datasets: [
+                {
+                    label: "Avg Score",
+                    data: data.map((d) => d.avg_score ?? 0),
+                    backgroundColor: data.map((d) =>
+                        barGradient(canvas, PLAYER_COLORS[d.player]),
+                    ),
+                    borderColor: data.map((d) =>
+                        rgba(PLAYER_COLORS[d.player], 1),
+                    ),
+                    borderWidth: 1,
+                },
+            ],
+        },
+        options: {
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        afterLabel: (ctx) => {
+                            const d = data[ctx.dataIndex];
+                            return `${d.total_score} total / ${d.matches} matches`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                y: { beginAtZero: true },
+            },
+        },
+    });
+}
+
 async function renderWinRateDaily() {
     const data = await fetchJSON(`/api/win-loss-daily?mode=${currentMode}`);
     const canvas = document.getElementById("chart-win-rate");
@@ -289,6 +329,7 @@ async function renderAll() {
     destroyCharts();
     updateCardVisibility();
     renderShootingPct();
+    renderAvgScore();
     if (currentMode === "3v3") {
         renderWinRateDaily();
     }

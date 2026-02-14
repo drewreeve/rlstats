@@ -89,6 +89,17 @@ def query_weekday(conn, mode):
     ]
 
 
+def query_avg_score(conn, mode):
+    view = f"v_avg_score_{mode}"
+    rows = conn.execute(
+        f"SELECT player_name, matches_played, total_score, avg_score FROM {view} ORDER BY player_name"
+    ).fetchall()
+    return [
+        {"player": r[0], "matches": r[1], "total_score": r[2], "avg_score": r[3]}
+        for r in rows
+    ]
+
+
 API_ROUTES = {
     "/api/shooting-pct": query_shooting_pct,
     "/api/win-loss-daily": query_win_loss_daily,
@@ -96,6 +107,7 @@ API_ROUTES = {
     "/api/mvp-wins": query_mvp_wins,
     "/api/mvp-losses": query_mvp_losses,
     "/api/weekday": query_weekday,
+    "/api/avg-score": query_avg_score,
 }
 
 
