@@ -117,85 +117,84 @@ def test_player_stats_per_match(fixture, expected_stats):
 # -- Multi-match: aggregate views --
 
 
-def test_v_player_stats_all():
+def test_v_player_stats_3v3():
     conn = ingest_all_fixtures()
     rows = conn.execute("""
         SELECT player_name, matches_played, total_goals, total_assists, total_saves, total_shots
-        FROM v_player_stats
+        FROM v_player_stats_3v3
         ORDER BY player_name
     """).fetchall()
 
     assert rows == [
-        ("Drew", 4, 6, 2, 0, 14),
-        ("Jeff", 4, 7, 5, 3, 10),
+        ("Drew", 3, 4, 1, 0, 9),
+        ("Jeff", 3, 4, 4, 2, 5),
         ("Steve", 3, 1, 1, 0, 4),
     ]
 
 
-def test_v_shooting_pct_all():
+def test_v_shooting_pct_3v3():
     conn = ingest_all_fixtures()
     rows = conn.execute("""
         SELECT player_name, total_goals, total_shots, shooting_pct
-        FROM v_shooting_pct
+        FROM v_shooting_pct_3v3
         ORDER BY player_name
     """).fetchall()
 
     assert rows == [
-        ("Drew", 6, 14, 0.429),
-        ("Jeff", 7, 10, 0.7),
+        ("Drew", 4, 9, 0.444),
+        ("Jeff", 4, 5, 0.8),
         ("Steve", 1, 4, 0.25),
     ]
 
 
-def test_v_win_loss_by_weekday_all():
+def test_v_win_loss_by_weekday_3v3():
     conn = ingest_all_fixtures()
     rows = conn.execute("""
         SELECT weekday, matches_played, wins, losses, win_rate
-        FROM v_win_loss_by_weekday
+        FROM v_win_loss_by_weekday_3v3
     """).fetchall()
 
     assert rows == [
         ("Sunday", 1, 1, 0, 1.0),
         ("Tuesday", 1, 1, 0, 1.0),
-        ("Thursday", 2, 1, 1, 0.5),
+        ("Thursday", 1, 0, 1, 0.0),
     ]
 
 
-def test_v_win_loss_daily_all():
+def test_v_win_loss_daily_3v3():
     conn = ingest_all_fixtures()
     rows = conn.execute("""
         SELECT play_date, wins, losses, win_rate
-        FROM v_win_loss_daily
+        FROM v_win_loss_daily_3v3
     """).fetchall()
 
     assert rows == [
-        ("2026-01-22", 1, 0, 1.0),
         ("2026-01-27", 1, 0, 1.0),
         ("2026-02-05", 0, 1, 0.0),
         ("2026-02-08", 1, 0, 1.0),
     ]
 
 
-def test_v_mvp_in_losses_all():
+def test_v_mvp_in_losses_3v3():
     conn = ingest_all_fixtures()
     rows = conn.execute("""
-        SELECT player_name, loss_mvps FROM v_mvp_in_losses
+        SELECT player_name, loss_mvps FROM v_mvp_in_losses_3v3
     """).fetchall()
 
     assert rows == [("Jeff", 1)]
 
 
-def test_v_mvp_win_rate_all():
+def test_v_mvp_win_rate_3v3():
     conn = ingest_all_fixtures()
     rows = conn.execute("""
         SELECT player_name, mvp_matches, mvp_wins, mvp_win_rate
-        FROM v_mvp_win_rate
+        FROM v_mvp_win_rate_3v3
         ORDER BY player_name
     """).fetchall()
 
     assert rows == [
         ("Drew", 1, 1, 1.0),
-        ("Jeff", 3, 2, 0.667),
+        ("Jeff", 2, 1, 0.5),
     ]
 
 

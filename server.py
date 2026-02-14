@@ -11,7 +11,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 def query_shooting_pct(conn):
     rows = conn.execute(
-        "SELECT player_name, total_goals, total_shots, shooting_pct FROM v_shooting_pct ORDER BY player_name"
+        "SELECT player_name, total_goals, total_shots, shooting_pct FROM v_shooting_pct_3v3 ORDER BY player_name"
     ).fetchall()
     return [
         {"player": r[0], "goals": r[1], "shots": r[2], "shooting_pct": r[3]}
@@ -21,7 +21,7 @@ def query_shooting_pct(conn):
 
 def query_win_loss_daily(conn):
     rows = conn.execute(
-        "SELECT play_date, wins, losses, win_rate FROM v_win_loss_daily"
+        "SELECT play_date, wins, losses, win_rate FROM v_win_loss_daily_3v3"
     ).fetchall()
     return [
         {"date": r[0], "wins": r[1], "losses": r[2], "win_rate": r[3]} for r in rows
@@ -30,7 +30,7 @@ def query_win_loss_daily(conn):
 
 def query_player_stats(conn):
     rows = conn.execute(
-        "SELECT player_name, matches_played, total_goals, total_assists, total_saves, total_shots FROM v_player_stats ORDER BY player_name"
+        "SELECT player_name, matches_played, total_goals, total_assists, total_saves, total_shots FROM v_player_stats_3v3 ORDER BY player_name"
     ).fetchall()
     return [
         {
@@ -47,7 +47,7 @@ def query_player_stats(conn):
 
 def query_mvp_wins(conn):
     rows = conn.execute(
-        "SELECT player_name, mvp_matches, mvp_wins, mvp_win_rate FROM v_mvp_win_rate ORDER BY player_name"
+        "SELECT player_name, mvp_matches, mvp_wins, mvp_win_rate FROM v_mvp_win_rate_3v3 ORDER BY player_name"
     ).fetchall()
     return [
         {"player": r[0], "mvp_matches": r[1], "mvp_wins": r[2], "win_rate": r[3]}
@@ -57,14 +57,14 @@ def query_mvp_wins(conn):
 
 def query_mvp_losses(conn):
     rows = conn.execute(
-        "SELECT player_name, loss_mvps FROM v_mvp_in_losses ORDER BY player_name"
+        "SELECT player_name, loss_mvps FROM v_mvp_in_losses_3v3 ORDER BY player_name"
     ).fetchall()
     return [{"player": r[0], "loss_mvps": r[1]} for r in rows]
 
 
 def query_weekday(conn):
     rows = conn.execute(
-        "SELECT weekday, matches_played, wins, losses, win_rate FROM v_win_loss_by_weekday"
+        "SELECT weekday, matches_played, wins, losses, win_rate FROM v_win_loss_by_weekday_3v3"
     ).fetchall()
     return [
         {
