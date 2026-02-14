@@ -79,7 +79,7 @@ def query_match_players(conn, match_id):
         FROM match_players mp
         JOIN players p ON mp.player_id = p.id
         WHERE mp.match_id = :id AND p.name IN ('Drew', 'Steve', 'Jeff')
-        ORDER BY p.name
+        ORDER BY mp.score DESC
         """,
         {"id": match_id},
     ).fetchall()

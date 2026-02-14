@@ -98,8 +98,9 @@ def test_query_match_players_returns_tracked_players():
     data = query_match_players(conn, match_id)
 
     assert len(data) == 3
-    names = [d["name"] for d in data]
-    assert names == ["Drew", "Jeff", "Steve"]
+    assert set(d["name"] for d in data) == {"Drew", "Jeff", "Steve"}
+    scores = [d["score"] for d in data]
+    assert scores == sorted(scores, reverse=True)
 
 
 def test_query_match_players_shape():
