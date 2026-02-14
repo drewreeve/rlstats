@@ -39,7 +39,7 @@ function areaGradient(canvas, { r, g, b }) {
 Chart.defaults.color = "#5A5A6E";
 Chart.defaults.borderColor = "rgba(255,255,255,0.04)";
 Chart.defaults.font.family = "'DM Mono', monospace";
-Chart.defaults.font.size = 11;
+Chart.defaults.font.size = 13;
 
 let currentMode = "3v3";
 const charts = {};
@@ -213,7 +213,7 @@ async function renderPlayerStats() {
                         boxWidth: 10,
                         boxHeight: 10,
                         padding: 16,
-                        font: { family: "'DM Mono', monospace", size: 11 },
+                        font: { family: "'DM Mono', monospace", size: 13 },
                     },
                 },
             },
@@ -328,7 +328,7 @@ async function renderWeekday() {
                         boxWidth: 10,
                         boxHeight: 10,
                         padding: 16,
-                        font: { family: "'DM Mono', monospace", size: 11 },
+                        font: { family: "'DM Mono', monospace", size: 13 },
                     },
                 },
             },
@@ -348,7 +348,18 @@ function updateCardVisibility() {
     document.getElementById("card-weekday").style.display = is3v3 ? "" : "none";
 }
 
+function updateViewVisibility() {
+    const isHistory = currentMode === "history";
+    document.getElementById("chart-view").style.display = isHistory ? "none" : "";
+    document.getElementById("history-view").style.display = isHistory ? "" : "none";
+}
+
 async function renderAll() {
+    updateViewVisibility();
+    if (currentMode === "history") {
+        renderRawTable();
+        return;
+    }
     destroyCharts();
     updateCardVisibility();
     renderShootingPct();
@@ -364,6 +375,126 @@ async function renderAll() {
     }
 }
 
+/* ── Raw Table ─────────────────────────────────── */
+
+let rawPage = 1;
+const rawPerPage = 20;
+const playerDetailCache = {};
+let rawSearchTimer = null;
+
+async function renderRawTable() {
+    const search = document.getElementById("history-search").value;
+    const gameMode = document.getElementById("history-filter-mode").value;
+    const result = document.getElementById("history-filter-result").value;
+
+    const params = new URLSearchParams({
+        page: rawPage,
+        per_page: rawPerPage,
+    });
+    if (search) params.set("search", search);
+    if (gameMode) params.set("game_mode", gameMode);
+    if (result) params.set("result", result);
+
+    const data = await fetchJSON(`/api/matches?${params}`);
+    const tbody = document.getElementById("history-table-body");
+    tbody.innerHTML = "";
+
+    for (const m of data.matches) {
+        const tr = document.createElement("tr");
+        tr.className = "history-row";
+        tr.dataset.matchId = m.id;
+
+        const date = m.played_at ? m.played_at.split("T")[0] : "—";
+        const isWin = m.result === "win";
+        const resultClass = isWin ? "badge-win" : "badge-loss";
+        const resultText = isWin ? "W" : "L";
+        const forfeitTag = m.forfeit ? '<span class="forfeit-tag">FF</span>' : "";
+
+        tr.innerHTML = `
+            <td class="col-date">${date}</td>
+            <td><span class="mode-tag">${(m.game_mode || "").toUpperCase()}</span></td>
+            <td><span class="result-badge ${resultClass}">${resultText}</span>${forfeitTag}</td>
+            <td class="col-score">${m.score}</td>
+            <td class="col-mvp">${m.mvp || "—"}</td>
+        `;
+
+        tr.addEventListener("click", () => toggleDetail(tr, m.id));
+        tbody.appendChild(tr);
+    }
+
+    renderPagination(data.total, data.page, data.per_page);
+}
+
+async function toggleDetail(row, matchId) {
+    const existing = row.nextElementSibling;
+    if (existing && existing.classList.contains("detail-row")) {
+        existing.remove();
+        row.classList.remove("expanded");
+        return;
+    }
+
+    row.classList.add("expanded");
+
+    if (!playerDetailCache[matchId]) {
+        playerDetailCache[matchId] = await fetchJSON(`/api/matches/${matchId}/players`);
+    }
+    const players = playerDetailCache[matchId];
+
+    const detailRow = document.createElement("tr");
+    detailRow.className = "detail-row";
+    const td = document.createElement("td");
+    td.colSpan = 5;
+
+    let tableHTML = `<table class="detail-table">
+        <thead><tr>
+            <th>Player</th><th>Score</th><th>Goals</th><th>Assists</th><th>Saves</th><th>Shots</th><th>Shot%</th>
+        </tr></thead><tbody>`;
+    for (const p of players) {
+        tableHTML += `<tr>
+            <td class="player-name">${p.name}</td>
+            <td>${p.score ?? 0}</td>
+            <td>${p.goals}</td>
+            <td>${p.assists}</td>
+            <td>${p.saves}</td>
+            <td>${p.shots}</td>
+            <td>${p.shooting_pct}%</td>
+        </tr>`;
+    }
+    tableHTML += "</tbody></table>";
+    td.innerHTML = tableHTML;
+    detailRow.appendChild(td);
+    row.after(detailRow);
+}
+
+function renderPagination(total, page, perPage) {
+    const totalPages = Math.ceil(total / perPage);
+    const container = document.getElementById("history-pagination");
+
+    if (totalPages <= 1) {
+        container.innerHTML = "";
+        return;
+    }
+
+    let html = `<button class="page-btn" ${page <= 1 ? "disabled" : ""} data-page="${page - 1}">&laquo; Prev</button>`;
+
+    const start = Math.max(1, page - 2);
+    const end = Math.min(totalPages, page + 2);
+    for (let i = start; i <= end; i++) {
+        html += `<button class="page-btn ${i === page ? "active" : ""}" data-page="${i}">${i}</button>`;
+    }
+
+    html += `<button class="page-btn" ${page >= totalPages ? "disabled" : ""} data-page="${page + 1}">Next &raquo;</button>`;
+    html += `<span class="page-info">${total} matches</span>`;
+
+    container.innerHTML = html;
+    container.querySelectorAll(".page-btn:not([disabled])").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            rawPage = parseInt(btn.dataset.page);
+            renderRawTable();
+        });
+    });
+}
+
 /* ── Init ───────────────────────────────────────── */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -376,5 +507,23 @@ document.addEventListener("DOMContentLoaded", () => {
             currentMode = btn.dataset.mode;
             renderAll();
         });
+    });
+
+    document.getElementById("history-search").addEventListener("input", () => {
+        clearTimeout(rawSearchTimer);
+        rawSearchTimer = setTimeout(() => {
+            rawPage = 1;
+            renderRawTable();
+        }, 300);
+    });
+
+    document.getElementById("history-filter-mode").addEventListener("change", () => {
+        rawPage = 1;
+        renderRawTable();
+    });
+
+    document.getElementById("history-filter-result").addEventListener("change", () => {
+        rawPage = 1;
+        renderRawTable();
     });
 });

@@ -34,12 +34,48 @@
                     <span class="mode-label">HOOPS</span>
                     <span class="mode-indicator"></span>
                 </button>
+                <button class="mode-btn" data-mode="history">
+                    <span class="mode-label">HISTORY</span>
+                    <span class="mode-indicator"></span>
+                </button>
             </nav>
         </div>
         <div class="header-stripe"></div>
     </header>
 
-    <main class="grid">
+    <main id="history-view" class="history-view" style="display:none">
+        <div class="history-controls">
+            <input type="text" id="history-search" class="history-input" placeholder="Search by player...">
+            <select id="history-filter-mode" class="history-select">
+                <option value="">All Modes</option>
+                <option value="3v3">3v3</option>
+                <option value="2v2">2v2</option>
+                <option value="hoops">Hoops</option>
+            </select>
+            <select id="history-filter-result" class="history-select">
+                <option value="">All Results</option>
+                <option value="win">Win</option>
+                <option value="loss">Loss</option>
+            </select>
+        </div>
+        <div class="history-table-wrap">
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Mode</th>
+                        <th>Result</th>
+                        <th>Score</th>
+                        <th>MVP</th>
+                    </tr>
+                </thead>
+                <tbody id="history-table-body"></tbody>
+            </table>
+        </div>
+        <div class="history-pagination" id="history-pagination"></div>
+    </main>
+
+    <main id="chart-view" class="grid">
         <section class="card full-width" id="card-win-rate" style="--i:0">
             <div class="card-header">
                 <div class="card-tag">TIMELINE</div>
