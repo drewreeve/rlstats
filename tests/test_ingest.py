@@ -295,6 +295,52 @@ def test_v_mvp_win_rate_hoops():
     ]
 
 
+# -- Multi-match: aggregate avg score views --
+
+
+def test_v_avg_score_3v3():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, matches_played, total_score, avg_score
+        FROM v_avg_score_3v3
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 3, 990, 330.0),
+        ("Jeff", 3, 1138, 379.3),
+        ("Steve", 3, 376, 125.3),
+    ]
+
+
+def test_v_avg_score_2v2():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, matches_played, total_score, avg_score
+        FROM v_avg_score_2v2
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 1, 425, 425.0),
+        ("Steve", 1, 327, 327.0),
+    ]
+
+
+def test_v_avg_score_hoops():
+    conn = ingest_all_fixtures()
+    rows = conn.execute("""
+        SELECT player_name, matches_played, total_score, avg_score
+        FROM v_avg_score_hoops
+        ORDER BY player_name
+    """).fetchall()
+
+    assert rows == [
+        ("Drew", 1, 511, 511.0),
+        ("Jeff", 1, 696, 696.0),
+    ]
+
+
 def test_camelcase_match_guid():
     conn = ingest_fixture("camelcase_match_guid.json")
     replay_hash = conn.execute("SELECT replay_hash FROM matches").fetchone()[0]

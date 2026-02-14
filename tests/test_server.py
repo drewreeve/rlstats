@@ -1,5 +1,6 @@
 from ingest import ingest_match
 from server import (
+    query_avg_score,
     query_match_players,
     query_matches,
     query_mvp_losses,
@@ -196,3 +197,13 @@ def test_win_loss_daily_handler():
     assert data[0]["wins"] == 0
     assert data[0]["losses"] == 1
     assert data[0]["win_rate"] == 0.0
+
+
+def test_avg_score_handler():
+    conn = _db_with_replay()
+    data = query_avg_score(conn, "3v3")
+
+    assert len(data) == 3
+    names = [d["player"] for d in data]
+    assert names == ["Drew", "Jeff", "Steve"]
+    assert all("avg_score" in d and "total_score" in d for d in data)
