@@ -446,6 +446,14 @@ header h1 {
     border-bottom: none;
 }
 
+.detail-table tbody tr {
+    transition: background 0.15s;
+}
+
+.detail-table tbody tr:hover {
+    background: rgba(255, 107, 0, 0.06);
+}
+
 .detail-table .player-name {
     color: var(--text-bright);
     font-weight: 500;
