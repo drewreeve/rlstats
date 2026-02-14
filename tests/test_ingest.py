@@ -197,3 +197,9 @@ def test_v_mvp_win_rate_all():
         ("Drew", 1, 1, 1.0),
         ("Jeff", 3, 2, 0.667),
     ]
+
+
+def test_camelcase_match_guid():
+    conn = ingest_fixture("camelcase_match_guid.json")
+    replay_hash = conn.execute("SELECT replay_hash FROM matches").fetchone()[0]
+    assert replay_hash is not None
