@@ -504,8 +504,9 @@ header h1 {
 
 /* ── Streaks Display ───────────────────────────── */
 .streaks-display {
+    container-type: inline-size;
     display: flex;
-    gap: 4rem;
+    gap: clamp(1.5rem, 6cqi, 4rem);
     justify-content: center;
     align-items: center;
     padding: 1.5rem 0;
@@ -519,13 +520,14 @@ header h1 {
 }
 
 .streak-circle {
-    width: 190px;
-    height: 190px;
+    width: min(190px, 36cqi);
+    height: min(190px, 36cqi);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     border: 2px solid;
+    flex-shrink: 1;
 }
 
 .streak-circle-win {
@@ -542,7 +544,7 @@ header h1 {
 
 .streak-value {
     font-family: var(--font-display);
-    font-size: 2.4rem;
+    font-size: clamp(1.4rem, 7cqi, 2.4rem);
     font-weight: 900;
     line-height: 1;
 }
