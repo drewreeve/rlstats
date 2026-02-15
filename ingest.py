@@ -43,7 +43,7 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
             date_part, time_part = raw_played_at.split(" ")
             h, m, s = time_part.split("-")
             played_at_sql = f"{date_part} {h}:{m}:{s}"
-        except Exception:
+        except (ValueError, AttributeError):
             played_at_sql = None
 
     duration = props.get("TotalSecondsPlayed")
