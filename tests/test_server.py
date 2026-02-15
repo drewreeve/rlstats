@@ -1,3 +1,5 @@
+import sqlite3
+
 from ingest import ingest_match
 from server import (
     query_avg_score,
@@ -19,6 +21,7 @@ def _db_with_replay():
     conn = in_memory_db()
     replay = load_replay("zero_score.json")
     ingest_match(conn, replay)
+    conn.row_factory = sqlite3.Row
     return conn
 
 
@@ -26,6 +29,7 @@ def _db_with_all_replays():
     conn = in_memory_db()
     for name in ["zero_score.json", "match.json", "forefeit.json"]:
         ingest_match(conn, load_replay(name))
+    conn.row_factory = sqlite3.Row
     return conn
 
 

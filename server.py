@@ -56,13 +56,13 @@ def query_matches(conn, params):
     rows = conn.execute(query_sql, bindings).fetchall()
     matches = [
         {
-            "id": r[0],
-            "game_mode": r[1],
-            "result": r[2],
-            "forfeit": r[3],
-            "score": f"{r[4]}-{r[5]}",
-            "played_at": r[6],
-            "mvp": r[7],
+            "id": r["id"],
+            "game_mode": r["game_mode"],
+            "result": r["result"],
+            "forfeit": r["forfeit"],
+            "score": f"{r['team_score']}-{r['opponent_score']}",
+            "played_at": r["played_at"],
+            "mvp": r["mvp_name"],
         }
         for r in rows
     ]
@@ -83,106 +83,65 @@ def query_match_players(conn, match_id):
         """,
         {"id": match_id},
     ).fetchall()
-    return [
-        {
-            "name": r[0],
-            "score": r[1],
-            "goals": r[2],
-            "assists": r[3],
-            "saves": r[4],
-            "shots": r[5],
-            "shooting_pct": r[6],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in rows]
 
 
 def query_shooting_pct(conn, mode):
     view = f"v_shooting_pct_{mode}"
     rows = conn.execute(
-        f"SELECT player_name, total_goals, total_shots, shooting_pct FROM {view} ORDER BY player_name"
+        f"SELECT player_name AS player, total_goals AS goals, total_shots AS shots, shooting_pct FROM {view} ORDER BY player_name"
     ).fetchall()
-    return [
-        {"player": r[0], "goals": r[1], "shots": r[2], "shooting_pct": r[3]}
-        for r in rows
-    ]
+    return [dict(r) for r in rows]
 
 
 def query_win_loss_daily(conn, mode):
     if mode != "3v3":
         return []
     rows = conn.execute(
-        "SELECT play_date, wins, losses, win_rate FROM v_win_loss_daily_3v3"
+        "SELECT play_date AS date, wins, losses, win_rate FROM v_win_loss_daily_3v3"
     ).fetchall()
-    return [
-        {"date": r[0], "wins": r[1], "losses": r[2], "win_rate": r[3]} for r in rows
-    ]
+    return [dict(r) for r in rows]
 
 
 def query_player_stats(conn, mode):
     view = f"v_player_stats_{mode}"
     rows = conn.execute(
-        f"SELECT player_name, matches_played, total_goals, total_assists, total_saves, total_shots FROM {view} ORDER BY player_name"
+        f"SELECT player_name AS player, matches_played AS matches, total_goals AS goals, total_assists AS assists, total_saves AS saves, total_shots AS shots FROM {view} ORDER BY player_name"
     ).fetchall()
-    return [
-        {
-            "player": r[0],
-            "matches": r[1],
-            "goals": r[2],
-            "assists": r[3],
-            "saves": r[4],
-            "shots": r[5],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in rows]
 
 
 def query_mvp_wins(conn, mode):
     view = f"v_mvp_win_rate_{mode}"
     rows = conn.execute(
-        f"SELECT player_name, mvp_matches, mvp_wins, mvp_win_rate FROM {view} ORDER BY player_name"
+        f"SELECT player_name AS player, mvp_matches, mvp_wins, mvp_win_rate AS win_rate FROM {view} ORDER BY player_name"
     ).fetchall()
-    return [
-        {"player": r[0], "mvp_matches": r[1], "mvp_wins": r[2], "win_rate": r[3]}
-        for r in rows
-    ]
+    return [dict(r) for r in rows]
 
 
 def query_mvp_losses(conn, mode):
     view = f"v_mvp_in_losses_{mode}"
     rows = conn.execute(
-        f"SELECT player_name, loss_mvps FROM {view} ORDER BY player_name"
+        f"SELECT player_name AS player, loss_mvps FROM {view} ORDER BY player_name"
     ).fetchall()
-    return [{"player": r[0], "loss_mvps": r[1]} for r in rows]
+    return [dict(r) for r in rows]
 
 
 def query_weekday(conn, mode):
     if mode != "3v3":
         return []
     rows = conn.execute(
-        "SELECT weekday, matches_played, wins, losses, win_rate FROM v_win_loss_by_weekday_3v3"
+        "SELECT weekday, matches_played AS matches, wins, losses, win_rate FROM v_win_loss_by_weekday_3v3"
     ).fetchall()
-    return [
-        {
-            "weekday": r[0],
-            "matches": r[1],
-            "wins": r[2],
-            "losses": r[3],
-            "win_rate": r[4],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in rows]
 
 
 def query_avg_score(conn, mode):
     view = f"v_avg_score_{mode}"
     rows = conn.execute(
-        f"SELECT player_name, matches_played, total_score, avg_score FROM {view} ORDER BY player_name"
+        f"SELECT player_name AS player, matches_played AS matches, total_score, avg_score FROM {view} ORDER BY player_name"
     ).fetchall()
-    return [
-        {"player": r[0], "matches": r[1], "total_score": r[2], "avg_score": r[3]}
-        for r in rows
-    ]
+    return [dict(r) for r in rows]
 
 
 def query_score_differential(conn, mode):
@@ -190,7 +149,7 @@ def query_score_differential(conn, mode):
     rows = conn.execute(
         f"SELECT differential, match_count FROM {view} ORDER BY differential"
     ).fetchall()
-    return [{"differential": r[0], "match_count": r[1]} for r in rows]
+    return [dict(r) for r in rows]
 
 
 def query_streaks(conn, mode):
@@ -200,8 +159,8 @@ def query_streaks(conn, mode):
     ).fetchone()
     if row:
         return {
-            "longest_win_streak": row[0] or 0,
-            "longest_loss_streak": row[1] or 0,
+            "longest_win_streak": row["longest_win_streak"] or 0,
+            "longest_loss_streak": row["longest_loss_streak"] or 0,
         }
     return {"longest_win_streak": 0, "longest_loss_streak": 0}
 
@@ -265,6 +224,7 @@ def main():
         raise SystemExit(1)
 
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     apply_migrations(conn)
 
     handler = make_handler(conn)
