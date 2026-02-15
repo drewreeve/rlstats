@@ -193,6 +193,19 @@ def query_score_differential(conn, mode):
     return [{"differential": r[0], "match_count": r[1]} for r in rows]
 
 
+def query_streaks(conn, mode):
+    view = f"v_streaks_{mode}"
+    row = conn.execute(
+        f"SELECT longest_win_streak, longest_loss_streak FROM {view}"
+    ).fetchone()
+    if row:
+        return {
+            "longest_win_streak": row[0] or 0,
+            "longest_loss_streak": row[1] or 0,
+        }
+    return {"longest_win_streak": 0, "longest_loss_streak": 0}
+
+
 API_ROUTES = {
     "/api/shooting-pct": query_shooting_pct,
     "/api/win-loss-daily": query_win_loss_daily,
@@ -202,6 +215,7 @@ API_ROUTES = {
     "/api/weekday": query_weekday,
     "/api/avg-score": query_avg_score,
     "/api/score-differential": query_score_differential,
+    "/api/streaks": query_streaks,
 }
 
 

@@ -501,6 +501,67 @@ header h1 {
     margin-left: 0.75rem;
 }
 
+/* ── Streaks Display ───────────────────────────── */
+.streaks-display {
+    display: flex;
+    gap: 4rem;
+    justify-content: center;
+    align-items: center;
+    padding: 1.5rem 0;
+}
+
+.streak-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.streak-circle {
+    width: 190px;
+    height: 190px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid;
+}
+
+.streak-circle-win {
+    border-color: rgba(0, 229, 255, 0.5);
+    background: rgba(0, 229, 255, 0.06);
+    box-shadow: 0 0 20px rgba(0, 229, 255, 0.1), inset 0 0 20px rgba(0, 229, 255, 0.05);
+}
+
+.streak-circle-loss {
+    border-color: rgba(255, 60, 60, 0.5);
+    background: rgba(255, 60, 60, 0.06);
+    box-shadow: 0 0 20px rgba(255, 60, 60, 0.1), inset 0 0 20px rgba(255, 60, 60, 0.05);
+}
+
+.streak-value {
+    font-family: var(--font-display);
+    font-size: 2.4rem;
+    font-weight: 900;
+    line-height: 1;
+}
+
+.streak-circle-win .streak-value {
+    color: var(--cyan);
+}
+
+.streak-circle-loss .streak-value {
+    color: #ff3c3c;
+}
+
+.streak-label {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+}
+
 /* ── Scrollbar ──────────────────────────────────── */
 ::-webkit-scrollbar {
     width: 6px;

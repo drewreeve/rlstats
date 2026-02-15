@@ -8,6 +8,7 @@ from server import (
     query_player_stats,
     query_score_differential,
     query_shooting_pct,
+    query_streaks,
     query_weekday,
     query_win_loss_daily,
 )
@@ -228,3 +229,25 @@ def test_score_differential_sorted_by_differential():
 
     differentials = [d["differential"] for d in data]
     assert differentials == sorted(differentials)
+
+
+# -- query_streaks --
+
+
+def test_streaks_3v3():
+    conn = _db_with_all_replays()
+    data = query_streaks(conn, "3v3")
+
+    # 3 matches ordered by played_at: win (2026-01-27), loss (2026-02-05), win (2026-02-08)
+    # longest win streak = 1, longest loss streak = 1
+    assert data["longest_win_streak"] == 1
+    assert data["longest_loss_streak"] == 1
+
+
+def test_streaks_no_matches():
+    conn = _db_with_all_replays()
+    data = query_streaks(conn, "2v2")
+
+    # no 2v2 matches in the 3-replay fixture set
+    assert data["longest_win_streak"] == 0
+    assert data["longest_loss_streak"] == 0

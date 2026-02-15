@@ -378,6 +378,12 @@ async function renderWeekday() {
     });
 }
 
+async function renderStreaks() {
+    const data = await fetchJSON(`/api/streaks?mode=${currentMode}`);
+    document.getElementById("streak-win-value").textContent = data.longest_win_streak ?? "—";
+    document.getElementById("streak-loss-value").textContent = data.longest_loss_streak ?? "—";
+}
+
 /* ── Visibility & Render ────────────────────────── */
 
 function updateCardVisibility() {
@@ -409,6 +415,7 @@ async function renderAll() {
     renderMvpWins();
     renderMvpLosses();
     renderScoreDifferential();
+    renderStreaks();
     if (currentMode === "3v3") {
         renderWeekday();
     }
