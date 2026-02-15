@@ -6,7 +6,7 @@
     --orange:   #FF6B00;
     --cyan:     #00E5FF;
     --text:     #C8C8D0;
-    --text-dim: #5A5A6E;
+    --text-dim: #8585A0;
     --text-bright: #F0F0F4;
     --card-bg:  #0C0C12;
     --font-display: 'Orbitron', sans-serif;
@@ -221,7 +221,7 @@ header h1 {
     font-weight: 700;
     letter-spacing: 0.15em;
     color: var(--orange);
-    background: rgba(255, 107, 0, 0.08);
+    background: rgba(255, 107, 0, 0.12);
     border: 1px solid rgba(255, 107, 0, 0.15);
     padding: 0.2rem 0.6rem;
     clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
@@ -393,13 +393,13 @@ header h1 {
 }
 
 .badge-win {
-    background: rgba(0, 229, 255, 0.12);
+    background: rgba(0, 229, 255, 0.15);
     color: var(--cyan);
     border: 1px solid rgba(0, 229, 255, 0.25);
 }
 
 .badge-loss {
-    background: rgba(255, 60, 60, 0.12);
+    background: rgba(255, 60, 60, 0.15);
     color: #ff3c3c;
     border: 1px solid rgba(255, 60, 60, 0.25);
 }
@@ -530,13 +530,13 @@ header h1 {
 
 .streak-circle-win {
     border-color: rgba(0, 229, 255, 0.5);
-    background: rgba(0, 229, 255, 0.06);
+    background: rgba(0, 229, 255, 0.10);
     box-shadow: 0 0 20px rgba(0, 229, 255, 0.1), inset 0 0 20px rgba(0, 229, 255, 0.05);
 }
 
 .streak-circle-loss {
     border-color: rgba(255, 60, 60, 0.5);
-    background: rgba(255, 60, 60, 0.06);
+    background: rgba(255, 60, 60, 0.10);
     box-shadow: 0 0 20px rgba(255, 60, 60, 0.1), inset 0 0 20px rgba(255, 60, 60, 0.05);
 }
 
