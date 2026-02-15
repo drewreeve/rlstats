@@ -394,8 +394,8 @@ function updateCardVisibility() {
 
 function updateViewVisibility() {
     const isHistory = currentMode === "history";
-    document.getElementById("chart-view").style.display = isHistory ? "none" : "";
-    document.getElementById("history-view").style.display = isHistory ? "" : "none";
+    document.getElementById("chart-view").hidden = isHistory;
+    document.getElementById("history-view").hidden = !isHistory;
 }
 
 async function renderAll() {
