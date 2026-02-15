@@ -139,9 +139,6 @@ def test_query_match_players_nonexistent_match():
     assert data == []
 
 
-# -- existing tests --
-
-
 def test_shooting_pct_handler():
     conn = _db_with_replay()
     data = query_shooting_pct(conn, "3v3")
@@ -218,8 +215,8 @@ def test_score_differential_handler():
 
     diffs = {d["differential"]: d["match_count"] for d in data}
     assert diffs[-2] == 1  # 0-2 loss
-    assert diffs[1] == 1   # 5-4 win
-    assert diffs[4] == 1   # 4-0 win
+    assert diffs[1] == 1  # 5-4 win
+    assert diffs[4] == 1  # 4-0 win
     assert all("differential" in d and "match_count" in d for d in data)
 
 

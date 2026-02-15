@@ -345,3 +345,97 @@ def test_camelcase_match_guid():
     conn = ingest_fixture("camelcase_match_guid.json")
     replay_hash = conn.execute("SELECT replay_hash FROM matches").fetchone()[0]
     assert replay_hash is not None
+
+
+# -- Sessions --
+
+
+def test_v_sessions():
+    """Matches within 60 minutes share a session; matches >60 min apart start a new one."""
+    conn = in_memory_db()
+
+    # Insert 4 matches: first 3 within 30 min of each other (one session),
+    # 4th match 2 hours later (new session)
+    matches = [
+        ("hash1", "2026-02-10 20:00:00", "3v3", "win", 3, 2, 3),
+        ("hash2", "2026-02-10 20:15:00", "3v3", "loss", 1, 2, 3),
+        ("hash3", "2026-02-10 20:30:00", "3v3", "win", 4, 1, 3),
+        ("hash4", "2026-02-10 22:30:00", "3v3", "win", 3, 0, 3),
+    ]
+    for replay_hash, played_at, game_mode, result, team_score, opp_score, team_size in matches:
+        conn.execute(
+            """INSERT INTO matches (replay_hash, played_at, game_mode, result,
+               team_score, opponent_score, team_size)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (replay_hash, played_at, game_mode, result, team_score, opp_score, team_size),
+        )
+
+    rows = conn.execute("""
+        SELECT match_id, session_id FROM v_sessions ORDER BY played_at
+    """).fetchall()
+
+    match_ids = [r[0] for r in rows]
+    session_ids = [r[1] for r in rows]
+
+    # First 3 matches in session 1, 4th in session 2
+    assert session_ids == [1, 1, 1, 2]
+    assert len(match_ids) == 4
+
+
+def test_v_session_summary():
+    """Session summary aggregates wins/losses per session."""
+    conn = in_memory_db()
+
+    matches = [
+        ("hash1", "2026-02-10 20:00:00", "3v3", "win", 3, 2, 3),
+        ("hash2", "2026-02-10 20:15:00", "3v3", "loss", 1, 2, 3),
+        ("hash3", "2026-02-10 20:30:00", "3v3", "win", 4, 1, 3),
+        ("hash4", "2026-02-10 22:30:00", "3v3", "win", 3, 0, 3),
+    ]
+    for replay_hash, played_at, game_mode, result, team_score, opp_score, team_size in matches:
+        conn.execute(
+            """INSERT INTO matches (replay_hash, played_at, game_mode, result,
+               team_score, opponent_score, team_size)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (replay_hash, played_at, game_mode, result, team_score, opp_score, team_size),
+        )
+
+    rows = conn.execute("""
+        SELECT session_id, game_mode, session_date, match_count, wins, losses, win_rate
+        FROM v_session_summary
+        ORDER BY session_id
+    """).fetchall()
+
+    assert rows == [
+        (1, "3v3", "2026-02-10", 3, 2, 1, 0.667),
+        (2, "3v3", "2026-02-10", 1, 1, 0, 1.0),
+    ]
+
+
+def test_v_sessions_cross_midnight():
+    """A session starting before midnight groups under the start date."""
+    conn = in_memory_db()
+
+    matches = [
+        ("hash1", "2026-02-10 23:30:00", "3v3", "win", 3, 2, 3),
+        ("hash2", "2026-02-11 00:10:00", "3v3", "loss", 1, 2, 3),
+    ]
+    for replay_hash, played_at, game_mode, result, team_score, opp_score, team_size in matches:
+        conn.execute(
+            """INSERT INTO matches (replay_hash, played_at, game_mode, result,
+               team_score, opponent_score, team_size)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (replay_hash, played_at, game_mode, result, team_score, opp_score, team_size),
+        )
+
+    # Both matches within 40 min => same session
+    rows = conn.execute("""
+        SELECT session_id FROM v_sessions ORDER BY played_at
+    """).fetchall()
+    assert [r[0] for r in rows] == [1, 1]
+
+    # Session date is the date of the first match (Feb 10)
+    summary = conn.execute("""
+        SELECT session_date, wins, losses FROM v_session_summary
+    """).fetchone()
+    assert summary == ("2026-02-10", 1, 1)
