@@ -6,6 +6,7 @@ from server import (
     query_mvp_losses,
     query_mvp_wins,
     query_player_stats,
+    query_score_differential,
     query_shooting_pct,
     query_weekday,
     query_win_loss_daily,
@@ -208,3 +209,22 @@ def test_avg_score_handler():
     names = [d["player"] for d in data]
     assert names == ["Drew", "Jeff", "Steve"]
     assert all("avg_score" in d and "total_score" in d for d in data)
+
+
+def test_score_differential_handler():
+    conn = _db_with_all_replays()
+    data = query_score_differential(conn, "3v3")
+
+    diffs = {d["differential"]: d["match_count"] for d in data}
+    assert diffs[-2] == 1  # 0-2 loss
+    assert diffs[1] == 1   # 5-4 win
+    assert diffs[4] == 1   # 4-0 win
+    assert all("differential" in d and "match_count" in d for d in data)
+
+
+def test_score_differential_sorted_by_differential():
+    conn = _db_with_all_replays()
+    data = query_score_differential(conn, "3v3")
+
+    differentials = [d["differential"] for d in data]
+    assert differentials == sorted(differentials)

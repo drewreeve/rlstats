@@ -185,6 +185,14 @@ def query_avg_score(conn, mode):
     ]
 
 
+def query_score_differential(conn, mode):
+    view = f"v_score_differential_{mode}"
+    rows = conn.execute(
+        f"SELECT differential, match_count FROM {view} ORDER BY differential"
+    ).fetchall()
+    return [{"differential": r[0], "match_count": r[1]} for r in rows]
+
+
 API_ROUTES = {
     "/api/shooting-pct": query_shooting_pct,
     "/api/win-loss-daily": query_win_loss_daily,
@@ -193,6 +201,7 @@ API_ROUTES = {
     "/api/mvp-losses": query_mvp_losses,
     "/api/weekday": query_weekday,
     "/api/avg-score": query_avg_score,
+    "/api/score-differential": query_score_differential,
 }
 
 

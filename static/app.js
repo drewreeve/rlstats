@@ -285,6 +285,44 @@ async function renderMvpLosses() {
     });
 }
 
+async function renderScoreDifferential() {
+    const data = await fetchJSON(`/api/score-differential?mode=${currentMode}`);
+    const canvas = document.getElementById("chart-score-diff");
+    charts.scoreDiff = new Chart(canvas, {
+        type: "bar",
+        data: {
+            labels: data.map((d) => (d.differential > 0 ? "+" : "") + d.differential),
+            datasets: [{
+                label: "Matches",
+                data: data.map((d) => d.match_count),
+                backgroundColor: data.map((d) =>
+                    barGradient(canvas, d.differential > 0 ? STAT_COLORS.wins : STAT_COLORS.losses)
+                ),
+                borderColor: data.map((d) =>
+                    rgba(d.differential > 0 ? STAT_COLORS.wins : STAT_COLORS.losses, 0.8)
+                ),
+                borderWidth: 1,
+                borderRadius: 2,
+                borderSkipped: false,
+            }],
+        },
+        options: {
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `${ctx.parsed.y} matches`,
+                    },
+                },
+            },
+            scales: {
+                y: { beginAtZero: true },
+                x: { grid: { display: false } },
+            },
+        },
+    });
+}
+
 async function renderWeekday() {
     const data = await fetchJSON(`/api/weekday?mode=${currentMode}`);
     const canvas = document.getElementById("chart-weekday");
@@ -370,6 +408,7 @@ async function renderAll() {
     renderPlayerStats();
     renderMvpWins();
     renderMvpLosses();
+    renderScoreDifferential();
     if (currentMode === "3v3") {
         renderWeekday();
     }
