@@ -151,6 +151,9 @@ header h1 {
 }
 
 /* ── Grid ───────────────────────────────────────── */
+.grid[hidden] {
+    display: none;
+}
 .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
