@@ -263,7 +263,7 @@ def main():
 
     app = create_app(conn)
     print(f"Serving on http://{host}:{port}")
-    serve(app, host=host, port=port)
+    serve(app, host=host, port=port, threads=8)
 
 
 if __name__ == "__main__":
