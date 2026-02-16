@@ -1,8 +1,7 @@
-import json
 import sqlite3
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+
+from flask import Flask, abort, jsonify, request
 
 from db import apply_migrations
 
@@ -178,43 +177,72 @@ API_ROUTES = {
 }
 
 
-def make_handler(conn):
-    class Handler(SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+def create_app(conn):
+    app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
 
-        def _json_response(self, data):
-            body = json.dumps(data).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+    @app.route("/")
+    def index():
+        return app.send_static_file("index.html")
 
-        def do_GET(self):
-            parsed = urlparse(self.path)
-            path = parsed.path
-            qs = parse_qs(parsed.query)
+    @app.route("/api/matches")
+    def matches():
+        params = request.args.to_dict(flat=False)
+        try:
+            return jsonify(query_matches(conn, params))
+        except (ValueError, TypeError):
+            abort(400)
 
-            if path == "/api/matches":
-                self._json_response(query_matches(conn, qs))
-            elif path.startswith("/api/matches/") and path.endswith("/players"):
-                match_id = path.split("/")[3]
-                self._json_response(query_match_players(conn, int(match_id)))
-            elif path in API_ROUTES:
-                mode = qs.get("mode", ["3v3"])[0]
+    @app.route("/api/matches/<int:match_id>/players")
+    def match_players(match_id):
+        return jsonify(query_match_players(conn, match_id))
+
+    for path, handler_fn in API_ROUTES.items():
+
+        def make_view(fn):
+            def view():
+                mode = request.args.get("mode", "3v3")
                 if mode not in ALLOWED_MODES:
                     mode = "3v3"
-                handler_fn = API_ROUTES[path]
-                self._json_response(handler_fn(conn, mode))
-            else:
-                super().do_GET()
+                return jsonify(fn(conn, mode))
 
-    return Handler
+            return view
+
+        app.add_url_rule(path, endpoint=path, view_func=make_view(handler_fn))
+
+    @app.errorhandler(400)
+    def bad_request(e):
+        return jsonify({"error": "Bad request"}), 400
+
+    @app.errorhandler(404)
+    def not_found(e):
+        return jsonify({"error": "Not found"}), 404
+
+    @app.errorhandler(500)
+    def internal_error(e):
+        return jsonify({"error": "Internal server error"}), 500
+
+    @app.after_request
+    def security_headers(response):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "style-src 'self' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "connect-src 'self'; "
+            "img-src 'self'"
+        )
+        return response
+
+    return app
 
 
 def main():
     import os
+
+    from waitress import serve
 
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8080"))
@@ -223,20 +251,13 @@ def main():
         print(f"Database not found at {DB_PATH}. Run ingest.py first.")
         raise SystemExit(1)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     apply_migrations(conn)
 
-    handler = make_handler(conn)
-    server = HTTPServer((host, port), handler)
+    app = create_app(conn)
     print(f"Serving on http://{host}:{port}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        conn.close()
-        server.server_close()
+    serve(app, host=host, port=port)
 
 
 if __name__ == "__main__":

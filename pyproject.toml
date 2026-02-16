@@ -1,10 +1,13 @@
 [project]
 name = "rlstats"
-version = "0.1.0"
+version = "0.2.0"
 description = "Personal project for tracking our RL teams' stats"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "flask>=3.1.2",
+    "waitress>=3.0.2",
+]
 
 [dependency-groups]
 dev = [
