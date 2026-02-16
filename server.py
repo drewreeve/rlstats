@@ -11,6 +11,12 @@ STATIC_DIR = Path(__file__).parent / "static"
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
 
+def _view(prefix, mode):
+    if mode not in ALLOWED_MODES:
+        raise ValueError(f"Invalid mode: {mode}")
+    return f"{prefix}_{mode}"
+
+
 def query_matches(conn, params):
     page = int(params.get("page", ["1"])[0])
     per_page = int(params.get("per_page", ["20"])[0])
@@ -86,7 +92,7 @@ def query_match_players(conn, match_id):
 
 
 def query_shooting_pct(conn, mode):
-    view = f"v_shooting_pct_{mode}"
+    view = _view("v_shooting_pct", mode)
     rows = conn.execute(
         f"SELECT player_name AS player, total_goals AS goals, total_shots AS shots, shooting_pct FROM {view} ORDER BY player_name"
     ).fetchall()
@@ -103,7 +109,7 @@ def query_win_loss_daily(conn, mode):
 
 
 def query_player_stats(conn, mode):
-    view = f"v_player_stats_{mode}"
+    view = _view("v_player_stats", mode)
     rows = conn.execute(
         f"SELECT player_name AS player, matches_played AS matches, total_goals AS goals, total_assists AS assists, total_saves AS saves, total_shots AS shots FROM {view} ORDER BY player_name"
     ).fetchall()
@@ -111,7 +117,7 @@ def query_player_stats(conn, mode):
 
 
 def query_mvp_wins(conn, mode):
-    view = f"v_mvp_win_rate_{mode}"
+    view = _view("v_mvp_win_rate", mode)
     rows = conn.execute(
         f"SELECT player_name AS player, mvp_matches, mvp_wins, mvp_win_rate AS win_rate FROM {view} ORDER BY player_name"
     ).fetchall()
@@ -119,7 +125,7 @@ def query_mvp_wins(conn, mode):
 
 
 def query_mvp_losses(conn, mode):
-    view = f"v_mvp_in_losses_{mode}"
+    view = _view("v_mvp_in_losses", mode)
     rows = conn.execute(
         f"SELECT player_name AS player, loss_mvps FROM {view} ORDER BY player_name"
     ).fetchall()
@@ -136,7 +142,7 @@ def query_weekday(conn, mode):
 
 
 def query_avg_score(conn, mode):
-    view = f"v_avg_score_{mode}"
+    view = _view("v_avg_score", mode)
     rows = conn.execute(
         f"SELECT player_name AS player, matches_played AS matches, total_score, avg_score FROM {view} ORDER BY player_name"
     ).fetchall()
@@ -144,7 +150,7 @@ def query_avg_score(conn, mode):
 
 
 def query_score_differential(conn, mode):
-    view = f"v_score_differential_{mode}"
+    view = _view("v_score_differential", mode)
     rows = conn.execute(
         f"SELECT differential, match_count FROM {view} ORDER BY differential"
     ).fetchall()
@@ -152,7 +158,7 @@ def query_score_differential(conn, mode):
 
 
 def query_streaks(conn, mode):
-    view = f"v_streaks_{mode}"
+    view = _view("v_streaks", mode)
     row = conn.execute(
         f"SELECT longest_win_streak, longest_loss_streak FROM {view}"
     ).fetchone()
