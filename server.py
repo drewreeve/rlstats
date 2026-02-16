@@ -19,7 +19,7 @@ def _view(prefix, mode):
 
 def query_matches(conn, params):
     page = int(params.get("page", ["1"])[0])
-    per_page = int(params.get("per_page", ["20"])[0])
+    per_page = min(int(params.get("per_page", ["25"])[0]), 100)
     search = params.get("search", [""])[0].strip()
     game_mode = params.get("game_mode", [""])[0].strip()
     result = params.get("result", [""])[0].strip()

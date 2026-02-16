@@ -73,6 +73,13 @@ def test_query_matches_pagination():
     assert len(page2["matches"]) == 1
 
 
+def test_query_matches_per_page_capped():
+    conn = _db_with_all_replays()
+    data = query_matches(conn, {"per_page": ["999"]})
+
+    assert data["per_page"] == 100
+
+
 def test_query_matches_search_by_mvp_name():
     conn = _db_with_all_replays()
     data = query_matches(conn, {"search": ["Drew"]})

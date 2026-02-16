@@ -424,7 +424,7 @@ async function renderAll() {
 /* ── Raw Table ─────────────────────────────────── */
 
 let rawPage = 1;
-const rawPerPage = 20;
+let rawPerPage = 25;
 const playerDetailCache = {};
 let rawSearchTimer = null;
 
@@ -569,6 +569,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.getElementById("history-filter-result").addEventListener("change", () => {
+        rawPage = 1;
+        renderRawTable();
+    });
+
+    document.getElementById("history-per-page").addEventListener("change", (e) => {
+        rawPerPage = parseInt(e.target.value, 10);
         rawPage = 1;
         renderRawTable();
     });
