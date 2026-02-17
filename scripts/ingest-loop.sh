@@ -8,7 +8,7 @@ while true; do
     rrrocket -m replays/ || true
 
     echo "$(date): Running ingestion..."
-    uv run python ingest.py
+    /app/.venv/bin/python ingest.py
 
     echo "$(date): Done. Sleeping ${INTERVAL}s..."
     sleep "$INTERVAL"

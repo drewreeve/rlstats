@@ -3,6 +3,14 @@ services:
     image: ghcr.io/drewreeve/rlstats:latest
     ports:
       - "8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "1000:1000"
     volumes:
       - ./db:/app/db
       - ./replays:/app/replays
@@ -13,6 +21,14 @@ services:
   ingest:
     image: ghcr.io/drewreeve/rlstats:latest
     command: ["sh", "/app/scripts/ingest-loop.sh"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "1000:1000"
     volumes:
       - ./db:/app/db
       - ./replays:/app/replays
