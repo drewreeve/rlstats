@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload — RL Stats</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="noise"></div>
+
+    <header>
+        <div class="header-inner">
+            <div class="logo-block">
+                <div class="logo-accent"></div>
+                <h1>RL STATS</h1>
+                <span class="logo-sub">DREW / STEVE / JEFF</span>
+            </div>
+            <nav class="mode-nav">
+                <a href="/" class="mode-btn">
+                    <span class="mode-label">DASHBOARD</span>
+                    <span class="mode-indicator"></span>
+                </a>
+                <a href="/upload" class="mode-btn active">
+                    <span class="mode-label">UPLOAD</span>
+                    <span class="mode-indicator"></span>
+                </a>
+            </nav>
+        </div>
+        <div class="header-stripe"></div>
+    </header>
+
+    <div class="upload-container">
+        <section class="card" id="auth-section" style="--i:0">
+            <div class="card-header">
+                <div class="card-tag">AUTH</div>
+                <h2>Enter Password</h2>
+            </div>
+            <form id="auth-form" class="auth-form">
+                <input type="password" id="auth-password" class="upload-input" placeholder="Password" autocomplete="off">
+                <button type="submit" class="upload-btn">AUTHENTICATE</button>
+            </form>
+            <div id="auth-error" class="upload-error" hidden></div>
+        </section>
+
+        <section class="card" id="upload-section" hidden style="--i:0">
+            <div class="card-header">
+                <div class="card-tag">UPLOAD</div>
+                <h2>Replay Files</h2>
+            </div>
+            <div class="drop-zone" id="drop-zone">
+                <div class="drop-zone-content">
+                    <div class="drop-zone-icon">&#x2B06;</div>
+                    <p class="drop-zone-text">Drop .replay files here</p>
+                    <p class="drop-zone-sub">or click to browse</p>
+                </div>
+                <input type="file" id="file-input" accept=".replay" multiple hidden>
+            </div>
+            <div id="file-list" class="file-list"></div>
+        </section>
+    </div>
+
+    <script src="upload.js"></script>
+</body>
+</html>

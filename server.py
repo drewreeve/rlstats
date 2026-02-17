@@ -1,12 +1,18 @@
+import hmac
+import os
+import secrets
 import sqlite3
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request
+from flask import Flask, abort, jsonify, request, session
+from werkzeug.utils import secure_filename
 
 from db import apply_migrations
 
 DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
+REPLAY_DIR = Path("replays")
+MIN_FILE_SIZE = 256 * 1024
 
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
@@ -183,12 +189,76 @@ API_ROUTES = {
 }
 
 
-def create_app(conn):
+def create_app(conn, replay_dir=None):
     app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
+    app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+    app.config["MAX_CONTENT_LENGTH"] = 3 * 1024 * 1024
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = True
+
+    upload_dir = replay_dir or REPLAY_DIR
+
+    @app.before_request
+    def csrf_check():
+        if request.method == "POST":
+            token = request.headers.get("X-CSRF-Token", "")
+            expected = session.get("csrf_token", "")
+            if not expected or not hmac.compare_digest(token, expected):
+                return jsonify({"error": "CSRF token missing or invalid"}), 403
 
     @app.route("/")
     def index():
         return app.send_static_file("index.html")
+
+    @app.route("/upload")
+    def upload_page():
+        return app.send_static_file("upload.html")
+
+    @app.route("/api/auth", methods=["POST"])
+    def auth():
+        upload_password = os.environ.get("UPLOAD_PASSWORD")
+        if not upload_password:
+            return jsonify({"error": "Upload disabled"}), 403
+        data = request.get_json(silent=True) or {}
+        password = data.get("password", "")
+        if hmac.compare_digest(password, upload_password):
+            session["authenticated"] = True
+            return jsonify({"authenticated": True})
+        return jsonify({"error": "Wrong password"}), 401
+
+    @app.route("/api/auth/status")
+    def auth_status():
+        if "csrf_token" not in session:
+            session["csrf_token"] = secrets.token_hex(32)
+        return jsonify({
+            "authenticated": session.get("authenticated", False),
+            "csrf_token": session["csrf_token"],
+        })
+
+    @app.route("/api/upload", methods=["POST"])
+    def upload():
+        if not session.get("authenticated"):
+            return jsonify({"error": "Not authenticated"}), 401
+        if "file" not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        f = request.files["file"]
+        if not f.filename or not f.filename.lower().endswith(".replay"):
+            return jsonify({"error": "Only .replay files are accepted"}), 400
+        safe_name = secure_filename(f.filename)
+        if not safe_name.lower().endswith(".replay"):
+            return jsonify({"error": "Invalid filename"}), 400
+        content = f.read()
+        if len(content) < MIN_FILE_SIZE:
+            return jsonify({"error": f"File too small (minimum {MIN_FILE_SIZE // 1024}KB)"}), 400
+        dest = upload_dir / safe_name
+        try:
+            fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+            os.write(fd, content)
+            os.close(fd)
+        except FileExistsError:
+            return jsonify({"error": "File already exists", "duplicate": True}), 409
+        return jsonify({"filename": safe_name}), 201
 
     @app.route("/api/matches")
     def matches():
@@ -222,6 +292,10 @@ def create_app(conn):
     @app.errorhandler(404)
     def not_found(e):
         return jsonify({"error": "Not found"}), 404
+
+    @app.errorhandler(413)
+    def too_large(e):
+        return jsonify({"error": "File too large (maximum 3MB)"}), 413
 
     @app.errorhandler(500)
     def internal_error(e):
