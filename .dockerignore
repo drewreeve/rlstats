@@ -4,3 +4,15 @@ __pycache__
 .github/
 *.pyc
 .venv/
+.env
+
+# Docker
+docker-compose.yml
+Dockerfile
+.docker
+.dockerignore
+
+db/
+replays/
+
+.DS_Store
