@@ -13,6 +13,12 @@ const STAT_COLORS = {
     losses: { r: 255, g: 60, b: 60 },
 };
 
+function esc(str) {
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+}
+
 function rgba({ r, g, b }, a) {
     return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
@@ -458,10 +464,10 @@ async function renderRawTable() {
 
         tr.innerHTML = `
             <td class="col-date">${date}</td>
-            <td><span class="mode-tag">${(m.game_mode || "").toUpperCase()}</span></td>
+            <td><span class="mode-tag">${esc((m.game_mode || "").toUpperCase())}</span></td>
             <td><span class="result-badge ${resultClass}">${resultText}</span>${forfeitTag}</td>
             <td class="col-score">${m.score}</td>
-            <td class="col-mvp">${m.mvp || "—"}</td>
+            <td class="col-mvp">${esc(m.mvp || "—")}</td>
         `;
 
         tr.addEventListener("click", () => toggleDetail(tr, m.id));
@@ -497,7 +503,7 @@ async function toggleDetail(row, matchId) {
         </tr></thead><tbody>`;
     for (const p of players) {
         tableHTML += `<tr>
-            <td class="player-name">${p.name}</td>
+            <td class="player-name">${esc(p.name)}</td>
             <td>${p.score ?? 0}</td>
             <td>${p.goals}</td>
             <td>${p.assists}</td>
