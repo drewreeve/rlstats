@@ -195,7 +195,7 @@ def create_app(conn):
         params = request.args.to_dict(flat=False)
         try:
             return jsonify(query_matches(conn, params))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             abort(400)
 
     @app.route("/api/matches/<int:match_id>/players")
@@ -236,9 +236,14 @@ def create_app(conn):
             "default-src 'self'; "
             "script-src 'self' https://cdn.jsdelivr.net; "
             "style-src 'self' https://fonts.googleapis.com; "
+            "style-src-attr 'unsafe-inline'; "
             "font-src 'self' https://fonts.gstatic.com; "
             "connect-src 'self'; "
-            "img-src 'self'"
+            "img-src 'self' data:; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'; "
+            "object-src 'none'"
         )
         return response
 
