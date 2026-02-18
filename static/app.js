@@ -552,7 +552,7 @@ function renderPagination(total, page, perPage) {
 document.addEventListener("DOMContentLoaded", () => {
     renderAll();
 
-    document.querySelectorAll(".mode-btn").forEach((btn) => {
+    document.querySelectorAll(".mode-btn[data-mode]").forEach((btn) => {
         btn.addEventListener("click", () => {
             document.querySelector(".mode-btn.active").classList.remove("active");
             btn.classList.add("active");
