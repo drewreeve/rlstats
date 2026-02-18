@@ -176,6 +176,14 @@ def query_streaks(conn, mode):
     return {"longest_win_streak": 0, "longest_loss_streak": 0}
 
 
+def query_avg_goal_contribution(conn, mode):
+    view = _view("v_avg_goal_contribution", mode)
+    rows = conn.execute(
+        f"SELECT player_name AS player, matches_played AS matches, avg_goal_contribution FROM {view} ORDER BY player_name"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 API_ROUTES = {
     "/api/shooting-pct": query_shooting_pct,
     "/api/win-loss-daily": query_win_loss_daily,
@@ -186,6 +194,7 @@ API_ROUTES = {
     "/api/avg-score": query_avg_score,
     "/api/score-differential": query_score_differential,
     "/api/streaks": query_streaks,
+    "/api/avg-goal-contribution": query_avg_goal_contribution,
 }
 
 

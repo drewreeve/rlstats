@@ -2,6 +2,7 @@ import sqlite3
 
 from ingest import ingest_match
 from server import (
+    query_avg_goal_contribution,
     query_avg_score,
     query_match_players,
     query_matches,
@@ -259,3 +260,44 @@ def test_streaks_no_matches():
     # no 2v2 matches in the 3-replay fixture set
     assert data["longest_win_streak"] == 0
     assert data["longest_loss_streak"] == 0
+
+
+# -- query_avg_goal_contribution --
+
+
+def test_avg_goal_contribution_shape():
+    conn = _db_with_replay()
+    data = query_avg_goal_contribution(conn, "3v3")
+
+    assert len(data) == 3
+    assert [d["player"] for d in data] == ["Drew", "Jeff", "Steve"]
+    assert all("avg_goal_contribution" in d and "matches" in d for d in data)
+
+
+def test_avg_goal_contribution_zero_team_score_excluded():
+    # zero_score.json has team_score=0; NULLIF excludes those rows from AVG
+    conn = _db_with_replay()
+    data = query_avg_goal_contribution(conn, "3v3")
+
+    assert all(d["avg_goal_contribution"] is None for d in data)
+
+
+def test_avg_goal_contribution_values():
+    # match.json (team_score=5): Drew 2/5=0.4, Steve 2/5=0.4, Jeff 4/5=0.8
+    # zero_score.json (team_score=0): excluded via NULLIF
+    # forefeit.json (team_score=4): Drew 3/4=0.75, Steve 0/4=0.0, Jeff 4/4=1.0
+    # averages: Drew=(0.4+0.75)/2=0.575, Steve=(0.4+0.0)/2=0.2, Jeff=(0.8+1.0)/2=0.9
+    conn = _db_with_all_replays()
+    data = query_avg_goal_contribution(conn, "3v3")
+
+    by_player = {d["player"]: d for d in data}
+    assert by_player["Drew"]["avg_goal_contribution"] == 0.575
+    assert by_player["Steve"]["avg_goal_contribution"] == 0.2
+    assert by_player["Jeff"]["avg_goal_contribution"] == 0.9
+
+
+def test_avg_goal_contribution_no_matches_for_mode():
+    conn = _db_with_all_replays()
+    data = query_avg_goal_contribution(conn, "2v2")
+
+    assert data == []

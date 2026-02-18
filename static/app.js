@@ -390,6 +390,38 @@ async function renderStreaks() {
     document.getElementById("streak-loss-value").textContent = data.longest_loss_streak ?? "—";
 }
 
+async function renderGoalContribution() {
+    const data = await fetchJSON(`/api/avg-goal-contribution?mode=${currentMode}`);
+    const canvas = document.getElementById("chart-goal-contribution");
+    charts.goalContribution = new Chart(canvas, {
+        type: "bar",
+        data: {
+            labels: data.map((d) => d.player),
+            datasets: [{
+                label: "Avg Goal Contribution",
+                data: data.map((d) => (d.avg_goal_contribution ?? 0) * 100),
+                backgroundColor: data.map((d) => barGradient(canvas, PLAYER_COLORS[d.player])),
+                borderColor: data.map((d) => rgba(PLAYER_COLORS[d.player], 0.8)),
+                borderWidth: 1,
+                borderRadius: 3,
+                borderSkipped: false,
+            }],
+        },
+        options: {
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: (v) => v + "%",
+                    },
+                },
+                x: { grid: { display: false } },
+            },
+            plugins: { legend: { display: false } },
+        },
+    });
+}
+
 /* ── Visibility & Render ────────────────────────── */
 
 function updateCardVisibility() {
@@ -425,6 +457,7 @@ async function renderAll() {
     if (currentMode === "3v3") {
         renderWeekday();
     }
+    renderGoalContribution();
 }
 
 /* ── Raw Table ─────────────────────────────────── */
