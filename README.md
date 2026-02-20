@@ -17,5 +17,4 @@ really wanted to you could. It's pretty simple really:
 | `UPLOAD_PASSWORD` | Password required to upload replay files. Uploads are disabled if not set. | *(none)* |
 | `HOST` | Address the server binds to. | `0.0.0.0` |
 | `PORT` | Port the server listens on. | `8080` |
-| `INGEST_INTERVAL` | Seconds between ingestion runs (Docker ingest loop only). | `300` |
 
