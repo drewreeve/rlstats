@@ -287,8 +287,10 @@ def create_app(db_path, replay_dir=None, processor=None):
         dest = upload_dir / safe_name
         try:
             fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-            os.write(fd, content)
-            os.close(fd)
+            try:
+                os.write(fd, content)
+            finally:
+                os.close(fd)
         except FileExistsError:
             return jsonify({"error": "File already exists", "duplicate": True}), 409
         if processor is not None:
