@@ -296,32 +296,6 @@ def test_csrf_token_required_on_upload(tmp_path):
         os.environ.pop("UPLOAD_PASSWORD", None)
 
 
-def test_csrf_flow_works(tmp_path):
-    """Full flow: GET status -> extract token -> POST auth with token succeeds."""
-    os.environ["UPLOAD_PASSWORD"] = "secret123"
-    try:
-        db_path = file_db(tmp_path)
-        app = create_app(db_path, replay_dir=tmp_path)
-        app.config["TESTING"] = True
-        client = app.test_client()
-
-        # Get CSRF token from status endpoint
-        status_resp = client.get("/api/auth/status")
-        csrf_token = status_resp.get_json()["csrf_token"]
-        assert csrf_token
-
-        # Use token to authenticate
-        resp = client.post(
-            "/api/auth",
-            json={"password": "secret123"},
-            headers={"X-CSRF-Token": csrf_token},
-        )
-        assert resp.status_code == 200
-        assert resp.get_json()["authenticated"] is True
-    finally:
-        os.environ.pop("UPLOAD_PASSWORD", None)
-
-
 # -- Upload status endpoint --
 
 

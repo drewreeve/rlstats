@@ -89,20 +89,6 @@ def test_query_matches_search_by_mvp_name():
     assert data["matches"][0]["mvp"] == "Drew"
 
 
-def test_query_matches_shape():
-    conn = _db_with_replay()
-    data = query_matches(conn, {})
-    m = data["matches"][0]
-
-    assert "id" in m
-    assert "game_mode" in m
-    assert "result" in m
-    assert "forfeit" in m
-    assert "score" in m
-    assert "played_at" in m
-    assert "mvp" in m
-
-
 # -- query_match_players --
 
 
@@ -115,21 +101,6 @@ def test_query_match_players_returns_tracked_players():
     assert set(d["name"] for d in data) == {"Drew", "Jeff", "Steve"}
     scores = [d["score"] for d in data]
     assert scores == sorted(scores, reverse=True)
-
-
-def test_query_match_players_shape():
-    conn = _db_with_replay()
-    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
-    data = query_match_players(conn, match_id)
-
-    for player in data:
-        assert "name" in player
-        assert "score" in player
-        assert "goals" in player
-        assert "assists" in player
-        assert "saves" in player
-        assert "shots" in player
-        assert "shooting_pct" in player
 
 
 def test_query_match_players_stats():

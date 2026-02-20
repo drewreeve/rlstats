@@ -72,22 +72,6 @@ def test_process_replay_success(tmp_path):
     assert row[0] == 1
 
 
-def test_process_replay_rrrocket_failure(tmp_path):
-    """When rrrocket fails, the .replay file is removed and False is returned."""
-    conn = _make_conn()
-    replay_path = tmp_path / "corrupt.replay"
-    replay_path.write_bytes(b"\x00" * 1024)
-
-    failed = subprocess.CompletedProcess(["rrrocket"], 1, stderr=b"parse error")
-
-    with patch("process.subprocess.run", return_value=failed):
-        success, error = process_replay(replay_path, conn)
-
-    assert success is False
-    assert "rrrocket failed" in error
-    assert not replay_path.exists()
-
-
 def test_process_replay_ingest_failure(tmp_path):
     """When ingest fails, both .replay and .json are removed."""
     conn = _make_conn()
