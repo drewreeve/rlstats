@@ -3,7 +3,7 @@ import subprocess
 import threading
 from unittest.mock import patch
 
-from process import UploadProcessor, process_batch, process_replay
+from process import UploadProcessor, convert_replay, process_batch, process_replay
 from tests.fixtures import file_db, in_memory_db, load_replay
 
 
@@ -11,6 +11,42 @@ def _make_conn():
     conn = in_memory_db()
     conn.row_factory = None  # use tuples for simplicity
     return conn
+
+
+def test_convert_replay_success(tmp_path):
+    """convert_replay writes a .replay.json sidecar on success."""
+    replay_data = load_replay("match.json")
+    replay_path = tmp_path / "test.replay"
+    replay_path.write_bytes(b"\x00" * 1024)
+
+    def fake_rrrocket(args, **kwargs):
+        stdout = json.dumps(replay_data).encode()
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    with patch("process.subprocess.run", side_effect=fake_rrrocket):
+        success, error = convert_replay(replay_path)
+
+    assert success is True
+    assert error is None
+    json_path = tmp_path / "test.replay.json"
+    assert json_path.exists()
+    assert json.loads(json_path.read_text()) == replay_data
+
+
+def test_convert_replay_failure(tmp_path):
+    """convert_replay removes .replay on rrrocket failure."""
+    replay_path = tmp_path / "corrupt.replay"
+    replay_path.write_bytes(b"\x00" * 1024)
+
+    failed = subprocess.CompletedProcess(["rrrocket"], 1, stderr=b"parse error")
+
+    with patch("process.subprocess.run", return_value=failed):
+        success, error = convert_replay(replay_path)
+
+    assert success is False
+    assert "rrrocket failed" in error
+    assert not replay_path.exists()
+    assert not (tmp_path / "corrupt.replay.json").exists()
 
 
 def test_process_replay_success(tmp_path):

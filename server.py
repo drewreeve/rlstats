@@ -11,7 +11,7 @@ from werkzeug.utils import secure_filename
 
 from db import apply_migrations
 from ingest import ingest_match
-from process import UploadProcessor, process_batch
+from process import UploadProcessor, convert_replay
 
 logger = logging.getLogger(__name__)
 
@@ -394,16 +394,17 @@ def main():
     conn.execute("PRAGMA foreign_keys = ON")
     apply_migrations(conn)
 
-    # Process any unprocessed replay files at startup
+    # Convert any unprocessed replay files (no DB needed)
     unprocessed = [
         p for p in REPLAY_DIR.glob("*.replay")
         if not p.with_suffix(p.suffix + ".json").exists()
     ]
     if unprocessed:
-        print(f"Processing {len(unprocessed)} unprocessed replay(s) at startup...")
-        process_batch(unprocessed, conn)
+        print(f"Converting {len(unprocessed)} unprocessed replay(s) at startup...")
+        for replay_path in unprocessed:
+            convert_replay(replay_path)
 
-    # Ingest any parsed JSON files into the database
+    # Ingest all parsed JSON files into the database (single pass)
     json_files = sorted(REPLAY_DIR.glob("*.json"))
     if json_files:
         print(f"Ingesting {len(json_files)} replay JSON file(s)...")
