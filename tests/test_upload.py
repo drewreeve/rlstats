@@ -1,35 +1,7 @@
 import os
-import sqlite3
 
 from server import create_app
-from tests.fixtures import in_memory_db
-
-
-def _make_client(tmp_path, env=None):
-    """Create a Flask test client with a tmp replays directory."""
-    old_env = {}
-    env = env or {}
-    for k, v in env.items():
-        old_env[k] = os.environ.get(k)
-        os.environ[k] = v
-
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
-    app = create_app(conn, replay_dir=tmp_path)
-    app.config["TESTING"] = True
-    client = app.test_client()
-
-    # Restore env after setup (env vars read at request time, so set them for duration)
-    # We'll use a class to manage cleanup
-    return client, old_env, env
-
-
-def _cleanup_env(old_env, env):
-    for k in env:
-        if old_env.get(k) is None:
-            os.environ.pop(k, None)
-        else:
-            os.environ[k] = old_env[k]
+from tests.fixtures import file_db
 
 
 def _replay_content(size=300 * 1024):
@@ -49,9 +21,8 @@ def _get_csrf_token(client):
 def test_auth_correct_password(tmp_path):
     os.environ["UPLOAD_PASSWORD"] = "secret123"
     try:
-        conn = in_memory_db()
-        conn.row_factory = sqlite3.Row
-        app = create_app(conn, replay_dir=tmp_path)
+        db_path = file_db(tmp_path)
+        app = create_app(db_path, replay_dir=tmp_path)
         app.config["TESTING"] = True
         client = app.test_client()
 
@@ -70,9 +41,8 @@ def test_auth_correct_password(tmp_path):
 def test_auth_wrong_password(tmp_path):
     os.environ["UPLOAD_PASSWORD"] = "secret123"
     try:
-        conn = in_memory_db()
-        conn.row_factory = sqlite3.Row
-        app = create_app(conn, replay_dir=tmp_path)
+        db_path = file_db(tmp_path)
+        app = create_app(db_path, replay_dir=tmp_path)
         app.config["TESTING"] = True
         client = app.test_client()
 
@@ -89,9 +59,8 @@ def test_auth_wrong_password(tmp_path):
 
 def test_auth_missing_env_var(tmp_path):
     os.environ.pop("UPLOAD_PASSWORD", None)
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
-    app = create_app(conn, replay_dir=tmp_path)
+    db_path = file_db(tmp_path)
+    app = create_app(db_path, replay_dir=tmp_path)
     app.config["TESTING"] = True
     client = app.test_client()
 
@@ -105,9 +74,8 @@ def test_auth_missing_env_var(tmp_path):
 
 
 def test_auth_status_unauthenticated(tmp_path):
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
-    app = create_app(conn, replay_dir=tmp_path)
+    db_path = file_db(tmp_path)
+    app = create_app(db_path, replay_dir=tmp_path)
     app.config["TESTING"] = True
     client = app.test_client()
 
@@ -121,9 +89,8 @@ def test_auth_status_unauthenticated(tmp_path):
 def test_auth_status_after_login(tmp_path):
     os.environ["UPLOAD_PASSWORD"] = "secret123"
     try:
-        conn = in_memory_db()
-        conn.row_factory = sqlite3.Row
-        app = create_app(conn, replay_dir=tmp_path)
+        db_path = file_db(tmp_path)
+        app = create_app(db_path, replay_dir=tmp_path)
         app.config["TESTING"] = True
         client = app.test_client()
 
@@ -144,9 +111,10 @@ def test_auth_status_after_login(tmp_path):
 
 def _authed_client(tmp_path):
     os.environ["UPLOAD_PASSWORD"] = "test"
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
-    app = create_app(conn, replay_dir=tmp_path)
+    db_path = file_db(tmp_path)
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    app = create_app(db_path, replay_dir=replay_dir)
     app.config["TESTING"] = True
     client = app.test_client()
     token = _get_csrf_token(client)
@@ -155,11 +123,11 @@ def _authed_client(tmp_path):
         json={"password": "test"},
         headers={"X-CSRF-Token": token},
     )
-    return client, token
+    return client, token, replay_dir
 
 
 def test_upload_valid_file(tmp_path):
-    client, token = _authed_client(tmp_path)
+    client, token, replay_dir = _authed_client(tmp_path)
     try:
         from io import BytesIO
 
@@ -172,15 +140,14 @@ def test_upload_valid_file(tmp_path):
         )
         assert resp.status_code == 201
         assert resp.get_json()["filename"] == "match.replay"
-        assert (tmp_path / "match.replay").exists()
+        assert (replay_dir / "match.replay").exists()
     finally:
         os.environ.pop("UPLOAD_PASSWORD", None)
 
 
 def test_upload_unauthenticated(tmp_path):
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
-    app = create_app(conn, replay_dir=tmp_path)
+    db_path = file_db(tmp_path)
+    app = create_app(db_path, replay_dir=tmp_path)
     app.config["TESTING"] = True
     client = app.test_client()
 
@@ -198,7 +165,7 @@ def test_upload_unauthenticated(tmp_path):
 
 
 def test_upload_wrong_extension(tmp_path):
-    client, token = _authed_client(tmp_path)
+    client, token, _ = _authed_client(tmp_path)
     try:
         from io import BytesIO
 
@@ -216,7 +183,7 @@ def test_upload_wrong_extension(tmp_path):
 
 
 def test_upload_too_small(tmp_path):
-    client, token = _authed_client(tmp_path)
+    client, token, _ = _authed_client(tmp_path)
     try:
         from io import BytesIO
 
@@ -234,7 +201,7 @@ def test_upload_too_small(tmp_path):
 
 
 def test_upload_duplicate(tmp_path):
-    client, token = _authed_client(tmp_path)
+    client, token, _ = _authed_client(tmp_path)
     try:
         from io import BytesIO
 
@@ -262,7 +229,7 @@ def test_upload_duplicate(tmp_path):
 
 
 def test_upload_path_traversal_sanitized(tmp_path):
-    client, token = _authed_client(tmp_path)
+    client, token, _ = _authed_client(tmp_path)
     try:
         from io import BytesIO
 
@@ -284,9 +251,8 @@ def test_upload_path_traversal_sanitized(tmp_path):
 
 
 def test_upload_page_serves(tmp_path):
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
-    app = create_app(conn, replay_dir=tmp_path)
+    db_path = file_db(tmp_path)
+    app = create_app(db_path, replay_dir=tmp_path)
     app.config["TESTING"] = True
     client = app.test_client()
 
@@ -301,9 +267,8 @@ def test_upload_page_serves(tmp_path):
 def test_csrf_token_required_on_auth(tmp_path):
     os.environ["UPLOAD_PASSWORD"] = "secret123"
     try:
-        conn = in_memory_db()
-        conn.row_factory = sqlite3.Row
-        app = create_app(conn, replay_dir=tmp_path)
+        db_path = file_db(tmp_path)
+        app = create_app(db_path, replay_dir=tmp_path)
         app.config["TESTING"] = True
         client = app.test_client()
 
@@ -316,7 +281,7 @@ def test_csrf_token_required_on_auth(tmp_path):
 
 
 def test_csrf_token_required_on_upload(tmp_path):
-    client, _token = _authed_client(tmp_path)
+    client, _token, _ = _authed_client(tmp_path)
     try:
         from io import BytesIO
 
@@ -335,9 +300,8 @@ def test_csrf_flow_works(tmp_path):
     """Full flow: GET status -> extract token -> POST auth with token succeeds."""
     os.environ["UPLOAD_PASSWORD"] = "secret123"
     try:
-        conn = in_memory_db()
-        conn.row_factory = sqlite3.Row
-        app = create_app(conn, replay_dir=tmp_path)
+        db_path = file_db(tmp_path)
+        app = create_app(db_path, replay_dir=tmp_path)
         app.config["TESTING"] = True
         client = app.test_client()
 
@@ -356,3 +320,64 @@ def test_csrf_flow_works(tmp_path):
         assert resp.get_json()["authenticated"] is True
     finally:
         os.environ.pop("UPLOAD_PASSWORD", None)
+
+
+# -- Upload status endpoint --
+
+
+def _status_client(tmp_path):
+    db_path = file_db(tmp_path)
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    app = create_app(db_path, replay_dir=replay_dir)
+    app.config["TESTING"] = True
+    return app.test_client(), replay_dir
+
+
+def test_upload_status_error_when_replay_missing(tmp_path):
+    """No .replay file at all means processing failed (file was deleted)."""
+    client, replay_dir = _status_client(tmp_path)
+
+    resp = client.get("/api/upload/status?filename=nonexistent.replay")
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "error"
+
+
+def test_upload_status_pending_when_replay_exists(tmp_path):
+    """.replay exists but no .json yet means still processing."""
+    client, replay_dir = _status_client(tmp_path)
+
+    (replay_dir / "test.replay").write_bytes(b"\x00")
+
+    resp = client.get("/api/upload/status?filename=test.replay")
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "pending"
+
+
+def test_upload_status_processed_when_json_exists(tmp_path):
+    """.replay.json exists means processing succeeded."""
+    client, replay_dir = _status_client(tmp_path)
+
+    (replay_dir / "test.replay").write_bytes(b"\x00")
+    (replay_dir / "test.replay.json").write_bytes(b"{}")
+
+    resp = client.get("/api/upload/status?filename=test.replay")
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "processed"
+
+
+def test_upload_status_missing_filename(tmp_path):
+    client, _ = _status_client(tmp_path)
+
+    resp = client.get("/api/upload/status")
+    assert resp.status_code == 400
+
+
+def test_upload_status_sanitizes_filename(tmp_path):
+    """Path traversal in filename param is sanitized."""
+    client, _ = _status_client(tmp_path)
+
+    resp = client.get("/api/upload/status?filename=../../../etc/passwd")
+    assert resp.status_code == 200
+    # secure_filename strips traversal; the sanitized name won't exist
+    assert resp.get_json()["status"] in ("error", "unknown")

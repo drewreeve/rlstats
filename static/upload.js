@@ -178,7 +178,8 @@
             try { data = JSON.parse(xhr.responseText); } catch (e) { data = {}; }
 
             if (xhr.status === 201) {
-                setEntryStatus(entry, "success", "UPLOADED");
+                setEntryStatus(entry, "processing", "PROCESSING...");
+                pollStatus(data.filename, entry);
             } else if (xhr.status === 409) {
                 setEntryStatus(entry, "duplicate", "DUPLICATE");
             } else if (xhr.status === 401) {
@@ -196,6 +197,33 @@
         xhr.open("POST", "/api/upload");
         xhr.setRequestHeader("X-CSRF-Token", csrfToken);
         xhr.send(formData);
+    }
+
+    function pollStatus(filename, entry) {
+        var elapsed = 0;
+        var interval = setInterval(function () {
+            elapsed += 2000;
+            if (elapsed > 30000) {
+                clearInterval(interval);
+                setEntryStatus(entry, "error", "PROCESSING TIMEOUT");
+                return;
+            }
+            fetch("/api/upload/status?filename=" + encodeURIComponent(filename))
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data.status === "processed") {
+                        clearInterval(interval);
+                        setEntryStatus(entry, "success", "PROCESSED");
+                    } else if (data.status === "error") {
+                        clearInterval(interval);
+                        setEntryStatus(entry, "error", "PROCESSING FAILED");
+                    }
+                })
+                .catch(function () {
+                    clearInterval(interval);
+                    setEntryStatus(entry, "error", "STATUS CHECK FAILED");
+                });
+        }, 2000);
     }
 
     function formatSize(bytes) {

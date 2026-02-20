@@ -17,10 +17,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-editable --compile-bytecode --no-dev --no-install-project
 
-COPY server.py ingest.py db.py ./
+COPY server.py ingest.py db.py process.py ./
 COPY migrations/ migrations/
 COPY static/ static/
-COPY scripts/ scripts/
 RUN mkdir -p db replays && chown -R appuser:appuser /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

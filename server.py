@@ -1,13 +1,19 @@
 import hmac
+import json
+import logging
 import os
 import secrets
 import sqlite3
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request, session
+from flask import Flask, abort, g, jsonify, request, session
 from werkzeug.utils import secure_filename
 
 from db import apply_migrations
+from ingest import ingest_match
+from process import UploadProcessor, process_batch
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -40,8 +46,9 @@ def query_matches(conn, params):
         where.append("m.result = :result")
         bindings["result"] = result
     if search:
-        where.append("p.name LIKE :search")
-        bindings["search"] = f"%{search}%"
+        where.append("p.name LIKE :search ESCAPE '\\'")
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        bindings["search"] = f"%{escaped}%"
 
     where_clause = (" AND " + " AND ".join(where)) if where else ""
 
@@ -184,6 +191,7 @@ def query_avg_goal_contribution(conn, mode):
     return [dict(r) for r in rows]
 
 
+
 API_ROUTES = {
     "/api/shooting-pct": query_shooting_pct,
     "/api/win-loss-daily": query_win_loss_daily,
@@ -198,7 +206,17 @@ API_ROUTES = {
 }
 
 
-def create_app(conn, replay_dir=None):
+def _get_conn(db_path):
+    """Return a per-request read connection, creating it if needed."""
+    if "db_conn" not in g:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        g.db_conn = conn
+    return g.db_conn
+
+
+def create_app(db_path, replay_dir=None, processor=None):
     app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
     app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
     app.config["MAX_CONTENT_LENGTH"] = 3 * 1024 * 1024
@@ -215,6 +233,12 @@ def create_app(conn, replay_dir=None):
             expected = session.get("csrf_token", "")
             if not expected or not hmac.compare_digest(token, expected):
                 return jsonify({"error": "CSRF token missing or invalid"}), 403
+
+    @app.teardown_appcontext
+    def close_db(exc):
+        conn = g.pop("db_conn", None)
+        if conn is not None:
+            conn.close()
 
     @app.route("/")
     def index():
@@ -267,10 +291,29 @@ def create_app(conn, replay_dir=None):
             os.close(fd)
         except FileExistsError:
             return jsonify({"error": "File already exists", "duplicate": True}), 409
+        if processor is not None:
+            processor.enqueue(dest)
         return jsonify({"filename": safe_name}), 201
+
+    @app.route("/api/upload/status")
+    def upload_status():
+        filename = request.args.get("filename", "")
+        if not filename:
+            return jsonify({"error": "filename parameter required"}), 400
+        safe_name = secure_filename(filename)
+        if not safe_name:
+            return jsonify({"status": "unknown"})
+        replay_path = upload_dir / safe_name
+        json_path = replay_path.with_suffix(replay_path.suffix + ".json")
+        if json_path.exists():
+            return jsonify({"status": "processed"})
+        if not replay_path.exists():
+            return jsonify({"status": "error"})
+        return jsonify({"status": "pending"})
 
     @app.route("/api/matches")
     def matches():
+        conn = _get_conn(db_path)
         params = request.args.to_dict(flat=False)
         try:
             return jsonify(query_matches(conn, params))
@@ -279,12 +322,14 @@ def create_app(conn, replay_dir=None):
 
     @app.route("/api/matches/<int:match_id>/players")
     def match_players(match_id):
+        conn = _get_conn(db_path)
         return jsonify(query_match_players(conn, match_id))
 
     for path, handler_fn in API_ROUTES.items():
 
         def make_view(fn):
             def view():
+                conn = _get_conn(db_path)
                 mode = request.args.get("mode", "3v3")
                 if mode not in ALLOWED_MODES:
                     mode = "3v3"
@@ -341,15 +386,37 @@ def main():
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8080"))
 
-    if not DB_PATH.exists():
-        print(f"Database not found at {DB_PATH}. Run ingest.py first.")
-        raise SystemExit(1)
+    DB_PATH.parent.mkdir(exist_ok=True)
 
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # Use a temporary connection for startup tasks only
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     apply_migrations(conn)
 
-    app = create_app(conn)
+    # Process any unprocessed replay files at startup
+    unprocessed = [
+        p for p in REPLAY_DIR.glob("*.replay")
+        if not p.with_suffix(p.suffix + ".json").exists()
+    ]
+    if unprocessed:
+        print(f"Processing {len(unprocessed)} unprocessed replay(s) at startup...")
+        process_batch(unprocessed, conn)
+
+    # Ingest any parsed JSON files into the database
+    json_files = sorted(REPLAY_DIR.glob("*.json"))
+    if json_files:
+        print(f"Ingesting {len(json_files)} replay JSON file(s)...")
+        for path in json_files:
+            with open(path, "r", encoding="utf-8") as f:
+                replay = json.load(f)
+            ingest_match(conn, replay)
+        conn.commit()
+
+    conn.close()
+
+    processor = UploadProcessor(DB_PATH)
+    app = create_app(DB_PATH, processor=processor)
     print(f"Serving on http://{host}:{port}")
     serve(app, host=host, port=port, threads=8)
 

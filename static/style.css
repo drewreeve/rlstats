@@ -710,6 +710,31 @@ a.mode-btn {
     border-color: rgba(255, 60, 60, 0.4);
 }
 
+.file-entry[data-status="processing"] {
+    border-color: rgba(255, 107, 0, 0.4);
+    animation: processingPulse 2s ease-in-out infinite;
+}
+
+@keyframes processingPulse {
+    0%, 100% { border-color: rgba(255, 107, 0, 0.2); }
+    50% { border-color: rgba(255, 107, 0, 0.6); }
+}
+
+.file-entry[data-status="processing"] .file-entry-status {
+    color: var(--orange);
+}
+
+.file-entry[data-status="processing"] .file-progress-bar {
+    width: 100%;
+    background: var(--orange);
+    animation: processingBar 1.5s ease-in-out infinite;
+}
+
+@keyframes processingBar {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
 .file-entry[data-status="duplicate"] {
     border-color: rgba(255, 107, 0, 0.4);
 }

@@ -33,6 +33,8 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
     props = replay.get("properties", {})
 
     replay_hash = props.get("MatchGUID") or props.get("MatchGuid")
+    if not replay_hash:
+        return
     # rrrocket Date is not guaranteed to be SQLite-parseable
     raw_played_at = props.get("Date")
     played_at_sql = None
@@ -43,7 +45,7 @@ def ingest_match(conn: sqlite3.Connection, replay: Dict):
             date_part, time_part = raw_played_at.split(" ")
             h, m, s = time_part.split("-")
             played_at_sql = f"{date_part} {h}:{m}:{s}"
-        except (ValueError, AttributeError):
+        except ValueError, AttributeError:
             played_at_sql = None
 
     duration = props.get("TotalSecondsPlayed")

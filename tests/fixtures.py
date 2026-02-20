@@ -17,3 +17,12 @@ def in_memory_db():
     conn = sqlite3.connect(":memory:")
     apply_migrations(conn)
     return conn
+
+
+def file_db(tmp_path: Path) -> Path:
+    """Create a migrated file-based SQLite DB and return its path."""
+    db_path = tmp_path / "test.sqlite"
+    conn = sqlite3.connect(db_path)
+    apply_migrations(conn)
+    conn.close()
+    return db_path
