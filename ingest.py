@@ -77,7 +77,7 @@ def _resolve_result(team_score: Any, opponent_score: Any) -> str | None:
         return "win"
     if team_score < opponent_score:
         return "loss"
-    return "draw"
+    return None
 
 
 def _resolve_mvp_player_id(
@@ -190,6 +190,9 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         tracked_players, team0_score, team1_score
     )
     result = _resolve_result(team_score, opponent_score)
+    if result is None:
+        return
+
     mvp_player_id = _resolve_mvp_player_id(conn, tracked_players)
 
     match_id = _upsert_match(
