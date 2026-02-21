@@ -23,11 +23,6 @@ MIN_FILE_SIZE = 256 * 1024
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
 
-def _view(prefix, mode):
-    if mode not in ALLOWED_MODES:
-        raise ValueError(f"Invalid mode: {mode}")
-    return f"{prefix}_{mode}"
-
 
 def query_matches(conn, params):
     page = max(1, int(params.get("page", ["1"])[0]))
@@ -114,11 +109,11 @@ def query_match_players(conn, match_id):
 
 
 def query_shooting_pct(conn, mode):
-    view = _view("v_shooting_pct", mode)
-    rows = conn.execute(
-        f"SELECT player_name AS player, total_goals AS goals, total_shots AS shots, shooting_pct FROM {view} ORDER BY player_name"
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = queries.shooting_pct(conn, game_mode=mode)
+    return [
+        {"player": r["player_name"], "goals": r["total_goals"], "shots": r["total_shots"], "shooting_pct": r["shooting_pct"]}
+        for r in rows
+    ]
 
 
 def query_win_loss_daily(conn, mode):
@@ -130,60 +125,54 @@ def query_win_loss_daily(conn, mode):
 
 
 def query_player_stats(conn, mode):
-    view = _view("v_player_stats", mode)
-    rows = conn.execute(
-        f"SELECT player_name AS player, matches_played AS matches, total_goals AS goals, total_assists AS assists, total_saves AS saves, total_shots AS shots FROM {view} ORDER BY player_name"
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = queries.player_stats(conn, game_mode=mode)
+    return [
+        {"player": r["player_name"], "matches": r["matches_played"], "goals": r["total_goals"], "assists": r["total_assists"], "saves": r["total_saves"], "shots": r["total_shots"]}
+        for r in rows
+    ]
 
 
 def query_mvp_wins(conn, mode):
-    view = _view("v_mvp_win_rate", mode)
-    rows = conn.execute(
-        f"SELECT player_name AS player, mvp_matches, mvp_wins, mvp_win_rate AS win_rate FROM {view} ORDER BY player_name"
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = queries.mvp_wins(conn, game_mode=mode)
+    return [
+        {"player": r["player_name"], "mvp_matches": r["mvp_matches"], "mvp_wins": r["mvp_wins"], "win_rate": r["mvp_win_rate"]}
+        for r in rows
+    ]
 
 
 def query_mvp_losses(conn, mode):
-    view = _view("v_mvp_in_losses", mode)
-    rows = conn.execute(
-        f"SELECT player_name AS player, loss_mvps FROM {view} ORDER BY player_name"
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = queries.mvp_losses(conn, game_mode=mode)
+    return [
+        {"player": r["player_name"], "loss_mvps": r["loss_mvps"]}
+        for r in rows
+    ]
 
 
 def query_weekday(conn, mode):
-    if mode != "3v3":
-        return []
-    rows = conn.execute(
-        "SELECT weekday, matches_played AS matches, wins, losses, win_rate FROM v_win_loss_by_weekday_3v3"
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = queries.weekday(conn, game_mode=mode)
+    return [
+        {"weekday": r["weekday"], "matches": r["matches_played"], "wins": r["wins"], "losses": r["losses"], "win_rate": r["win_rate"]}
+        for r in rows
+    ]
 
 
 def query_avg_score(conn, mode):
-    view = _view("v_avg_score", mode)
-    rows = conn.execute(
-        f"SELECT player_name AS player, matches_played AS matches, total_score, avg_score FROM {view} ORDER BY player_name"
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = queries.avg_score(conn, game_mode=mode)
+    return [
+        {"player": r["player_name"], "matches": r["matches_played"], "total_score": r["total_score"], "avg_score": r["avg_score"]}
+        for r in rows
+    ]
 
 
 def query_score_differential(conn, mode):
-    view = _view("v_score_differential", mode)
-    rows = conn.execute(
-        f"SELECT differential, match_count FROM {view} ORDER BY differential"
-    ).fetchall()
+    rows = queries.score_differential(conn, game_mode=mode)
     return [dict(r) for r in rows]
 
 
 def query_streaks(conn, mode):
-    view = _view("v_streaks", mode)
-    row = conn.execute(
-        f"SELECT longest_win_streak, longest_loss_streak FROM {view}"
-    ).fetchone()
-    if row:
+    rows = list(queries.streaks(conn, game_mode=mode))
+    if rows:
+        row = rows[0]
         return {
             "longest_win_streak": row["longest_win_streak"] or 0,
             "longest_loss_streak": row["longest_loss_streak"] or 0,
@@ -192,11 +181,11 @@ def query_streaks(conn, mode):
 
 
 def query_avg_goal_contribution(conn, mode):
-    view = _view("v_avg_goal_contribution", mode)
-    rows = conn.execute(
-        f"SELECT player_name AS player, matches_played AS matches, avg_goal_contribution FROM {view} ORDER BY player_name"
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = queries.avg_goal_contribution(conn, game_mode=mode)
+    return [
+        {"player": r["player_name"], "matches": r["matches_played"], "avg_goal_contribution": r["avg_goal_contribution"]}
+        for r in rows
+    ]
 
 
 
