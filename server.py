@@ -50,6 +50,15 @@ def query_matches(conn, params):
         escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         bindings["search"] = f"%{escaped}%"
 
+    date_from = params.get("date_from", [""])[0].strip()
+    date_to = params.get("date_to", [""])[0].strip()
+    if date_from:
+        where.append("m.played_at >= :date_from")
+        bindings["date_from"] = date_from
+    if date_to:
+        where.append("m.played_at < date(:date_to, '+1 day')")
+        bindings["date_to"] = date_to
+
     where_clause = (" AND " + " AND ".join(where)) if where else ""
 
     count_sql = f"""

@@ -311,6 +311,29 @@ header h1 {
     flex: 1;
 }
 
+.history-date {
+    flex: none;
+    width: auto;
+    color-scheme: dark;
+}
+
+.history-date-clear {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    padding: 0.55rem 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.history-date-clear:hover {
+    color: var(--text);
+    border-color: #252535;
+}
+
 .history-select {
     cursor: pointer;
 }

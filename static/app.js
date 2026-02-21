@@ -134,6 +134,21 @@ async function renderWinRateDaily() {
         y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
         x: { grid: { display: false } },
       },
+      onHover: (event, elements) => {
+        event.native.target.style.cursor = elements.length ? "pointer" : "";
+      },
+      onClick: (event, elements) => {
+        if (!elements.length) return;
+        const idx = elements[0].index;
+        const date = data[idx].date;
+        if (!date) return;
+        document.getElementById("history-date-from").value = date;
+        document.getElementById("history-date-to").value = date;
+        document.querySelector(".mode-btn.active").classList.remove("active");
+        document.querySelector('.mode-btn[data-mode="history"]').classList.add("active");
+        currentMode = "history";
+        renderAll();
+      },
     },
   });
 }
@@ -388,10 +403,20 @@ let rawPerPage = 25;
 const playerDetailCache = {};
 let rawSearchTimer = null;
 
+function updateDateClearButton() {
+  const from = document.getElementById("history-date-from").value;
+  const to = document.getElementById("history-date-to").value;
+  document.getElementById("history-date-clear").hidden = !from && !to;
+}
+
 async function renderRawTable() {
   const search = document.getElementById("history-search").value;
   const gameMode = document.getElementById("history-filter-mode").value;
   const result = document.getElementById("history-filter-result").value;
+
+  const dateFrom = document.getElementById("history-date-from").value;
+  const dateTo = document.getElementById("history-date-to").value;
+  updateDateClearButton();
 
   const params = new URLSearchParams({
     page: rawPage,
@@ -400,6 +425,8 @@ async function renderRawTable() {
   if (search) params.set("search", search);
   if (gameMode) params.set("game_mode", gameMode);
   if (result) params.set("result", result);
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
 
   const data = await fetchJSON(`/api/matches?${params}`);
   const tbody = document.getElementById("history-table-body");
@@ -546,4 +573,21 @@ document.addEventListener("DOMContentLoaded", () => {
       rawPage = 1;
       renderRawTable();
     });
+
+  document.getElementById("history-date-from").addEventListener("change", () => {
+    rawPage = 1;
+    renderRawTable();
+  });
+
+  document.getElementById("history-date-to").addEventListener("change", () => {
+    rawPage = 1;
+    renderRawTable();
+  });
+
+  document.getElementById("history-date-clear").addEventListener("click", () => {
+    document.getElementById("history-date-from").value = "";
+    document.getElementById("history-date-to").value = "";
+    rawPage = 1;
+    renderRawTable();
+  });
 });
