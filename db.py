@@ -1,7 +1,12 @@
 import sqlite3
 from pathlib import Path
 
+import aiosql
+
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+SQL_DIR = Path(__file__).parent / "sql"
+
+queries = aiosql.from_path(SQL_DIR, "sqlite3")
 
 
 def apply_migrations(conn: sqlite3.Connection):

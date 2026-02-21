@@ -182,6 +182,13 @@ def test_win_loss_daily_handler():
     assert data[0]["win_rate"] == 0.0
 
 
+def test_win_loss_daily_no_matches_for_mode():
+    conn = _db_with_replay()
+    data = query_win_loss_daily(conn, "2v2")
+
+    assert data == []
+
+
 def test_avg_score_handler():
     conn = _db_with_replay()
     data = query_avg_score(conn, "3v3")

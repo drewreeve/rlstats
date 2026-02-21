@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Flask, abort, g, jsonify, request, session
 from werkzeug.utils import secure_filename
 
-from db import apply_migrations
+from db import apply_migrations, queries
 from ingest import ingest_match
 from process import UploadProcessor, convert_replay
 
@@ -122,12 +122,11 @@ def query_shooting_pct(conn, mode):
 
 
 def query_win_loss_daily(conn, mode):
-    if mode != "3v3":
-        return []
-    rows = conn.execute(
-        "SELECT play_date AS date, wins, losses, win_rate FROM v_win_loss_daily_3v3"
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = queries.win_loss_daily(conn, game_mode=mode)
+    return [
+        {"date": r["play_date"], "wins": r["wins"], "losses": r["losses"], "win_rate": r["win_rate"]}
+        for r in rows
+    ]
 
 
 def query_player_stats(conn, mode):

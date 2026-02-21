@@ -5,6 +5,7 @@ description = "Personal project for tracking our RL teams' stats"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "aiosql>=15.0",
     "flask>=3.1.2",
     "waitress>=3.0.2",
 ]
