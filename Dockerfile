@@ -19,6 +19,7 @@ RUN uv sync --locked --no-editable --compile-bytecode --no-dev --no-install-proj
 
 COPY server.py ingest.py db.py process.py ./
 COPY migrations/ migrations/
+COPY sql/ sql/
 COPY static/ static/
 RUN mkdir -p db replays && chown -R appuser:appuser /app
 
