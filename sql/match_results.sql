@@ -1,5 +1,45 @@
 -- name: win_loss_daily(game_mode)
 -- Win/loss record aggregated by session date for a given game mode.
+WITH ordered_matches AS (
+    SELECT
+        id AS match_id,
+        played_at,
+        result,
+        LAG(played_at) OVER (ORDER BY played_at) AS prev_played_at
+    FROM matches
+    WHERE played_at IS NOT NULL
+      AND result IN ('win', 'loss')
+      AND game_mode = :game_mode
+),
+session_markers AS (
+    SELECT
+        match_id,
+        played_at,
+        result,
+        CASE
+            WHEN prev_played_at IS NULL THEN 1
+            WHEN (julianday(played_at) - julianday(prev_played_at)) * 24 * 60 > 60 THEN 1
+            ELSE 0
+        END AS new_session
+    FROM ordered_matches
+),
+sessions AS (
+    SELECT
+        match_id,
+        played_at,
+        result,
+        SUM(new_session) OVER (ORDER BY played_at) AS session_id
+    FROM session_markers
+),
+session_summary AS (
+    SELECT
+        session_id,
+        DATE(MIN(played_at)) AS session_date,
+        SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses
+    FROM sessions
+    GROUP BY session_id
+)
 SELECT
     session_date AS play_date,
     SUM(wins) AS wins,
@@ -8,8 +48,7 @@ SELECT
         CAST(SUM(wins) AS REAL) / NULLIF(SUM(wins) + SUM(losses), 0),
         3
     ) AS win_rate
-FROM v_session_summary
-WHERE game_mode = :game_mode
+FROM session_summary
 GROUP BY session_date
 ORDER BY play_date;
 
