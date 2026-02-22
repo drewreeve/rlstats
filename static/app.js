@@ -336,6 +336,47 @@ async function renderStreaks() {
     data.longest_loss_streak ?? "—";
 }
 
+async function renderScoreRange() {
+  const data = await fetchJSON(`/api/score-range?mode=${currentMode}`);
+  const canvas = document.getElementById("chart-score-range");
+  charts.scoreRange = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: data.map((d) => d.player),
+      datasets: [
+        {
+          label: "Score Range",
+          data: data.map((d) => [d.min, d.max]),
+          backgroundColor: data.map((d) =>
+            gradient(canvas, PLAYER_COLORS[d.player], 0.85, 0.15),
+          ),
+          borderColor: data.map((d) => rgba(PLAYER_COLORS[d.player], 0.8)),
+          borderWidth: 1,
+          borderRadius: 2,
+          borderSkipped: false,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const [low, high] = ctx.raw;
+              return `Low: ${low}  High: ${high}`;
+            },
+          },
+        },
+      },
+      scales: {
+        y: { beginAtZero: true },
+        x: { grid: { display: false } },
+      },
+    },
+  });
+}
+
 function renderGoalContribution() {
   return playerBarChart(
     "goalContribution",
@@ -393,6 +434,7 @@ async function renderAll() {
   if (currentMode === "3v3") {
     renderWeekday();
   }
+  renderScoreRange();
   renderGoalContribution();
 }
 

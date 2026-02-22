@@ -49,6 +49,19 @@ WHERE m.game_mode = :game_mode
 GROUP BY p.id, p.name
 ORDER BY p.name;
 
+-- name: score_range(game_mode)
+-- Min and max score per player for a given game mode.
+SELECT
+    p.name AS player_name,
+    MIN(mp.score) AS min_score,
+    MAX(mp.score) AS max_score
+FROM match_players mp
+JOIN players p ON p.id = mp.player_id
+JOIN matches m ON m.id = mp.match_id
+WHERE m.game_mode = :game_mode
+GROUP BY p.id, p.name
+ORDER BY p.name;
+
 -- name: avg_goal_contribution(game_mode)
 -- Average goal contribution per player for a given game mode.
 SELECT

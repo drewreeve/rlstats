@@ -188,6 +188,10 @@ def query_avg_goal_contribution(conn, mode):
     ]
 
 
+def query_score_range(conn, mode):
+    rows = queries.score_range(conn, game_mode=mode)
+    return [{"player": r["player_name"], "min": r["min_score"], "max": r["max_score"]} for r in rows]
+
 
 API_ROUTES = {
     "/api/shooting-pct": query_shooting_pct,
@@ -200,6 +204,7 @@ API_ROUTES = {
     "/api/score-differential": query_score_differential,
     "/api/streaks": query_streaks,
     "/api/avg-goal-contribution": query_avg_goal_contribution,
+    "/api/score-range": query_score_range,
 }
 
 

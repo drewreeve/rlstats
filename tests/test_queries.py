@@ -128,6 +128,21 @@ def test_weekday_values_3v3():
     ]
 
 
+@pytest.mark.parametrize(
+    "mode,expected",
+    [
+        ("3v3", [("Drew", 182, 420), ("Jeff", 340, 448), ("Steve", 64, 208)]),
+        ("2v2", [("Drew", 425, 425), ("Steve", 327, 327)]),
+        ("hoops", [("Drew", 511, 511), ("Jeff", 696, 696)]),
+    ],
+)
+def test_score_range_values_by_mode(mode, expected):
+    conn = _all_modes_db()
+    rows = queries.score_range(conn, game_mode=mode)
+    actual = _as_tuples(rows, ("player_name", "min_score", "max_score"))
+    assert actual == expected
+
+
 def test_win_loss_daily_values_3v3():
     conn = _all_modes_db()
     rows = queries.win_loss_daily(conn, game_mode="3v3")
