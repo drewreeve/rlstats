@@ -107,6 +107,8 @@ async function renderWinRateDaily() {
   const data = await fetchJSON(`/api/win-loss-daily?mode=${currentMode}`);
   const canvas = document.getElementById("chart-win-rate");
   const lineColor = { r: 0, g: 229, b: 255 };
+  const rates = data.map((d) => (d.win_rate ?? 0) * 100);
+  const avg = rates.reduce((a, b) => a + b, 0) / (rates.length || 1);
   charts.winRate = new Chart(canvas, {
     type: "line",
     data: {
@@ -114,7 +116,7 @@ async function renderWinRateDaily() {
       datasets: [
         {
           label: "Win Rate",
-          data: data.map((d) => (d.win_rate ?? 0) * 100),
+          data: rates,
           borderColor: rgba(lineColor, 0.9),
           backgroundColor: gradient(canvas, lineColor, 0.2, 0.01),
           fill: true,
@@ -126,10 +128,35 @@ async function renderWinRateDaily() {
           pointHoverRadius: 6,
           borderWidth: 2,
         },
+        {
+          label: "Total Win Rate",
+          data: data.map(() => avg),
+          borderColor: "rgba(255, 107, 0, 0.5)",
+          borderDash: [6, 4],
+          borderWidth: 1,
+          pointRadius: 0,
+          pointHoverRadius: 6,
+          fill: false,
+          tension: 0,
+        },
       ],
     },
     options: {
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: {
+          labels: {
+            boxWidth: 10,
+            boxHeight: 10,
+            padding: 16,
+            font: { family: "'DM Mono', monospace", size: 13 },
+          },
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%`,
+          },
+        },
+      },
       scales: {
         y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
         x: { grid: { display: false } },
@@ -145,7 +172,9 @@ async function renderWinRateDaily() {
         document.getElementById("history-date-from").value = date;
         document.getElementById("history-date-to").value = date;
         document.querySelector(".mode-btn.active").classList.remove("active");
-        document.querySelector('.mode-btn[data-mode="history"]').classList.add("active");
+        document
+          .querySelector('.mode-btn[data-mode="history"]')
+          .classList.add("active");
         currentMode = "history";
         renderAll();
       },
@@ -616,20 +645,24 @@ document.addEventListener("DOMContentLoaded", () => {
       renderRawTable();
     });
 
-  document.getElementById("history-date-from").addEventListener("change", () => {
-    rawPage = 1;
-    renderRawTable();
-  });
+  document
+    .getElementById("history-date-from")
+    .addEventListener("change", () => {
+      rawPage = 1;
+      renderRawTable();
+    });
 
   document.getElementById("history-date-to").addEventListener("change", () => {
     rawPage = 1;
     renderRawTable();
   });
 
-  document.getElementById("history-date-clear").addEventListener("click", () => {
-    document.getElementById("history-date-from").value = "";
-    document.getElementById("history-date-to").value = "";
-    rawPage = 1;
-    renderRawTable();
-  });
+  document
+    .getElementById("history-date-clear")
+    .addEventListener("click", () => {
+      document.getElementById("history-date-from").value = "";
+      document.getElementById("history-date-to").value = "";
+      rawPage = 1;
+      renderRawTable();
+    });
 });
