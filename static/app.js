@@ -346,7 +346,7 @@ async function renderScoreRange() {
       datasets: [
         {
           label: "Score Range",
-          data: data.map((d) => [d.min, d.max]),
+          data: data.map((d) => [d.min === d.max ? 0 : d.min, d.max]),
           backgroundColor: data.map((d) =>
             gradient(canvas, PLAYER_COLORS[d.player], 0.85, 0.15),
           ),
@@ -363,8 +363,8 @@ async function renderScoreRange() {
         tooltip: {
           callbacks: {
             label: (ctx) => {
-              const [low, high] = ctx.raw;
-              return `Low: ${low}  High: ${high}`;
+              const d = data[ctx.dataIndex];
+              return `Low: ${d.min}  High: ${d.max}`;
             },
           },
         },
