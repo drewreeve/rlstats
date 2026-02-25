@@ -92,50 +92,16 @@ def query_matches(conn, params):
 
 
 def query_match_players(conn, match_id):
-    rows = conn.execute(
-        """
-        SELECT p.name, mp.score, mp.goals, mp.assists, mp.saves, mp.shots,
-               CASE WHEN mp.shots > 0
-                    THEN ROUND(CAST(mp.goals AS REAL) / mp.shots * 100, 1)
-                    ELSE 0 END as shooting_pct
-        FROM match_players mp
-        JOIN players p ON mp.player_id = p.id
-        WHERE mp.match_id = :id
-        ORDER BY mp.score DESC
-        """,
-        {"id": match_id},
-    ).fetchall()
+    rows = queries.match_players(conn, match_id=match_id)
     return [dict(r) for r in rows]
 
 
 def query_match_detail(conn, match_id):
-    match = conn.execute(
-        """
-        SELECT m.id, m.played_at, m.game_mode, m.result, m.forfeit,
-               m.team_score, m.opponent_score, m.duration_seconds, m.team,
-               m.team_possession_seconds, m.opponent_possession_seconds
-        FROM matches m
-        WHERE m.id = :id
-        """,
-        {"id": match_id},
-    ).fetchone()
+    match = queries.match_metadata(conn, match_id=match_id)
     if not match:
         return None
 
-    players = conn.execute(
-        """
-        SELECT p.name, mp.team, mp.score, mp.goals, mp.assists, mp.saves,
-               mp.shots, mp.demos,
-               CASE WHEN mp.shots > 0
-                    THEN ROUND(CAST(mp.goals AS REAL) / mp.shots * 100, 1)
-                    ELSE 0 END as shooting_pct
-        FROM match_players mp
-        JOIN players p ON mp.player_id = p.id
-        WHERE mp.match_id = :id
-        ORDER BY mp.score DESC
-        """,
-        {"id": match_id},
-    ).fetchall()
+    players = list(queries.match_players(conn, match_id=match_id))
 
     team_num = match["team"]
     team_players = [dict(p) for p in players if p["team"] == team_num]
