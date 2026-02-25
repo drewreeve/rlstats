@@ -1,5 +1,5 @@
 import pytest
-from ingest import ingest_match
+from ingest import ingest_match, get_or_create_player
 from tests.fixtures import in_memory_db, load_replay
 
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
@@ -65,7 +65,7 @@ def test_team_mvp(fixture, expected_mvp):
     assert mvp_name == expected_mvp
 
 
-# -- Per-fixture: player stats --
+# -- Per-fixture: player stats (all players, not just tracked) --
 
 
 @pytest.mark.parametrize(
@@ -74,17 +74,23 @@ def test_team_mvp(fixture, expected_mvp):
         (
             "zero_score.json",
             [
+                ("AxDiabetic", 1, 0, 1, 2, 340),
                 ("Drew", 0, 0, 0, 2, 182),
                 ("Jeff", 0, 0, 2, 2, 340),
                 ("Steve", 0, 0, 0, 0, 104),
+                ("WizardsNeverrDie", 0, 0, 1, 0, 152),
+                ("think_charlie", 1, 1, 1, 3, 383),
             ],
         ),
         (
             "match.json",
             [
+                ("BLM_SCAM", 2, 1, 1, 3, 466),
                 ("Drew", 2, 0, 0, 3, 420),
                 ("Jeff", 2, 2, 0, 2, 448),
+                ("Softycooks", 1, 2, 0, 1, 346),
                 ("Steve", 1, 1, 0, 2, 208),
+                ("stm4000", 1, 0, 2, 3, 362),
             ],
         ),
         (
@@ -93,11 +99,16 @@ def test_team_mvp(fixture, expected_mvp):
                 ("Drew", 2, 1, 0, 4, 388),
                 ("Jeff", 2, 2, 0, 1, 350),
                 ("Steve", 0, 0, 0, 2, 64),
+                ("ThatOneFatPanda1", 0, 0, 0, 0, 4),
+                ("Turtle.Space", 0, 0, 0, 0, 28),
+                ("Yorozuya Kiyo", 0, 0, 2, 0, 168),
             ],
         ),
         (
             "team_size_2.json",
             [
+                ("BlurredVision33", 0, 0, 1, 2, 178),
+                ("DQRW", 0, 0, 1, 1, 220),
                 ("Drew", 0, 1, 2, 4, 425),
                 ("Steve", 1, 0, 1, 2, 327),
             ],
@@ -107,6 +118,8 @@ def test_team_mvp(fixture, expected_mvp):
             [
                 ("Drew", 2, 1, 0, 5, 511),
                 ("Jeff", 3, 1, 1, 5, 696),
+                ("REpurk", 1, 1, 0, 4, 326),
+                ("temp-**********", 1, 0, 1, 3, 300),
             ],
         ),
     ],
@@ -127,3 +140,38 @@ def test_camelcase_match_guid():
     conn = ingest_fixture("camelcase_match_guid.json")
     replay_hash = conn.execute("SELECT replay_hash FROM matches").fetchone()[0]
     assert replay_hash is not None
+
+
+def test_epic_player_stored_with_correct_platform():
+    conn = ingest_fixture("match.json")
+    row = conn.execute(
+        "SELECT platform, platform_id FROM players WHERE name = 'stm4000'"
+    ).fetchone()
+    assert row == ("epic", "23ce79e90944478599a96ed5402a99e6")
+
+
+def test_ps4_player_stored_with_correct_platform():
+    conn = ingest_fixture("zero_score.json")
+    row = conn.execute(
+        "SELECT platform, platform_id FROM players WHERE name = 'think_charlie'"
+    ).fetchone()
+    assert row == ("ps4", "8532790116262235057")
+
+
+def test_steam_player_stored_with_correct_platform():
+    conn = ingest_fixture("match.json")
+    row = conn.execute(
+        "SELECT platform, platform_id FROM players WHERE name = 'Drew'"
+    ).fetchone()
+    assert row == ("steam", "76561197969365901")
+
+
+def test_player_name_updates_on_change():
+    conn = in_memory_db()
+    get_or_create_player(conn, "steam", "123", "OldName")
+    row = conn.execute("SELECT name FROM players WHERE platform_id = '123'").fetchone()
+    assert row[0] == "OldName"
+
+    get_or_create_player(conn, "steam", "123", "NewName")
+    row = conn.execute("SELECT name FROM players WHERE platform_id = '123'").fetchone()
+    assert row[0] == "NewName"

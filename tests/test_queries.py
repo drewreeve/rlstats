@@ -42,9 +42,19 @@ def _as_tuples(rows, columns):
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("3v3", [("Drew", 4, 9, 0.444), ("Jeff", 4, 5, 0.8), ("Steve", 1, 4, 0.25)]),
-        ("2v2", [("Drew", 0, 4, 0.0), ("Steve", 1, 2, 0.5)]),
-        ("hoops", [("Drew", 2, 5, 0.4), ("Jeff", 3, 5, 0.6)]),
+        ("3v3", [
+            ("Drew", 4, 9, 0.444),
+            ("Jeff", 4, 5, 0.8),
+            ("Steve", 1, 4, 0.25),
+        ]),
+        ("2v2", [
+            ("Drew", 0, 4, 0.0),
+            ("Steve", 1, 2, 0.5),
+        ]),
+        ("hoops", [
+            ("Drew", 2, 5, 0.4),
+            ("Jeff", 3, 5, 0.6),
+        ]),
     ],
 )
 def test_shooting_pct_values_by_mode(mode, expected):
@@ -57,9 +67,19 @@ def test_shooting_pct_values_by_mode(mode, expected):
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("3v3", [("Drew", 3, 4, 1, 0, 9), ("Jeff", 3, 4, 4, 2, 5), ("Steve", 3, 1, 1, 0, 4)]),
-        ("2v2", [("Drew", 1, 0, 1, 2, 4), ("Steve", 1, 1, 0, 1, 2)]),
-        ("hoops", [("Drew", 1, 2, 1, 0, 5), ("Jeff", 1, 3, 1, 1, 5)]),
+        ("3v3", [
+            ("Drew", 3, 4, 1, 0, 9),
+            ("Jeff", 3, 4, 4, 2, 5),
+            ("Steve", 3, 1, 1, 0, 4),
+        ]),
+        ("2v2", [
+            ("Drew", 1, 0, 1, 2, 4),
+            ("Steve", 1, 1, 0, 1, 2),
+        ]),
+        ("hoops", [
+            ("Drew", 1, 2, 1, 0, 5),
+            ("Jeff", 1, 3, 1, 1, 5),
+        ]),
     ],
 )
 def test_player_stats_values_by_mode(mode, expected):
@@ -105,9 +125,19 @@ def test_mvp_losses_values_by_mode(mode, expected):
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("3v3", [("Drew", 3, 990, 330.0), ("Jeff", 3, 1138, 379.3), ("Steve", 3, 376, 125.3)]),
-        ("2v2", [("Drew", 1, 425, 425.0), ("Steve", 1, 327, 327.0)]),
-        ("hoops", [("Drew", 1, 511, 511.0), ("Jeff", 1, 696, 696.0)]),
+        ("3v3", [
+            ("Drew", 3, 990, 330.0),
+            ("Jeff", 3, 1138, 379.3),
+            ("Steve", 3, 376, 125.3),
+        ]),
+        ("2v2", [
+            ("Drew", 1, 425, 425.0),
+            ("Steve", 1, 327, 327.0),
+        ]),
+        ("hoops", [
+            ("Drew", 1, 511, 511.0),
+            ("Jeff", 1, 696, 696.0),
+        ]),
     ],
 )
 def test_avg_score_values_by_mode(mode, expected):
@@ -131,9 +161,19 @@ def test_weekday_values_3v3():
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("3v3", [("Drew", 182, 420), ("Jeff", 340, 448), ("Steve", 64, 208)]),
-        ("2v2", [("Drew", 425, 425), ("Steve", 327, 327)]),
-        ("hoops", [("Drew", 511, 511), ("Jeff", 696, 696)]),
+        ("3v3", [
+            ("Drew", 182, 420),
+            ("Jeff", 340, 448),
+            ("Steve", 64, 208),
+        ]),
+        ("2v2", [
+            ("Drew", 425, 425),
+            ("Steve", 327, 327),
+        ]),
+        ("hoops", [
+            ("Drew", 511, 511),
+            ("Jeff", 696, 696),
+        ]),
     ],
 )
 def test_score_range_values_by_mode(mode, expected):

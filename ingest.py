@@ -9,23 +9,51 @@ from typing import Any
 from db import apply_migrations
 
 TRACKED_PLAYERS = {
-    "76561197969365901": "Drew",
-    "76561198008422893": "Steve",
-    "76561197964215253": "Jeff",
+    ("steam", "76561197969365901"): "Drew",
+    ("steam", "76561198008422893"): "Steve",
+    ("steam", "76561197964215253"): "Jeff",
+}
+
+PLATFORM_MAP = {
+    "OnlinePlatform_Steam": "steam",
+    "OnlinePlatform_Epic": "epic",
+    "OnlinePlatform_PS4": "ps4",
+    "OnlinePlatform_Switch": "switch",
+    "OnlinePlatform_Xbox": "xbox",
 }
 
 DB_PATH = Path("db/rl_stats.sqlite")
 PARSED_REPLAY_DIR = Path("replays")
 
 
-def get_or_create_player(conn: sqlite3.Connection, steam_id: str, name: str) -> int:
+def _extract_platform_id(player: dict[str, Any]) -> tuple[str, str] | None:
+    platform_value = player.get("Platform", {}).get("value", "")
+    platform = PLATFORM_MAP.get(platform_value)
+    if not platform:
+        return None
+
+    if platform == "epic":
+        epic_id = player.get("PlayerID", {}).get("fields", {}).get("EpicAccountId", "")
+        if epic_id:
+            return (platform, epic_id)
+        return None
+
+    online_id = player.get("OnlineID", "0")
+    if online_id and online_id != "0":
+        return (platform, online_id)
+    return None
+
+
+def get_or_create_player(conn: sqlite3.Connection, platform: str, platform_id: str, name: str) -> int:
+    tracked = 1 if (platform, platform_id) in TRACKED_PLAYERS else 0
     conn.execute(
-        "INSERT OR IGNORE INTO players (steam_id, name) VALUES (?, ?)",
-        (steam_id, name),
+        """INSERT INTO players (platform, platform_id, name, is_tracked) VALUES (?, ?, ?, ?)
+           ON CONFLICT(platform, platform_id) DO UPDATE SET name = excluded.name""",
+        (platform, platform_id, name, tracked),
     )
     return conn.execute(
-        "SELECT id FROM players WHERE steam_id = ?",
-        (steam_id,),
+        "SELECT id FROM players WHERE platform = ? AND platform_id = ?",
+        (platform, platform_id),
     ).fetchone()[0]
 
 
@@ -52,9 +80,12 @@ def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
 
 
 def _tracked_player_stats(props: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        p for p in props.get("PlayerStats", []) if p.get("OnlineID") in TRACKED_PLAYERS
-    ]
+    result = []
+    for p in props.get("PlayerStats", []):
+        identity = _extract_platform_id(p)
+        if identity and identity in TRACKED_PLAYERS:
+            result.append(p)
+    return result
 
 
 def _resolve_team_scores(
@@ -86,9 +117,12 @@ def _resolve_mvp_player_id(
     if not tracked_players:
         return None
     mvp_stats = max(tracked_players, key=lambda p: p.get("Score", 0))
-    mvp_sid = mvp_stats.get("OnlineID")
-    mvp_name = TRACKED_PLAYERS[mvp_sid]
-    return get_or_create_player(conn, mvp_sid, mvp_name)
+    identity = _extract_platform_id(mvp_stats)
+    if not identity:
+        return None
+    platform, platform_id = identity
+    mvp_name = TRACKED_PLAYERS[identity]
+    return get_or_create_player(conn, platform, platform_id, mvp_name)
 
 
 def _upsert_match(
@@ -142,12 +176,21 @@ def _upsert_match(
 
 
 def _upsert_match_players(
-    conn: sqlite3.Connection, match_id: int, tracked_players: list[dict[str, Any]]
+    conn: sqlite3.Connection, match_id: int, all_players: list[dict[str, Any]]
 ):
-    for player in tracked_players:
-        steam_id = player["OnlineID"]
-        name = TRACKED_PLAYERS[steam_id]
-        player_id = get_or_create_player(conn, steam_id, name)
+    for player in all_players:
+        if player.get("bBot"):
+            continue
+        identity = _extract_platform_id(player)
+        if not identity:
+            continue
+        platform, platform_id = identity
+        name = player.get("Name", "Unknown")
+        # Use tracked name if this is a tracked player
+        tracked_name = TRACKED_PLAYERS.get(identity)
+        if tracked_name:
+            name = tracked_name
+        player_id = get_or_create_player(conn, platform, platform_id, name)
 
         conn.execute(
             """
@@ -210,7 +253,8 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         map_name=map_name,
         game_mode=game_mode,
     )
-    _upsert_match_players(conn, match_id, tracked_players)
+    all_players = props.get("PlayerStats", [])
+    _upsert_match_players(conn, match_id, all_players)
 
 
 def ingest_all():

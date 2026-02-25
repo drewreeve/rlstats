@@ -12,7 +12,7 @@ SELECT
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
-WHERE m.game_mode = :game_mode
+WHERE m.game_mode = :game_mode AND p.is_tracked = 1
 GROUP BY p.id, p.name
 ORDER BY p.name;
 
@@ -28,7 +28,7 @@ SELECT
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
-WHERE m.game_mode = :game_mode
+WHERE m.game_mode = :game_mode AND p.is_tracked = 1
 GROUP BY p.id, p.name
 ORDER BY p.name;
 
@@ -45,7 +45,7 @@ SELECT
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
-WHERE m.game_mode = :game_mode
+WHERE m.game_mode = :game_mode AND p.is_tracked = 1
 GROUP BY p.id, p.name
 ORDER BY p.name;
 
@@ -58,7 +58,7 @@ SELECT
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
-WHERE m.game_mode = :game_mode
+WHERE m.game_mode = :game_mode AND p.is_tracked = 1
 GROUP BY p.id, p.name
 ORDER BY p.name;
 
@@ -77,6 +77,6 @@ SELECT
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
-WHERE m.game_mode = :game_mode
+WHERE m.game_mode = :game_mode AND p.is_tracked = 1
 GROUP BY p.id, p.name
 ORDER BY p.name;

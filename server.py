@@ -190,7 +190,10 @@ def query_avg_goal_contribution(conn, mode):
 
 def query_score_range(conn, mode):
     rows = queries.score_range(conn, game_mode=mode)
-    return [{"player": r["player_name"], "min": r["min_score"], "max": r["max_score"]} for r in rows]
+    return [
+        {"player": r["player_name"], "min": r["min_score"], "max": r["max_score"]}
+        for r in rows
+    ]
 
 
 API_ROUTES = {

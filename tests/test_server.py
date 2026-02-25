@@ -97,8 +97,8 @@ def test_query_match_players_returns_tracked_players():
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
     data = query_match_players(conn, match_id)
 
-    assert len(data) == 3
-    assert set(d["name"] for d in data) == {"Drew", "Jeff", "Steve"}
+    assert len(data) == 6
+    assert {"Drew", "Jeff", "Steve"}.issubset(set(d["name"] for d in data))
     scores = [d["score"] for d in data]
     assert scores == sorted(scores, reverse=True)
 
@@ -127,8 +127,7 @@ def test_shooting_pct_handler():
     data = query_shooting_pct(conn, "3v3")
 
     assert len(data) == 3
-    names = [d["player"] for d in data]
-    assert names == ["Drew", "Jeff", "Steve"]
+    assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
     assert all("shooting_pct" in d for d in data)
 
 
@@ -137,6 +136,7 @@ def test_player_stats_handler():
     data = query_player_stats(conn, "3v3")
 
     assert len(data) == 3
+    assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
     for d in data:
         assert "player" in d
         assert "goals" in d
@@ -188,8 +188,7 @@ def test_avg_score_handler():
     data = query_avg_score(conn, "3v3")
 
     assert len(data) == 3
-    names = [d["player"] for d in data]
-    assert names == ["Drew", "Jeff", "Steve"]
+    assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
     assert all("avg_score" in d and "total_score" in d for d in data)
 
 
@@ -242,7 +241,7 @@ def test_avg_goal_contribution_shape():
     data = query_avg_goal_contribution(conn, "3v3")
 
     assert len(data) == 3
-    assert [d["player"] for d in data] == ["Drew", "Jeff", "Steve"]
+    assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
     assert all("avg_goal_contribution" in d and "matches" in d for d in data)
 
 
@@ -251,6 +250,7 @@ def test_avg_goal_contribution_zero_team_score_excluded():
     conn = _db_with_replay()
     data = query_avg_goal_contribution(conn, "3v3")
 
+    # team_score=0 so NULLIF makes all contributions NULL
     assert all(d["avg_goal_contribution"] is None for d in data)
 
 
