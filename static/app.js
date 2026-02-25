@@ -481,7 +481,6 @@ async function renderAll() {
 
 let rawPage = 1;
 let rawPerPage = 25;
-const playerDetailCache = {};
 let rawSearchTimer = null;
 
 function updateDateClearButton() {
@@ -532,54 +531,13 @@ async function renderRawTable() {
             <td class="col-mvp">${esc(m.mvp || "—")}</td>
         `;
 
-    tr.addEventListener("click", () => toggleDetail(tr, m.id));
+    tr.addEventListener("click", () => {
+      window.location.href = `/match/${m.id}`;
+    });
     tbody.appendChild(tr);
   }
 
   renderPagination(data.total, data.page, data.per_page);
-}
-
-async function toggleDetail(row, matchId) {
-  const existing = row.nextElementSibling;
-  if (existing && existing.classList.contains("detail-row")) {
-    existing.remove();
-    row.classList.remove("expanded");
-    return;
-  }
-
-  row.classList.add("expanded");
-
-  if (!playerDetailCache[matchId]) {
-    playerDetailCache[matchId] = await fetchJSON(
-      `/api/matches/${matchId}/players`,
-    );
-  }
-  const players = playerDetailCache[matchId];
-
-  const detailRow = document.createElement("tr");
-  detailRow.className = "detail-row";
-  const td = document.createElement("td");
-  td.colSpan = 5;
-
-  let tableHTML = `<table class="detail-table">
-        <thead><tr>
-            <th>Player</th><th>Score</th><th>Goals</th><th>Assists</th><th>Saves</th><th>Shots</th><th>Shot%</th>
-        </tr></thead><tbody>`;
-  for (const p of players) {
-    tableHTML += `<tr>
-            <td class="player-name">${esc(p.name)}</td>
-            <td>${p.score ?? 0}</td>
-            <td>${p.goals}</td>
-            <td>${p.assists}</td>
-            <td>${p.saves}</td>
-            <td>${p.shots}</td>
-            <td>${p.shooting_pct}%</td>
-        </tr>`;
-  }
-  tableHTML += "</tbody></table>";
-  td.innerHTML = tableHTML;
-  detailRow.appendChild(td);
-  row.after(detailRow);
 }
 
 function renderPagination(total, page, perPage) {

@@ -108,6 +108,57 @@ def query_match_players(conn, match_id):
     return [dict(r) for r in rows]
 
 
+def query_match_detail(conn, match_id):
+    match = conn.execute(
+        """
+        SELECT m.id, m.played_at, m.game_mode, m.result, m.forfeit,
+               m.team_score, m.opponent_score, m.duration_seconds, m.team,
+               m.team_possession_seconds, m.opponent_possession_seconds
+        FROM matches m
+        WHERE m.id = :id
+        """,
+        {"id": match_id},
+    ).fetchone()
+    if not match:
+        return None
+
+    players = conn.execute(
+        """
+        SELECT p.name, mp.team, mp.score, mp.goals, mp.assists, mp.saves,
+               mp.shots, mp.demos,
+               CASE WHEN mp.shots > 0
+                    THEN ROUND(CAST(mp.goals AS REAL) / mp.shots * 100, 1)
+                    ELSE 0 END as shooting_pct
+        FROM match_players mp
+        JOIN players p ON mp.player_id = p.id
+        WHERE mp.match_id = :id
+        ORDER BY mp.score DESC
+        """,
+        {"id": match_id},
+    ).fetchall()
+
+    team_num = match["team"]
+    team_players = [dict(p) for p in players if p["team"] == team_num]
+    opponent_players = [dict(p) for p in players if p["team"] != team_num]
+
+    return {
+        "match": {
+            "id": match["id"],
+            "played_at": match["played_at"],
+            "game_mode": match["game_mode"],
+            "result": match["result"],
+            "forfeit": match["forfeit"],
+            "team_score": match["team_score"],
+            "opponent_score": match["opponent_score"],
+            "duration_seconds": match["duration_seconds"],
+            "team_possession_seconds": match["team_possession_seconds"],
+            "opponent_possession_seconds": match["opponent_possession_seconds"],
+        },
+        "team_players": team_players,
+        "opponent_players": opponent_players,
+    }
+
+
 def query_shooting_pct(conn, mode):
     rows = queries.shooting_pct(conn, game_mode=mode)
     return [
@@ -331,6 +382,18 @@ def create_app(db_path, replay_dir=None, processor=None):
     def match_players(match_id):
         conn = _get_conn(db_path)
         return jsonify(query_match_players(conn, match_id))
+
+    @app.route("/api/matches/<int:match_id>")
+    def match_detail(match_id):
+        conn = _get_conn(db_path)
+        data = query_match_detail(conn, match_id)
+        if data is None:
+            abort(404)
+        return jsonify(data)
+
+    @app.route("/match/<int:match_id>")
+    def match_page(match_id):
+        return app.send_static_file("match.html")
 
     for path, handler_fn in API_ROUTES.items():
 
