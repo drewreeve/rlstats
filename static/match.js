@@ -6,8 +6,9 @@ function esc(str) {
 
 function formatDuration(seconds) {
   if (!seconds) return "";
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
