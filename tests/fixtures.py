@@ -1,3 +1,4 @@
+import functools
 import json
 import sqlite3
 from pathlib import Path
@@ -7,6 +8,7 @@ from db import apply_migrations
 TEST_DATA_DIR = Path(__file__).parent / "data"
 
 
+@functools.cache
 def load_replay(name: str):
     path = TEST_DATA_DIR / name
     with open(path, "r", encoding="utf-8") as f:

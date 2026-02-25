@@ -22,7 +22,7 @@ def convert_replay(replay_path: Path) -> tuple[bool, str | None]:
 
     try:
         result = subprocess.run(
-            ["rrrocket", str(replay_path)],
+            ["rrrocket", "-n", str(replay_path)],
             capture_output=True,
             timeout=30,
         )
