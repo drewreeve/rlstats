@@ -166,6 +166,39 @@ def test_steam_player_stored_with_correct_platform():
     assert row == ("steam", "76561197969365901")
 
 
+def test_possession_tracking():
+    conn = ingest_fixture("match.json")
+    row = conn.execute(
+        "SELECT team_possession_seconds, opponent_possession_seconds FROM matches"
+    ).fetchone()
+    team_poss, opp_poss = row
+
+    # Possession values should be populated
+    assert team_poss is not None
+    assert opp_poss is not None
+    assert team_poss > 0
+    assert opp_poss > 0
+
+    # Total possession should be in a reasonable range
+    # (exceeds TotalSecondsPlayed due to goal replays/countdowns in frame times)
+    total_poss = team_poss + opp_poss
+    assert 60 < total_poss < 600
+
+
+def test_possession_none_without_network_data():
+    """Replays without network_frames should have null possession."""
+    conn = in_memory_db()
+    replay = load_replay("match.json")
+    # Strip network data
+    replay.pop("network_frames", None)
+    replay.pop("objects", None)
+    ingest_match(conn, replay)
+    row = conn.execute(
+        "SELECT team_possession_seconds, opponent_possession_seconds FROM matches"
+    ).fetchone()
+    assert row == (None, None)
+
+
 def test_player_name_updates_on_change():
     conn = in_memory_db()
     get_or_create_player(conn, "steam", "123", "OldName")

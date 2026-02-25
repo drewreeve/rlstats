@@ -44,7 +44,9 @@ def _extract_platform_id(player: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
-def get_or_create_player(conn: sqlite3.Connection, platform: str, platform_id: str, name: str) -> int:
+def get_or_create_player(
+    conn: sqlite3.Connection, platform: str, platform_id: str, name: str
+) -> int:
     tracked = 1 if (platform, platform_id) in TRACKED_PLAYERS else 0
     conn.execute(
         """INSERT INTO players (platform, platform_id, name, is_tracked) VALUES (?, ?, ?, ?)
@@ -125,6 +127,59 @@ def _resolve_mvp_player_id(
     return get_or_create_player(conn, platform, platform_id, mvp_name)
 
 
+# TODO Improve accuracy
+# Currently the scoring team gets slightly inflated possession since time
+# spent watching the replay is considered part of their possession.
+def _calculate_possession(
+    replay: dict, tracked_team: int | None
+) -> tuple[float | None, float | None]:
+    """Calculate ball possession seconds per team from network frame data.
+
+    Returns (team_possession_seconds, opponent_possession_seconds) or (None, None)
+    if network data is unavailable.
+    """
+    if tracked_team is None:
+        return None, None
+
+    objects = replay.get("objects")
+    frames = replay.get("network_frames", {}).get("frames")
+    if not objects or not frames:
+        return None, None
+
+    try:
+        hit_team_obj_id = objects.index("TAGame.Ball_TA:HitTeamNum")
+    except ValueError:
+        return None, None
+
+    # Collect (time, team) for each HitTeamNum update
+    touches: list[tuple[float, int]] = []
+    for frame in frames:
+        for actor in frame.get("updated_actors", []):
+            if actor.get("object_id") == hit_team_obj_id:
+                team_num = actor.get("attribute", {}).get("Byte")
+                if team_num is not None:
+                    touches.append((frame["time"], team_num))
+
+    if not touches:
+        return None, None
+
+    # Calculate possession between consecutive touches
+    possession = {0: 0.0, 1: 0.0}
+    for i in range(len(touches) - 1):
+        t_start, team_num = touches[i]
+        t_end = touches[i + 1][0]
+        possession[team_num] += t_end - t_start
+
+    # Last touch to end of match
+    last_time, last_team = touches[-1]
+    match_end = frames[-1]["time"]
+    possession[last_team] += match_end - last_time
+
+    team_poss = possession.get(tracked_team, 0.0)
+    opp_poss = possession.get(1 - tracked_team, 0.0)
+    return round(team_poss, 2), round(opp_poss, 2)
+
+
 def _upsert_match(
     conn: sqlite3.Connection,
     *,
@@ -140,6 +195,8 @@ def _upsert_match(
     mvp_player_id: int | None,
     map_name: str | None,
     game_mode: str | None,
+    team_possession_seconds: float | None,
+    opponent_possession_seconds: float | None,
 ) -> int:
     conn.execute(
         """
@@ -147,8 +204,9 @@ def _upsert_match(
             replay_hash,
             played_at, duration_seconds, forfeit, team_size,
             team, team_score, opponent_score, result, team_mvp_player_id,
-            map_name, game_mode
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            map_name, game_mode,
+            team_possession_seconds, opponent_possession_seconds
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             replay_hash,
@@ -163,6 +221,8 @@ def _upsert_match(
             mvp_player_id,
             map_name,
             game_mode,
+            team_possession_seconds,
+            opponent_possession_seconds,
         ),
     )
 
@@ -237,6 +297,7 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         return
 
     mvp_player_id = _resolve_mvp_player_id(conn, tracked_players)
+    team_poss, opp_poss = _calculate_possession(replay, team)
 
     match_id = _upsert_match(
         conn,
@@ -252,6 +313,8 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         mvp_player_id=mvp_player_id,
         map_name=map_name,
         game_mode=game_mode,
+        team_possession_seconds=team_poss,
+        opponent_possession_seconds=opp_poss,
     )
     all_players = props.get("PlayerStats", [])
     _upsert_match_players(conn, match_id, all_players)
