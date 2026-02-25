@@ -1,5 +1,5 @@
 import pytest
-from ingest import ingest_match, get_or_create_player
+from ingest import ingest_match, get_or_create_player, _extract_demolitions
 from tests.fixtures import in_memory_db, load_replay
 
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
@@ -189,14 +189,49 @@ def test_possession_none_without_network_data():
     """Replays without network_frames should have null possession."""
     conn = in_memory_db()
     replay = load_replay("match.json")
-    # Strip network data
-    replay.pop("network_frames", None)
-    replay.pop("objects", None)
+    # Strip network data (copy to avoid mutating cached replay)
+    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
     ingest_match(conn, replay)
     row = conn.execute(
         "SELECT team_possession_seconds, opponent_possession_seconds FROM matches"
     ).fetchone()
     assert row == (None, None)
+
+
+def test_extract_demolitions():
+    replay = load_replay("match.json")
+    demos = _extract_demolitions(replay)
+
+    # Should return a dict with (platform, platform_id) keys
+    assert isinstance(demos, dict)
+    assert len(demos) > 0
+
+    # Known players from match.json with demos
+    # Jeff (Steam:76561197964215253) = 1 demo
+    # Drew (Steam:76561197969365901) = 1 demo
+    assert demos[("steam", "76561197964215253")] == 1  # Jeff
+    assert demos[("steam", "76561197969365901")] == 1  # Drew
+
+
+def test_extract_demolitions_without_network_data():
+    demos = _extract_demolitions({"properties": {}})
+    assert demos == {}
+
+
+def test_demolitions_stored_in_match_players():
+    conn = ingest_fixture("match.json")
+    rows = conn.execute("""
+        SELECT p.name, mp.demos
+        FROM match_players mp
+        JOIN players p ON p.id = mp.player_id
+        WHERE mp.demos > 0
+        ORDER BY p.name
+    """).fetchall()
+
+    # Drew and Jeff each have 1 demo; stm4000 has 1; BLM_SCAM has 2
+    names = [r[0] for r in rows]
+    assert "Drew" in names
+    assert "Jeff" in names
 
 
 def test_player_name_updates_on_change():

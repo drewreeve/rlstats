@@ -180,6 +180,62 @@ def _calculate_possession(
     return round(team_poss, 2), round(opp_poss, 2)
 
 
+NETWORK_PLATFORM_MAP = {
+    "Steam": "steam",
+    "Epic": "epic",
+    "PS4": "ps4",
+    "Switch": "switch",
+    "Xbox": "xbox",
+}
+
+
+def _extract_demolitions(replay: dict) -> dict[tuple[str, str], int]:
+    """Extract per-player demolition counts from network frame data.
+
+    Returns a dict mapping (platform, platform_id) -> demo count,
+    or {} if network data is unavailable.
+    """
+    objects = replay.get("objects")
+    frames = replay.get("network_frames", {}).get("frames")
+    if not objects or not frames:
+        return {}
+
+    try:
+        demo_obj_id = objects.index("TAGame.PRI_TA:MatchDemolishes")
+        uid_obj_id = objects.index("Engine.PlayerReplicationInfo:UniqueId")
+    except ValueError:
+        return {}
+
+    actor_identity: dict[int, tuple[str, str]] = {}
+    actor_demos: dict[int, int] = {}
+
+    for frame in frames:
+        for actor in frame.get("updated_actors", []):
+            obj_id = actor.get("object_id")
+            if obj_id == uid_obj_id:
+                uid = actor.get("attribute", {}).get("UniqueId", {})
+                remote = uid.get("remote_id", {})
+                if remote:
+                    platform_key = next(iter(remote))
+                    platform = NETWORK_PLATFORM_MAP.get(platform_key)
+                    if platform:
+                        actor_identity[actor["actor_id"]] = (
+                            platform,
+                            remote[platform_key],
+                        )
+            elif obj_id == demo_obj_id:
+                val = actor.get("attribute", {}).get("Int", 0)
+                aid = actor["actor_id"]
+                actor_demos[aid] = max(actor_demos.get(aid, 0), val)
+
+    result: dict[tuple[str, str], int] = {}
+    for aid, count in actor_demos.items():
+        identity = actor_identity.get(aid)
+        if identity:
+            result[identity] = count
+    return result
+
+
 def _upsert_match(
     conn: sqlite3.Connection,
     *,
@@ -236,7 +292,10 @@ def _upsert_match(
 
 
 def _upsert_match_players(
-    conn: sqlite3.Connection, match_id: int, all_players: list[dict[str, Any]]
+    conn: sqlite3.Connection,
+    match_id: int,
+    all_players: list[dict[str, Any]],
+    demolitions: dict[tuple[str, str], int],
 ):
     for player in all_players:
         if player.get("bBot"):
@@ -251,13 +310,14 @@ def _upsert_match_players(
         if tracked_name:
             name = tracked_name
         player_id = get_or_create_player(conn, platform, platform_id, name)
+        demos = demolitions.get(identity, 0)
 
         conn.execute(
             """
             INSERT OR REPLACE INTO match_players (
                 match_id, player_id, team,
-                goals, assists, saves, shots, score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                goals, assists, saves, shots, score, demos
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 match_id,
@@ -268,6 +328,7 @@ def _upsert_match_players(
                 player.get("Saves", 0),
                 player.get("Shots", 0),
                 player.get("Score", 0),
+                demos,
             ),
         )
 
@@ -316,8 +377,9 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         team_possession_seconds=team_poss,
         opponent_possession_seconds=opp_poss,
     )
+    demolitions = _extract_demolitions(replay)
     all_players = props.get("PlayerStats", [])
-    _upsert_match_players(conn, match_id, all_players)
+    _upsert_match_players(conn, match_id, all_players, demolitions)
 
 
 def ingest_all():

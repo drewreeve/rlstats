@@ -24,7 +24,8 @@ SELECT
     SUM(mp.goals) AS total_goals,
     SUM(mp.assists) AS total_assists,
     SUM(mp.saves) AS total_saves,
-    SUM(mp.shots) AS total_shots
+    SUM(mp.shots) AS total_shots,
+    SUM(mp.demos) AS total_demos
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id

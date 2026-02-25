@@ -127,7 +127,7 @@ def query_win_loss_daily(conn, mode):
 def query_player_stats(conn, mode):
     rows = queries.player_stats(conn, game_mode=mode)
     return [
-        {"player": r["player_name"], "matches": r["matches_played"], "goals": r["total_goals"], "assists": r["total_assists"], "saves": r["total_saves"], "shots": r["total_shots"]}
+        {"player": r["player_name"], "matches": r["matches_played"], "goals": r["total_goals"], "assists": r["total_assists"], "saves": r["total_saves"], "shots": r["total_shots"], "demos": r["total_demos"]}
         for r in rows
     ]
 

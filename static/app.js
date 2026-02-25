@@ -9,6 +9,7 @@ const STAT_COLORS = {
   goals: { r: 255, g: 107, b: 0 },
   assists: { r: 0, g: 229, b: 255 },
   saves: { r: 168, g: 85, b: 247 },
+  demos: { r: 255, g: 60, b: 60 },
   wins: { r: 0, g: 229, b: 255 },
   losses: { r: 255, g: 60, b: 60 },
 };
@@ -213,6 +214,15 @@ async function renderPlayerStats() {
           data: data.map((d) => d.saves),
           backgroundColor: gradient(canvas, STAT_COLORS.saves, 0.85, 0.15),
           borderColor: rgba(STAT_COLORS.saves, 0.8),
+          borderWidth: 1,
+          borderRadius: 2,
+          borderSkipped: false,
+        },
+        {
+          label: "Demos",
+          data: data.map((d) => d.demos),
+          backgroundColor: gradient(canvas, STAT_COLORS.demos, 0.85, 0.15),
+          borderColor: rgba(STAT_COLORS.demos, 0.8),
           borderWidth: 1,
           borderRadius: 2,
           borderSkipped: false,
