@@ -180,6 +180,80 @@ def _calculate_possession(
     return round(team_poss, 2), round(opp_poss, 2)
 
 
+def _calculate_ball_thirds(
+    replay: dict, tracked_team: int | None
+) -> tuple[float | None, float | None, float | None]:
+    """Calculate time the ball spends in each third of the field.
+
+    Returns (defensive_seconds, neutral_seconds, offensive_seconds) from the
+    tracked team's perspective, or (None, None, None) if data is unavailable.
+    """
+    if tracked_team is None:
+        return None, None, None
+
+    objects = replay.get("objects")
+    frames = replay.get("network_frames", {}).get("frames")
+    if not objects or not frames:
+        return None, None, None
+
+    # Find ball archetype to identify ball actors
+    try:
+        ball_archetype = objects.index("Archetypes.Ball.Ball_Default")
+    except ValueError:
+        return None, None, None
+
+    # Find the RigidBody replication object ID
+    try:
+        rb_obj_id = objects.index("TAGame.RBActor_TA:ReplicatedRBState")
+    except ValueError:
+        return None, None, None
+
+    # Track all ball actor IDs (ball is recreated after goals) and collect
+    # (time, y) samples from position updates
+    ball_actor_ids: set[int] = set()
+    samples: list[tuple[float, float]] = []
+    for frame in frames:
+        for new_actor in frame.get("new_actors", []):
+            if new_actor.get("object_id") == ball_archetype:
+                ball_actor_ids.add(new_actor.get("actor_id"))
+        for actor in frame.get("updated_actors", []):
+            if actor.get("actor_id") in ball_actor_ids and actor.get("object_id") == rb_obj_id:
+                loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
+                if loc and "y" in loc:
+                    samples.append((frame["time"], loc["y"]))
+
+    if len(samples) < 2:
+        return None, None, None
+
+    # Y boundary for thirds: field is ~10240 units long, split at ±1707
+    THIRD_BOUNDARY = 1707
+
+    # Accumulate time in each zone
+    zones = {"negative": 0.0, "neutral": 0.0, "positive": 0.0}
+    for i in range(len(samples) - 1):
+        t_start, y = samples[i]
+        t_end = samples[i + 1][0]
+        dt = t_end - t_start
+        if dt <= 0:
+            continue
+        if y < -THIRD_BOUNDARY:
+            zones["negative"] += dt
+        elif y > THIRD_BOUNDARY:
+            zones["positive"] += dt
+        else:
+            zones["neutral"] += dt
+
+    # Map to team-relative: team 0 defends negative Y, team 1 defends positive Y
+    if tracked_team == 0:
+        defensive = zones["negative"]
+        offensive = zones["positive"]
+    else:
+        defensive = zones["positive"]
+        offensive = zones["negative"]
+
+    return round(defensive, 2), round(zones["neutral"], 2), round(offensive, 2)
+
+
 NETWORK_PLATFORM_MAP = {
     "Steam": "steam",
     "Epic": "epic",
@@ -253,6 +327,9 @@ def _upsert_match(
     game_mode: str | None,
     team_possession_seconds: float | None,
     opponent_possession_seconds: float | None,
+    defensive_third_seconds: float | None,
+    neutral_third_seconds: float | None,
+    offensive_third_seconds: float | None,
 ) -> int:
     conn.execute(
         """
@@ -261,8 +338,9 @@ def _upsert_match(
             played_at, duration_seconds, forfeit, team_size,
             team, team_score, opponent_score, result, team_mvp_player_id,
             map_name, game_mode,
-            team_possession_seconds, opponent_possession_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            team_possession_seconds, opponent_possession_seconds,
+            defensive_third_seconds, neutral_third_seconds, offensive_third_seconds
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             replay_hash,
@@ -279,6 +357,9 @@ def _upsert_match(
             game_mode,
             team_possession_seconds,
             opponent_possession_seconds,
+            defensive_third_seconds,
+            neutral_third_seconds,
+            offensive_third_seconds,
         ),
     )
 
@@ -359,6 +440,7 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
 
     mvp_player_id = _resolve_mvp_player_id(conn, tracked_players)
     team_poss, opp_poss = _calculate_possession(replay, team)
+    def_thirds, neu_thirds, off_thirds = _calculate_ball_thirds(replay, team)
 
     match_id = _upsert_match(
         conn,
@@ -376,6 +458,9 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         game_mode=game_mode,
         team_possession_seconds=team_poss,
         opponent_possession_seconds=opp_poss,
+        defensive_third_seconds=def_thirds,
+        neutral_third_seconds=neu_thirds,
+        offensive_third_seconds=off_thirds,
     )
     demolitions = _extract_demolitions(replay)
     all_players = props.get("PlayerStats", [])

@@ -769,7 +769,9 @@ header h1 {
 
 .match-accuracy {
     display: flex;
-    justify-content: space-around;
+    justify-content: center;
+    align-items: center;
+    gap: 1.5rem;
     padding: 1rem 0 0.5rem;
 }
 
@@ -777,7 +779,9 @@ header h1 {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 0.5rem;
+    flex: 1;
 }
 
 .match-accuracy-label {
@@ -861,6 +865,20 @@ header h1 {
     padding: 0.1rem 0.35rem;
     margin-left: 0.4rem;
     vertical-align: middle;
+}
+
+/* Pitch Diagram */
+.pitch-diagram {
+    display: flex;
+    justify-content: center;
+    flex: 2;
+    min-width: 0;
+    max-width: 540px;
+}
+
+.pitch-diagram svg {
+    width: 100%;
+    height: auto;
 }
 
 @media (max-width: 768px) {

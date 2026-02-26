@@ -234,6 +234,37 @@ def test_demolitions_stored_in_match_players():
     assert "Jeff" in names
 
 
+def test_ball_thirds_tracking():
+    conn = ingest_fixture("match.json")
+    row = conn.execute(
+        "SELECT defensive_third_seconds, neutral_third_seconds, offensive_third_seconds FROM matches"
+    ).fetchone()
+    def_s, neu_s, off_s = row
+
+    assert def_s is not None
+    assert neu_s is not None
+    assert off_s is not None
+    assert def_s >= 0
+    assert neu_s >= 0
+    assert off_s >= 0
+
+    # Total should be in a reasonable range for a match
+    total = def_s + neu_s + off_s
+    assert 60 < total < 600
+
+
+def test_ball_thirds_none_without_network_data():
+    """Replays without network_frames should have null ball thirds."""
+    conn = in_memory_db()
+    replay = load_replay("match.json")
+    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
+    ingest_match(conn, replay)
+    row = conn.execute(
+        "SELECT defensive_third_seconds, neutral_third_seconds, offensive_third_seconds FROM matches"
+    ).fetchone()
+    assert row == (None, None, None)
+
+
 def test_player_name_updates_on_change():
     conn = in_memory_db()
     get_or_create_player(conn, "steam", "123", "OldName")

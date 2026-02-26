@@ -11,7 +11,10 @@ SELECT
     m.duration_seconds,
     m.team,
     m.team_possession_seconds,
-    m.opponent_possession_seconds
+    m.opponent_possession_seconds,
+    m.defensive_third_seconds,
+    m.neutral_third_seconds,
+    m.offensive_third_seconds
 FROM matches m
 WHERE m.id = :match_id;
 
