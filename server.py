@@ -273,6 +273,9 @@ def create_app(db_path, replay_dir=None, processor=None):
             conn.close()
 
     @app.route("/")
+    @app.route("/2v2")
+    @app.route("/hoops")
+    @app.route("/history")
     def index():
         return app.send_static_file("index.html")
 

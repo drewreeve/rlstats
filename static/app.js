@@ -39,7 +39,18 @@ Chart.defaults.borderColor = "rgba(255,255,255,0.04)";
 Chart.defaults.font.family = "'DM Mono', monospace";
 Chart.defaults.font.size = 13;
 
-let currentMode = "3v3";
+const MODE_PATHS = {
+  "3v3": "/",
+  "2v2": "/2v2",
+  hoops: "/hoops",
+  history: "/history",
+};
+const PATH_MODES = Object.fromEntries(
+  Object.entries(MODE_PATHS).map(([m, p]) => [p, m]),
+);
+
+let currentMode = PATH_MODES[window.location.pathname] || "3v3";
+const initialPage = parseInt(new URLSearchParams(window.location.search).get("page")) || 1;
 const charts = {};
 
 async function fetchJSON(url) {
@@ -172,12 +183,8 @@ async function renderWinRateDaily() {
         if (!date) return;
         document.getElementById("history-date-from").value = date;
         document.getElementById("history-date-to").value = date;
-        document.querySelector(".mode-btn.active").classList.remove("active");
-        document
-          .querySelector('.mode-btn[data-mode="history"]')
-          .classList.add("active");
-        currentMode = "history";
-        renderAll();
+        history.pushState({ mode: "history" }, "", MODE_PATHS["history"]);
+        setMode("history");
       },
     },
   });
@@ -479,9 +486,13 @@ async function renderAll() {
 
 /* ── Raw Table ─────────────────────────────────── */
 
-let rawPage = 1;
+let rawPage = currentMode === "history" ? initialPage : 1;
 let rawPerPage = 25;
 let rawSearchTimer = null;
+
+function historyUrl(page) {
+  return page > 1 ? `/history?page=${page}` : "/history";
+}
 
 function updateDateClearButton() {
   const from = document.getElementById("history-date-from").value;
@@ -490,6 +501,11 @@ function updateDateClearButton() {
 }
 
 async function renderRawTable() {
+  const url = historyUrl(rawPage);
+  if (window.location.pathname + window.location.search !== url) {
+    history.pushState({ mode: "history", page: rawPage }, "", url);
+  }
+
   const search = document.getElementById("history-search").value;
   const gameMode = document.getElementById("history-filter-mode").value;
   const result = document.getElementById("history-filter-result").value;
@@ -571,16 +587,47 @@ function renderPagination(total, page, perPage) {
 
 /* ── Init ───────────────────────────────────────── */
 
+function setMode(mode) {
+  document.querySelector(".mode-btn.active").classList.remove("active");
+  document
+    .querySelector(`.mode-btn[data-mode="${mode}"]`)
+    .classList.add("active");
+  currentMode = mode;
+  renderAll();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  // Activate the button matching the initial mode from the URL
+  const initialBtn = document.querySelector(".mode-btn.active");
+  if (initialBtn && initialBtn.dataset.mode !== currentMode) {
+    initialBtn.classList.remove("active");
+    document
+      .querySelector(`.mode-btn[data-mode="${currentMode}"]`)
+      .classList.add("active");
+  }
+
   renderAll();
 
   document.querySelectorAll(".mode-btn[data-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelector(".mode-btn.active").classList.remove("active");
-      btn.classList.add("active");
-      currentMode = btn.dataset.mode;
-      renderAll();
+      const mode = btn.dataset.mode;
+      if (mode === currentMode) return;
+      if (mode === "history") rawPage = 1;
+      history.pushState({ mode }, "", MODE_PATHS[mode]);
+      setMode(mode);
     });
+  });
+
+  window.addEventListener("popstate", (e) => {
+    const mode = e.state?.mode || PATH_MODES[window.location.pathname] || "3v3";
+    const page = e.state?.page || parseInt(new URLSearchParams(window.location.search).get("page")) || 1;
+    if (mode === "history" && mode === currentMode && page !== rawPage) {
+      rawPage = page;
+      renderRawTable();
+      return;
+    }
+    if (mode === "history") rawPage = page;
+    if (mode !== currentMode) setMode(mode);
   });
 
   document.getElementById("history-search").addEventListener("input", () => {
