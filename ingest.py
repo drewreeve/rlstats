@@ -407,10 +407,10 @@ def _extract_match_events(
     # Convert frame_time -> game_seconds using clock updates
     def frame_to_game_seconds(ft: float) -> float:
         # Find the last clock update at or before this frame time
-        best_ft, best_sr = clock_updates[0]
+        _, best_sr = clock_updates[0]
         for c_ft, c_sr in clock_updates:
             if c_ft <= ft:
-                best_ft, best_sr = c_ft, c_sr
+                best_sr = c_sr
             else:
                 break
         return game_start - best_sr
