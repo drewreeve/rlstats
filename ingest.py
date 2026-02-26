@@ -217,7 +217,10 @@ def _calculate_ball_thirds(
             if new_actor.get("object_id") == ball_archetype:
                 ball_actor_ids.add(new_actor.get("actor_id"))
         for actor in frame.get("updated_actors", []):
-            if actor.get("actor_id") in ball_actor_ids and actor.get("object_id") == rb_obj_id:
+            if (
+                actor.get("actor_id") in ball_actor_ids
+                and actor.get("object_id") == rb_obj_id
+            ):
                 loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
                 if loc and "y" in loc:
                     samples.append((frame["time"], loc["y"]))
@@ -378,7 +381,9 @@ def _extract_match_events(
                         actor_identity[aid] = (platform, remote[platform_key])
 
             elif obj_id == team_obj_id:
-                team_actor = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
+                team_actor = (
+                    actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
+                )
                 if team_actor is not None:
                     actor_team_actor[aid] = team_actor
 
@@ -463,7 +468,7 @@ def _upsert_match(
 ) -> int:
     conn.execute(
         """
-        INSERT OR REPLACE INTO matches (
+        INSERT INTO matches (
             replay_hash,
             played_at, duration_seconds, forfeit, team_size,
             team, team_score, opponent_score, result, team_mvp_player_id,
@@ -471,6 +476,23 @@ def _upsert_match(
             team_possession_seconds, opponent_possession_seconds,
             defensive_third_seconds, neutral_third_seconds, offensive_third_seconds
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(replay_hash) DO UPDATE SET
+            played_at = excluded.played_at,
+            duration_seconds = excluded.duration_seconds,
+            forfeit = excluded.forfeit,
+            team_size = excluded.team_size,
+            team = excluded.team,
+            team_score = excluded.team_score,
+            opponent_score = excluded.opponent_score,
+            result = excluded.result,
+            team_mvp_player_id = excluded.team_mvp_player_id,
+            map_name = excluded.map_name,
+            game_mode = excluded.game_mode,
+            team_possession_seconds = excluded.team_possession_seconds,
+            opponent_possession_seconds = excluded.opponent_possession_seconds,
+            defensive_third_seconds = excluded.defensive_third_seconds,
+            neutral_third_seconds = excluded.neutral_third_seconds,
+            offensive_third_seconds = excluded.offensive_third_seconds
         """,
         (
             replay_hash,
@@ -525,10 +547,18 @@ def _upsert_match_players(
 
         conn.execute(
             """
-            INSERT OR REPLACE INTO match_players (
+            INSERT INTO match_players (
                 match_id, player_id, team,
                 goals, assists, saves, shots, score, demos
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(match_id, player_id) DO UPDATE SET
+                team = excluded.team,
+                goals = excluded.goals,
+                assists = excluded.assists,
+                saves = excluded.saves,
+                shots = excluded.shots,
+                score = excluded.score,
+                demos = excluded.demos
             """,
             (
                 match_id,
@@ -572,14 +602,6 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
     team_poss, opp_poss = _calculate_possession(replay, team)
     def_thirds, neu_thirds, off_thirds = _calculate_ball_thirds(replay, team)
 
-    # Delete existing match_events before upsert (INSERT OR REPLACE deletes
-    # the old row, which would violate FK constraints from match_events).
-    old = conn.execute(
-        "SELECT id FROM matches WHERE replay_hash = ?", (replay_hash,)
-    ).fetchone()
-    if old:
-        conn.execute("DELETE FROM match_events WHERE match_id = ?", (old[0],))
-
     match_id = _upsert_match(
         conn,
         replay_hash=replay_hash,
@@ -604,7 +626,8 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
     all_players = props.get("PlayerStats", [])
     _upsert_match_players(conn, match_id, all_players, demolitions)
 
-    # Extract and store match events
+    # Clear old events before re-inserting
+    conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
     match_events = _extract_match_events(replay, team)
     for event_type, game_seconds, platform, platform_id, ev_team in match_events:
         row = conn.execute(
