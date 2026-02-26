@@ -18,6 +18,14 @@ SELECT
 FROM matches m
 WHERE m.id = :match_id;
 
+-- name: match_events(match_id)
+-- Individual events in a match for timeline display.
+SELECT e.event_type, e.game_seconds, e.team, p.name
+FROM match_events e
+JOIN players p ON e.player_id = p.id
+WHERE e.match_id = :match_id
+ORDER BY e.game_seconds;
+
 -- name: match_players(match_id)
 -- All players in a match with computed shooting percentage.
 SELECT

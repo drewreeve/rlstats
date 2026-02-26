@@ -310,6 +310,136 @@ def _extract_demolitions(replay: dict) -> dict[tuple[str, str], int]:
     return result
 
 
+def _extract_match_events(
+    replay: dict, tracked_team: int | None
+) -> list[tuple[str, float, str, str, int]]:
+    """Extract individual match events from network frame data.
+
+    Returns list of (event_type, game_seconds, platform, platform_id, team) tuples.
+    """
+    if tracked_team is None:
+        return []
+
+    objects = replay.get("objects")
+    frames = replay.get("network_frames", {}).get("frames")
+    if not objects or not frames:
+        return []
+
+    # Resolve object IDs
+    try:
+        sr_obj_id = objects.index("TAGame.GameEvent_Soccar_TA:SecondsRemaining")
+        uid_obj_id = objects.index("Engine.PlayerReplicationInfo:UniqueId")
+        team_obj_id = objects.index("Engine.PlayerReplicationInfo:Team")
+    except ValueError:
+        return []
+
+    counter_names = {
+        "TAGame.PRI_TA:MatchGoals": "goal",
+        "TAGame.PRI_TA:MatchShots": "shot",
+        "TAGame.PRI_TA:MatchSaves": "save",
+        "TAGame.PRI_TA:MatchDemolishes": "demo",
+    }
+    counter_obj_ids: dict[int, str] = {}
+    for obj_name, event_type in counter_names.items():
+        try:
+            counter_obj_ids[objects.index(obj_name)] = event_type
+        except ValueError:
+            pass
+
+    if not counter_obj_ids:
+        return []
+
+    # Build game clock: list of (frame_time, seconds_remaining)
+    clock_updates: list[tuple[float, int]] = []
+    # Build actor identity and team mappings, track counters — all in one pass
+    actor_identity: dict[int, tuple[str, str]] = {}
+    actor_team_actor: dict[int, int] = {}
+    actor_counters: dict[int, dict[str, int]] = {}
+    raw_events: list[tuple[str, float, int]] = []  # (event_type, frame_time, actor_id)
+
+    for frame in frames:
+        ft = frame["time"]
+        for actor in frame.get("updated_actors", []):
+            obj_id = actor.get("object_id")
+            aid = actor["actor_id"]
+
+            if obj_id == sr_obj_id:
+                sr = actor.get("attribute", {}).get("Int")
+                if sr is not None:
+                    clock_updates.append((ft, sr))
+
+            elif obj_id == uid_obj_id:
+                uid = actor.get("attribute", {}).get("UniqueId", {})
+                remote = uid.get("remote_id", {})
+                if remote:
+                    platform_key = next(iter(remote))
+                    platform = NETWORK_PLATFORM_MAP.get(platform_key)
+                    if platform:
+                        actor_identity[aid] = (platform, remote[platform_key])
+
+            elif obj_id == team_obj_id:
+                team_actor = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
+                if team_actor is not None:
+                    actor_team_actor[aid] = team_actor
+
+            elif obj_id in counter_obj_ids:
+                event_type = counter_obj_ids[obj_id]
+                val = actor.get("attribute", {}).get("Int", 0)
+                if aid not in actor_counters:
+                    actor_counters[aid] = {}
+                prev = actor_counters[aid].get(event_type, 0)
+                if val > prev:
+                    for _ in range(val - prev):
+                        raw_events.append((event_type, ft, aid))
+                actor_counters[aid][event_type] = val
+
+    if not clock_updates or not raw_events:
+        return []
+
+    # Determine game_start (first SecondsRemaining value, typically 300)
+    game_start = clock_updates[0][1]
+
+    # Convert frame_time -> game_seconds using clock updates
+    def frame_to_game_seconds(ft: float) -> float:
+        # Find the last clock update at or before this frame time
+        best_ft, best_sr = clock_updates[0]
+        for c_ft, c_sr in clock_updates:
+            if c_ft <= ft:
+                best_ft, best_sr = c_ft, c_sr
+            else:
+                break
+        return game_start - best_sr
+
+    # Resolve team actor -> team number
+    # Tracked players' actor IDs point to one team actor = tracked_team
+    tracked_team_actor = None
+    for aid, identity in actor_identity.items():
+        if identity in TRACKED_PLAYERS and aid in actor_team_actor:
+            tracked_team_actor = actor_team_actor[aid]
+            break
+
+    if tracked_team_actor is None:
+        return []
+
+    def resolve_team(aid: int) -> int | None:
+        ta = actor_team_actor.get(aid)
+        if ta is None:
+            return None
+        return tracked_team if ta == tracked_team_actor else (1 - tracked_team)
+
+    # Build final events
+    events: list[tuple[str, float, str, str, int]] = []
+    for event_type, ft, aid in raw_events:
+        identity = actor_identity.get(aid)
+        team = resolve_team(aid)
+        if identity is None or team is None:
+            continue
+        gs = frame_to_game_seconds(ft)
+        events.append((event_type, gs, identity[0], identity[1], team))
+
+    return events
+
+
 def _upsert_match(
     conn: sqlite3.Connection,
     *,
@@ -442,6 +572,14 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
     team_poss, opp_poss = _calculate_possession(replay, team)
     def_thirds, neu_thirds, off_thirds = _calculate_ball_thirds(replay, team)
 
+    # Delete existing match_events before upsert (INSERT OR REPLACE deletes
+    # the old row, which would violate FK constraints from match_events).
+    old = conn.execute(
+        "SELECT id FROM matches WHERE replay_hash = ?", (replay_hash,)
+    ).fetchone()
+    if old:
+        conn.execute("DELETE FROM match_events WHERE match_id = ?", (old[0],))
+
     match_id = _upsert_match(
         conn,
         replay_hash=replay_hash,
@@ -465,6 +603,20 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
     demolitions = _extract_demolitions(replay)
     all_players = props.get("PlayerStats", [])
     _upsert_match_players(conn, match_id, all_players, demolitions)
+
+    # Extract and store match events
+    match_events = _extract_match_events(replay, team)
+    for event_type, game_seconds, platform, platform_id, ev_team in match_events:
+        row = conn.execute(
+            "SELECT id FROM players WHERE platform = ? AND platform_id = ?",
+            (platform, platform_id),
+        ).fetchone()
+        if row is None:
+            continue
+        conn.execute(
+            "INSERT INTO match_events (match_id, event_type, game_seconds, player_id, team) VALUES (?, ?, ?, ?, ?)",
+            (match_id, event_type, game_seconds, row[0], ev_team),
+        )
 
 
 def ingest_all():

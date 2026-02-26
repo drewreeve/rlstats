@@ -156,6 +156,141 @@ function pitchDiagram(defSec, neuSec, offSec) {
     </div>`;
 }
 
+function matchTimeline(events, teamNum, durationSeconds) {
+  if (!events || events.length === 0) return "";
+
+  const totalSeconds = durationSeconds || 300;
+  const w = 560;
+  const h = 175;
+  const pad = { left: 40, right: 20, top: 20, bottom: 40 };
+  const plotW = w - pad.left - pad.right;
+  const midY = pad.top + (h - pad.top - pad.bottom) / 2;
+
+  function xPos(sec) {
+    return pad.left + (sec / totalSeconds) * plotW;
+  }
+
+  // Time axis markers
+  let ticksSvg = "";
+  const timeY = h - pad.bottom + 18;
+  const interval = totalSeconds <= 300 ? 60 : 60;
+  for (let t = interval; t <= totalSeconds; t += interval) {
+    const x = xPos(t);
+    const min = Math.floor(t / 60);
+    const sec = t % 60;
+    const label = sec === 0 ? `${min}:00` : `${min}:${String(sec).padStart(2, "0")}`;
+    ticksSvg += `
+      <line x1="${x}" y1="${midY - 12}" x2="${x}" y2="${midY + 12}"
+        stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <text x="${x}" y="${timeY}" text-anchor="middle"
+        fill="var(--text-dim)" font-family="var(--font-mono)" font-size="8">${label}</text>`;
+  }
+
+  // Event markers
+  const eventConfig = {
+    goal: { r: 6, teamColor: "var(--cyan)", oppColor: "#ff3c3c", label: "G" },
+    shot: { r: 3, teamColor: "rgba(0,229,255,0.4)", oppColor: "rgba(255,60,60,0.4)", label: "S" },
+    save: { r: 4, teamColor: "rgba(0,229,255,0.7)", oppColor: "rgba(255,60,60,0.7)", label: "V" },
+    demo: { r: 4, teamColor: "#ff6b00", oppColor: "#ff6b00", label: "D" },
+  };
+
+  // Group events at same position to avoid overlap
+  let markersSvg = "";
+  const teamOffsets = {};
+  const oppOffsets = {};
+
+  for (const ev of events) {
+    const cfg = eventConfig[ev.event_type];
+    if (!cfg) continue;
+    const isTeam = ev.team === teamNum;
+    const x = xPos(ev.game_seconds);
+    const color = isTeam ? cfg.teamColor : cfg.oppColor;
+
+    // Stack events vertically per side
+    const offsets = isTeam ? teamOffsets : oppOffsets;
+    const bucket = Math.round(x);
+    offsets[bucket] = (offsets[bucket] || 0) + 1;
+    const stackIdx = offsets[bucket] - 1;
+    const baseY = isTeam ? midY - 18 : midY + 18;
+    const stackDir = isTeam ? -1 : 1;
+    const y = baseY + stackIdx * stackDir * 14;
+
+    if (ev.event_type === "goal") {
+      // Goal: larger filled circle with glow
+      markersSvg += `
+        <circle cx="${x}" cy="${y}" r="${cfg.r}" fill="${color}" opacity="0.9"/>
+        <circle cx="${x}" cy="${y}" r="${cfg.r + 3}" fill="none" stroke="${color}" stroke-width="1" opacity="0.3"/>`;
+    } else if (ev.event_type === "demo") {
+      // Demo: diamond shape
+      markersSvg += `
+        <polygon points="${x},${y - cfg.r} ${x + cfg.r},${y} ${x},${y + cfg.r} ${x - cfg.r},${y}"
+          fill="${color}" opacity="0.8"/>`;
+    } else if (ev.event_type === "save") {
+      // Save: shield/square
+      const s = cfg.r;
+      markersSvg += `
+        <rect x="${x - s}" y="${y - s}" width="${s * 2}" height="${s * 2}" rx="1"
+          fill="${color}" opacity="0.8"/>`;
+    } else {
+      // Shot: small triangle
+      const s = cfg.r;
+      const dir = isTeam ? -1 : 1;
+      markersSvg += `
+        <polygon points="${x},${y - s * dir} ${x + s},${y + s * dir} ${x - s},${y + s * dir}"
+          fill="${color}" opacity="0.7"/>`;
+    }
+
+    // Player name on goals only
+    if (ev.event_type === "goal") {
+      const textY = isTeam ? y - 14 : y + 14;
+      markersSvg += `
+        <text x="${x}" y="${textY}" text-anchor="middle" dominant-baseline="${isTeam ? "auto" : "hanging"}"
+          fill="${color}" font-family="var(--font-mono)" font-size="7" opacity="0.9">${esc(ev.name)}</text>`;
+    }
+  }
+
+  // Legend
+  const legendY = h - 4;
+  const legendItems = [
+    { label: "Goal", shape: "circle", color: "var(--text-dim)", r: 5 },
+    { label: "Shot", shape: "circle", color: "var(--text-dim)", r: 3 },
+    { label: "Save", shape: "rect", color: "var(--text-dim)", r: 3 },
+    { label: "Demo", shape: "diamond", color: "var(--text-dim)", r: 3 },
+  ];
+
+  return `
+    <div class="match-timeline">
+      <div class="match-timeline-header">
+        <span class="match-timeline-label">MATCH TIMELINE</span>
+        <span class="match-timeline-legend">
+          <span class="tl-legend-item"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="var(--text-dim)"/></svg> Goal</span>
+          <span class="tl-legend-item"><svg width="8" height="8"><polygon points="4,1 7,7 1,7" fill="var(--text-dim)"/></svg> Shot</span>
+          <span class="tl-legend-item"><svg width="8" height="8"><rect width="7" height="7" rx="1" fill="var(--text-dim)"/></svg> Save</span>
+          <span class="tl-legend-item"><svg width="8" height="8"><polygon points="4,0 8,4 4,8 0,4" fill="var(--text-dim)"/></svg> Demo</span>
+        </span>
+      </div>
+      <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" class="timeline-svg">
+        <!-- Center line -->
+        <line x1="${pad.left}" y1="${midY}" x2="${w - pad.right}" y2="${midY}"
+          stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <!-- Team labels -->
+        <text x="${pad.left - 6}" y="${midY - 10}" text-anchor="end"
+          fill="var(--cyan)" font-family="var(--font-display)" font-size="7" font-weight="700" letter-spacing="0.05em">TEAM</text>
+        <text x="${pad.left - 6}" y="${midY + 14}" text-anchor="end"
+          fill="#ff3c3c" font-family="var(--font-display)" font-size="7" font-weight="700" letter-spacing="0.05em">OPP</text>
+        <!-- Start/end markers -->
+        <line x1="${pad.left}" y1="${midY - 14}" x2="${pad.left}" y2="${midY + 14}"
+          stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+        <line x1="${w - pad.right}" y1="${midY - 14}" x2="${w - pad.right}" y2="${midY + 14}"
+          stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+        <text x="${pad.left}" y="${timeY}" text-anchor="middle"
+          fill="var(--text-dim)" font-family="var(--font-mono)" font-size="8">0:00</text>
+        ${ticksSvg}
+        ${markersSvg}
+      </svg>
+    </div>`;
+}
+
 async function loadMatch() {
   const parts = window.location.pathname.split("/");
   const matchId = parts[parts.length - 1];
@@ -167,7 +302,7 @@ async function loadMatch() {
     return;
   }
 
-  const { match: m, team_players, opponent_players } = await res.json();
+  const { match: m, events, team_players, opponent_players } = await res.json();
 
   const isWin = m.result === "win";
   const accentClass = isWin ? "match-win" : "match-loss";
@@ -251,6 +386,8 @@ async function loadMatch() {
         </div>
       </div>
     </div>
+
+    ${matchTimeline(events, m.team, m.duration_seconds)}
 
     <div class="player-tables">
       ${playerTable(team_players, "Our Team", true)}

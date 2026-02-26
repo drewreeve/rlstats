@@ -1,5 +1,5 @@
 import pytest
-from ingest import ingest_match, get_or_create_player, _extract_demolitions
+from ingest import ingest_match, get_or_create_player, _extract_demolitions, _extract_match_events
 from tests.fixtures import in_memory_db, load_replay
 
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
@@ -263,6 +263,63 @@ def test_ball_thirds_none_without_network_data():
         "SELECT defensive_third_seconds, neutral_third_seconds, offensive_third_seconds FROM matches"
     ).fetchone()
     assert row == (None, None, None)
+
+
+def test_extract_match_events():
+    replay = load_replay("match.json")
+    # tracked_team is 0 for match.json (Drew/Steve/Jeff are team 0)
+    events = _extract_match_events(replay, 0)
+
+    assert isinstance(events, list)
+    assert len(events) > 0
+
+    # Each event is (event_type, game_seconds, platform, platform_id, team)
+    for ev in events:
+        assert ev[0] in ("goal", "shot", "save", "demo")
+        assert isinstance(ev[1], (int, float))
+        assert ev[1] >= 0
+        assert ev[4] in (0, 1)
+
+    # Count goals — should match the 5-4 score (9 total)
+    goals = [e for e in events if e[0] == "goal"]
+    assert len(goals) == 9
+
+    team_goals = [e for e in goals if e[4] == 0]
+    opp_goals = [e for e in goals if e[4] == 1]
+    assert len(team_goals) == 5
+    assert len(opp_goals) == 4
+
+
+def test_extract_match_events_without_network_data():
+    events = _extract_match_events({"properties": {}}, 0)
+    assert events == []
+
+
+def test_match_events_stored_in_db():
+    conn = ingest_fixture("match.json")
+    rows = conn.execute(
+        "SELECT event_type, game_seconds, team FROM match_events ORDER BY game_seconds"
+    ).fetchall()
+
+    assert len(rows) > 0
+    goals = [r for r in rows if r[0] == "goal"]
+    assert len(goals) == 9
+
+
+def test_match_events_have_valid_players():
+    conn = ingest_fixture("match.json")
+    rows = conn.execute("""
+        SELECT me.event_type, p.name
+        FROM match_events me
+        JOIN players p ON me.player_id = p.id
+        WHERE me.event_type = 'goal'
+        ORDER BY me.game_seconds
+    """).fetchall()
+
+    assert len(rows) == 9
+    # All goal scorers should have real names
+    for _, name in rows:
+        assert name != "Unknown"
 
 
 def test_player_name_updates_on_change():

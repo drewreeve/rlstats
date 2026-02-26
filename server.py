@@ -107,6 +107,11 @@ def query_match_detail(conn, match_id):
     team_players = [dict(p) for p in players if p["team"] == team_num]
     opponent_players = [dict(p) for p in players if p["team"] != team_num]
 
+    events = [
+        {"event_type": e["event_type"], "game_seconds": e["game_seconds"], "team": e["team"], "name": e["name"]}
+        for e in queries.match_events(conn, match_id=match_id)
+    ]
+
     return {
         "match": {
             "id": match["id"],
@@ -117,12 +122,14 @@ def query_match_detail(conn, match_id):
             "team_score": match["team_score"],
             "opponent_score": match["opponent_score"],
             "duration_seconds": match["duration_seconds"],
+            "team": team_num,
             "team_possession_seconds": match["team_possession_seconds"],
             "opponent_possession_seconds": match["opponent_possession_seconds"],
             "defensive_third_seconds": match["defensive_third_seconds"],
             "neutral_third_seconds": match["neutral_third_seconds"],
             "offensive_third_seconds": match["offensive_third_seconds"],
         },
+        "events": events,
         "team_players": team_players,
         "opponent_players": opponent_players,
     }
