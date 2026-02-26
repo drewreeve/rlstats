@@ -338,8 +338,6 @@ async function loadMatch() {
   }
 
   const html = `
-    <a href="/" class="match-back">&larr; Back to Dashboard</a>
-
     <div class="match-header ${accentClass}">
       <div class="match-teams">
         <div class="match-team-name team-color">Our Team</div>
@@ -395,15 +393,6 @@ async function loadMatch() {
     </div>`;
 
   document.getElementById("match-content").innerHTML = html;
-
-  document.querySelector(".match-back").addEventListener("click", (e) => {
-    e.preventDefault();
-    if (document.referrer && new URL(document.referrer).origin === location.origin) {
-      history.back();
-    } else {
-      location.href = "/";
-    }
-  });
 }
 
 document.addEventListener("DOMContentLoaded", loadMatch);
