@@ -86,9 +86,7 @@ class UploadProcessor:
     """Debounced batch processor for uploaded replay files."""
 
     def __init__(self, db_path, delay=2.0):
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.db_path = db_path
         self.delay = delay
         self._queue: list[Path] = []
         self._lock = threading.Lock()
@@ -110,4 +108,10 @@ class UploadProcessor:
             self._timer = None
         if files:
             logger.info("Processing %d uploaded replay(s)", len(files))
-            process_batch(files, self.conn)
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            try:
+                process_batch(files, conn)
+            finally:
+                conn.close()
