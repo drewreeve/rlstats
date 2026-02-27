@@ -20,7 +20,9 @@ PLATFORM_MAP = {
     "OnlinePlatform_Epic": "epic",
     "OnlinePlatform_PS4": "ps4",
     "OnlinePlatform_Switch": "switch",
-    "OnlinePlatform_Xbox": "xbox",
+    "OnlinePlatform_NNX": "switch",
+    "OnlinePlatform_Xbox": "xbox",  # Not sure if this is needed now
+    "OnlinePlatform_Dingo": "xbox",
 }
 
 DB_PATH = Path("db/rl_stats.sqlite")
