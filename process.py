@@ -45,7 +45,7 @@ def parse_replay(replay_path: Path) -> tuple[dict | None, str | None]:
     return json.loads(result.stdout), None
 
 
-def process_replay(replay_path: Path, conn) -> tuple[bool, str | None]:
+def process_replay(replay_path: Path, conn: sqlite3.Connection) -> tuple[bool, str | None]:
     """Run rrrocket on a .replay file, then ingest the parsed data.
 
     Returns (True, None) on success. On failure, removes corrupt files and
@@ -66,7 +66,7 @@ def process_replay(replay_path: Path, conn) -> tuple[bool, str | None]:
     return True, None
 
 
-def process_batch(files: list[Path], conn) -> dict[str, tuple[bool, str | None]]:
+def process_batch(files: list[Path], conn: sqlite3.Connection) -> dict[str, tuple[bool, str | None]]:
     """Process a list of replay files in a single DB transaction.
 
     Returns a dict mapping filename to (success, error_message) for each file.

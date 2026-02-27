@@ -3,6 +3,7 @@
 
 import json
 import sqlite3
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -165,9 +166,7 @@ def _calculate_possession(
 
     # Calculate possession between consecutive touches
     possession = {0: 0.0, 1: 0.0}
-    for i in range(len(touches) - 1):
-        t_start, team_num = touches[i]
-        t_end = touches[i + 1][0]
+    for (t_start, team_num), (t_end, _) in pairwise(touches):
         possession[team_num] += t_end - t_start
 
     # Last touch to end of match
@@ -233,9 +232,7 @@ def _calculate_ball_thirds(
 
     # Accumulate time in each zone
     zones = {"negative": 0.0, "neutral": 0.0, "positive": 0.0}
-    for i in range(len(samples) - 1):
-        t_start, y = samples[i]
-        t_end = samples[i + 1][0]
+    for (t_start, y), (t_end, _) in pairwise(samples):
         dt = t_end - t_start
         if dt <= 0:
             continue
