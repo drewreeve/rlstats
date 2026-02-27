@@ -1,5 +1,4 @@
 import hmac
-import json
 import logging
 import os
 import secrets
@@ -11,7 +10,7 @@ from werkzeug.utils import secure_filename
 
 from db import apply_migrations, queries
 from ingest import ingest_match
-from process import UploadProcessor, convert_replay
+from process import UploadProcessor, parse_replay
 
 logger = logging.getLogger(__name__)
 
@@ -341,8 +340,8 @@ def create_app(db_path, replay_dir=None, processor=None):
         if not safe_name:
             return jsonify({"status": "unknown"})
         replay_path = upload_dir / safe_name
-        json_path = replay_path.with_suffix(replay_path.suffix + ".json")
-        if json_path.exists():
+        ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
+        if ingested_path.exists():
             return jsonify({"status": "processed"})
         if not replay_path.exists():
             return jsonify({"status": "error"})
@@ -443,25 +442,22 @@ def main():
     conn.execute("PRAGMA foreign_keys = ON")
     apply_migrations(conn)
 
-    # Convert any unprocessed replay files (no DB needed)
+    # Parse and ingest any unprocessed replay files
     unprocessed = [
         p for p in REPLAY_DIR.glob("*.replay")
-        if not p.with_suffix(p.suffix + ".json").exists()
+        if not p.with_suffix(p.suffix + ".ingested").exists()
     ]
     if unprocessed:
-        print(f"Converting {len(unprocessed)} unprocessed replay(s) at startup...")
-        for replay_path in unprocessed:
-            convert_replay(replay_path)
-
-    # Ingest all parsed JSON files into the database (single pass)
-    json_files = sorted(REPLAY_DIR.glob("*.json"))
-    if json_files:
-        print(f"Ingesting {len(json_files)} replay JSON file(s)...")
-        for path in json_files:
-            with open(path, "r", encoding="utf-8") as f:
-                replay = json.load(f)
-            ingest_match(conn, replay)
+        print(f"Processing {len(unprocessed)} unprocessed replay(s) at startup...")
+        ingested = []
+        for replay_path in sorted(unprocessed):
+            replay, error = parse_replay(replay_path)
+            if replay is not None:
+                ingest_match(conn, replay)
+                ingested.append(replay_path)
         conn.commit()
+        for replay_path in ingested:
+            replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
 
     conn.close()
 

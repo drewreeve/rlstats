@@ -328,12 +328,12 @@ def test_upload_status_pending_when_replay_exists(tmp_path):
     assert resp.get_json()["status"] == "pending"
 
 
-def test_upload_status_processed_when_json_exists(tmp_path):
-    """.replay.json exists means processing succeeded."""
+def test_upload_status_processed_when_ingested_marker_exists(tmp_path):
+    """.replay.ingested marker exists means processing succeeded."""
     client, replay_dir = _status_client(tmp_path)
 
     (replay_dir / "test.replay").write_bytes(b"\x00")
-    (replay_dir / "test.replay.json").write_bytes(b"{}")
+    (replay_dir / "test.replay.ingested").write_bytes(b"")
 
     resp = client.get("/api/upload/status?filename=test.replay")
     assert resp.status_code == 200

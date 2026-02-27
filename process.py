@@ -12,14 +12,12 @@ logger = logging.getLogger(__name__)
 _batch_lock = threading.Lock()
 
 
-def convert_replay(replay_path: Path) -> tuple[bool, str | None]:
-    """Run rrrocket on a .replay file, writing a .replay.json sidecar.
+def parse_replay(replay_path: Path) -> tuple[dict | None, str | None]:
+    """Run rrrocket on a .replay file and return the parsed JSON.
 
-    Returns (True, None) on success. On failure, removes the corrupt .replay
-    file and returns (False, error_message).
+    Returns (parsed_dict, None) on success. On failure, removes the corrupt
+    .replay file and returns (None, error_message).
     """
-    json_path = replay_path.with_suffix(replay_path.suffix + ".json")
-
     try:
         result = subprocess.run(
             ["rrrocket", "-n", str(replay_path)],
@@ -30,7 +28,7 @@ def convert_replay(replay_path: Path) -> tuple[bool, str | None]:
         msg = f"rrrocket failed: {exc}"
         logger.warning("rrrocket failed for %s: %s", replay_path.name, exc)
         replay_path.unlink(missing_ok=True)
-        return False, msg
+        return None, msg
 
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace").strip()
@@ -42,32 +40,27 @@ def convert_replay(replay_path: Path) -> tuple[bool, str | None]:
             stderr,
         )
         replay_path.unlink(missing_ok=True)
-        return False, msg
+        return None, msg
 
-    json_path.write_bytes(result.stdout)
-    return True, None
+    return json.loads(result.stdout), None
 
 
 def process_replay(replay_path: Path, conn) -> tuple[bool, str | None]:
-    """Run rrrocket on a .replay file, then ingest the resulting JSON.
+    """Run rrrocket on a .replay file, then ingest the parsed data.
 
     Returns (True, None) on success. On failure, removes corrupt files and
     returns (False, error_message).
     """
-    json_path = replay_path.with_suffix(replay_path.suffix + ".json")
-
-    success, error = convert_replay(replay_path)
-    if not success:
+    replay, error = parse_replay(replay_path)
+    if replay is None:
         return False, error
 
     try:
-        replay = json.loads(json_path.read_bytes())
         ingest_match(conn, replay)
     except Exception as exc:
         msg = f"Ingest failed: {exc}"
         logger.warning("Ingest failed for %s: %s", replay_path.name, exc)
         replay_path.unlink(missing_ok=True)
-        json_path.unlink(missing_ok=True)
         return False, msg
 
     return True, None
@@ -83,6 +76,9 @@ def process_batch(files: list[Path], conn) -> dict[str, tuple[bool, str | None]]
         for replay_path in files:
             results[replay_path.name] = process_replay(replay_path, conn)
         conn.commit()
+        for replay_path in files:
+            if results[replay_path.name][0]:
+                replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
     return results
 
 

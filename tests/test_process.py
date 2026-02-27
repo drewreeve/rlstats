@@ -3,7 +3,7 @@ import subprocess
 import threading
 from unittest.mock import patch
 
-from process import UploadProcessor, convert_replay, process_batch, process_replay
+from process import UploadProcessor, parse_replay, process_batch, process_replay
 from tests.fixtures import file_db, in_memory_db, load_replay
 
 
@@ -13,8 +13,8 @@ def _make_conn():
     return conn
 
 
-def test_convert_replay_success(tmp_path):
-    """convert_replay writes a .replay.json sidecar on success."""
+def test_parse_replay_success(tmp_path):
+    """parse_replay returns parsed dict on success."""
     replay_data = load_replay("match.json")
     replay_path = tmp_path / "test.replay"
     replay_path.write_bytes(b"\x00" * 1024)
@@ -24,33 +24,31 @@ def test_convert_replay_success(tmp_path):
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     with patch("process.subprocess.run", side_effect=fake_rrrocket):
-        success, error = convert_replay(replay_path)
+        result, error = parse_replay(replay_path)
 
-    assert success is True
+    assert result == replay_data
     assert error is None
-    json_path = tmp_path / "test.replay.json"
-    assert json_path.exists()
-    assert json.loads(json_path.read_text()) == replay_data
+    # No .json sidecar should be written
+    assert not (tmp_path / "test.replay.json").exists()
 
 
-def test_convert_replay_failure(tmp_path):
-    """convert_replay removes .replay on rrrocket failure."""
+def test_parse_replay_failure(tmp_path):
+    """parse_replay removes .replay on rrrocket failure."""
     replay_path = tmp_path / "corrupt.replay"
     replay_path.write_bytes(b"\x00" * 1024)
 
     failed = subprocess.CompletedProcess(["rrrocket"], 1, stderr=b"parse error")
 
     with patch("process.subprocess.run", return_value=failed):
-        success, error = convert_replay(replay_path)
+        result, error = parse_replay(replay_path)
 
-    assert success is False
+    assert result is None
     assert "rrrocket failed" in error
     assert not replay_path.exists()
-    assert not (tmp_path / "corrupt.replay.json").exists()
 
 
 def test_process_replay_success(tmp_path):
-    """process_replay converts .replay to .json and ingests it."""
+    """process_replay parses and ingests a replay without writing a marker."""
     conn = _make_conn()
     replay_data = load_replay("match.json")
 
@@ -58,7 +56,6 @@ def test_process_replay_success(tmp_path):
     replay_path.write_bytes(b"\x00" * 1024)
 
     def fake_rrrocket(args, **kwargs):
-        # rrrocket outputs JSON to stdout for single files
         stdout = json.dumps(replay_data).encode()
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
@@ -70,10 +67,12 @@ def test_process_replay_success(tmp_path):
     conn.commit()
     row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
     assert row[0] == 1
+    # Marker is NOT written by process_replay; process_batch handles it after commit
+    assert not (tmp_path / "test.replay.ingested").exists()
 
 
 def test_process_replay_ingest_failure(tmp_path):
-    """When ingest fails, both .replay and .json are removed."""
+    """When ingest fails, .replay is removed and no marker is written."""
     conn = _make_conn()
     replay_path = tmp_path / "bad.replay"
     replay_path.write_bytes(b"\x00" * 1024)
@@ -92,7 +91,7 @@ def test_process_replay_ingest_failure(tmp_path):
     assert success is False
     assert "Ingest failed" in error
     assert not replay_path.exists()
-    assert not (tmp_path / "bad.replay.json").exists()
+    assert not (tmp_path / "bad.replay.ingested").exists()
 
 
 def test_process_batch_commits(tmp_path):
@@ -122,6 +121,9 @@ def test_process_batch_commits(tmp_path):
 
     row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
     assert row[0] == 3
+    # Markers are written only after commit
+    for p in files:
+        assert (p.with_suffix(p.suffix + ".ingested")).exists()
 
 
 def test_upload_processor_debounce(tmp_path):
