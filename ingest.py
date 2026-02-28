@@ -403,16 +403,28 @@ def _extract_match_events(
     # Determine game_start (first SecondsRemaining value, typically 300)
     game_start = clock_updates[0][1]
 
-    # Convert frame_time -> game_seconds using clock updates
+    # Pre-compute monotonic game_seconds from clock updates.
+    # In overtime, SecondsRemaining counts up from 0 instead of down,
+    # so we detect the transition and add to game_start instead of subtracting.
+    seen_zero = False
+    clock_game_seconds: list[tuple[float, float]] = []
+    for c_ft, sr in clock_updates:
+        if sr == 0:
+            seen_zero = True
+        if seen_zero and sr > 0:
+            clock_game_seconds.append((c_ft, game_start + sr))
+        else:
+            clock_game_seconds.append((c_ft, game_start - sr))
+
+    # Convert frame_time -> game_seconds using pre-computed values
     def frame_to_game_seconds(ft: float) -> float:
-        # Find the last clock update at or before this frame time
-        _, best_sr = clock_updates[0]
-        for c_ft, c_sr in clock_updates:
+        _, best_gs = clock_game_seconds[0]
+        for c_ft, c_gs in clock_game_seconds:
             if c_ft <= ft:
-                best_sr = c_sr
+                best_gs = c_gs
             else:
                 break
-        return game_start - best_sr
+        return best_gs
 
     # Resolve team actor -> team number
     # Tracked players' actor IDs point to one team actor = tracked_team

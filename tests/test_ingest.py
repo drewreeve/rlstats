@@ -322,6 +322,21 @@ def test_match_events_have_valid_players():
         assert name != "Unknown"
 
 
+def test_overtime_goals_positioned_after_regulation():
+    replay = load_replay("overtime.json")
+    events = _extract_match_events(replay, 0)
+
+    goals = [e for e in events if e[0] == "goal"]
+    assert len(goals) == 3
+
+    # Goals should be in chronological order
+    goal_times = [g[1] for g in goals]
+    assert goal_times == sorted(goal_times)
+
+    # The overtime goal must be past regulation (>300 game_seconds)
+    assert goal_times[-1] > 300
+
+
 def test_player_name_updates_on_change():
     conn = in_memory_db()
     get_or_create_player(conn, "steam", "123", "OldName")
