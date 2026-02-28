@@ -215,37 +215,40 @@ function matchTimeline(events, teamNum, durationSeconds) {
     const stackDir = isTeam ? -1 : 1;
     const y = baseY + stackIdx * stackDir * 14;
 
+    const label = ev.event_type.charAt(0).toUpperCase() + ev.event_type.slice(1);
+    const tooltip = `${label} by ${ev.name}`;
+
     if (ev.event_type === "goal") {
       // Goal: larger filled circle with glow
       markersSvg += `
+        <g><title>${esc(tooltip)}</title>
         <circle cx="${x}" cy="${y}" r="${cfg.r}" fill="${color}" opacity="0.9"/>
-        <circle cx="${x}" cy="${y}" r="${cfg.r + 3}" fill="none" stroke="${color}" stroke-width="1" opacity="0.3"/>`;
+        <circle cx="${x}" cy="${y}" r="${cfg.r + 3}" fill="none" stroke="${color}" stroke-width="1" opacity="0.3"/>
+        </g>`;
     } else if (ev.event_type === "demo") {
       // Demo: diamond shape
       markersSvg += `
+        <g><title>${esc(tooltip)}</title>
         <polygon points="${x},${y - cfg.r} ${x + cfg.r},${y} ${x},${y + cfg.r} ${x - cfg.r},${y}"
-          fill="${color}" opacity="0.8"/>`;
+          fill="${color}" opacity="0.8"/>
+        </g>`;
     } else if (ev.event_type === "save") {
       // Save: shield/square
       const s = cfg.r;
       markersSvg += `
+        <g><title>${esc(tooltip)}</title>
         <rect x="${x - s}" y="${y - s}" width="${s * 2}" height="${s * 2}" rx="1"
-          fill="${color}" opacity="0.8"/>`;
+          fill="${color}" opacity="0.8"/>
+        </g>`;
     } else {
       // Shot: small triangle
       const s = cfg.r;
       const dir = isTeam ? -1 : 1;
       markersSvg += `
+        <g><title>${esc(tooltip)}</title>
         <polygon points="${x},${y - s * dir} ${x + s},${y + s * dir} ${x - s},${y + s * dir}"
-          fill="${color}" opacity="0.7"/>`;
-    }
-
-    // Player name on goals only
-    if (ev.event_type === "goal") {
-      const textY = isTeam ? y - 14 : y + 14;
-      markersSvg += `
-        <text x="${x}" y="${textY}" text-anchor="middle" dominant-baseline="${isTeam ? "auto" : "hanging"}"
-          fill="${color}" font-family="var(--font-mono)" font-size="7" opacity="0.9">${esc(ev.name)}</text>`;
+          fill="${color}" opacity="0.7"/>
+        </g>`;
     }
   }
 
