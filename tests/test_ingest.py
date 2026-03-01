@@ -1,5 +1,5 @@
 import pytest
-from ingest import ingest_match, get_or_create_player, _extract_demolitions, _extract_match_events
+from ingest import ingest_match, get_or_create_player, _extract_demolitions, _extract_match_events, _extract_boost_stats
 from tests.fixtures import in_memory_db, load_replay
 
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
@@ -335,6 +335,36 @@ def test_overtime_goals_positioned_after_regulation():
 
     # The overtime goal must be past regulation (>300 game_seconds)
     assert goal_times[-1] > 300
+
+
+def test_boost_stats_tracking():
+    conn = ingest_fixture("match.json")
+    row = conn.execute(
+        "SELECT team_boost_collected, opponent_boost_collected, team_boost_stolen, opponent_boost_stolen FROM matches"
+    ).fetchone()
+    team_collected, opp_collected, team_stolen, opp_stolen = row
+
+    assert team_collected is not None
+    assert opp_collected is not None
+    assert team_stolen is not None
+    assert opp_stolen is not None
+    assert team_collected > 0
+    assert opp_collected > 0
+    assert team_stolen >= 0
+    assert opp_stolen >= 0
+    assert team_stolen <= team_collected
+    assert opp_stolen <= opp_collected
+
+
+def test_boost_stats_none_without_network_data():
+    conn = in_memory_db()
+    replay = load_replay("match.json")
+    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
+    ingest_match(conn, replay)
+    row = conn.execute(
+        "SELECT team_boost_collected, opponent_boost_collected, team_boost_stolen, opponent_boost_stolen FROM matches"
+    ).fetchone()
+    assert row == (None, None, None, None)
 
 
 def test_player_name_updates_on_change():

@@ -312,6 +312,112 @@ def _extract_demolitions(replay: dict) -> dict[tuple[str, str], int]:
     return result
 
 
+BIG_PAD_POSITIONS = {
+    "standard": [
+        (-3072, -4096),
+        (3072, -4096),
+        (-3584, 0),
+        (3584, 0),
+        (-3072, 4096),
+        (3072, 4096),
+    ],
+    "hoops": [
+        (-2176, -2880),
+        (2176, -2880),
+        (-2400, 0),
+        (2400, 0),
+        (-2176, 2880),
+        (2176, 2880),
+    ],
+}
+# Official hitbox radius is 208uu (wiki.rlbot.org); we use 400 to allow for
+# car size and positional jitter in replay network frames.
+BIG_PAD_RADIUS = 400
+BIG_PAD_RADIUS_SQ = BIG_PAD_RADIUS**2
+
+
+def _extract_boost_stats(
+    replay: dict, tracked_team: int | None, game_mode: str | None
+) -> tuple[int | None, int | None, int | None, int | None]:
+    """Extract per-team boost collected and boost stolen from network frame data.
+
+    Returns (team_collected, opp_collected, team_stolen, opp_stolen)
+    or (None, None, None, None) if data is unavailable.
+    """
+    if tracked_team is None:
+        return None, None, None, None
+
+    objects = replay.get("objects")
+    frames = replay.get("network_frames", {}).get("frames")
+    if not objects or not frames:
+        return None, None, None, None
+
+    try:
+        team_paint_obj_id = objects.index("TAGame.Car_TA:TeamPaint")
+        rb_obj_id = objects.index("TAGame.RBActor_TA:ReplicatedRBState")
+        pickup_obj_id = objects.index("TAGame.VehiclePickup_TA:NewReplicatedPickupData")
+    except ValueError:
+        return None, None, None, None
+
+    map_key = "hoops" if game_mode == "hoops" else "standard"
+    big_pads = BIG_PAD_POSITIONS[map_key]
+
+    car_team: dict[int, int] = {}
+    car_position: dict[int, tuple[float, float]] = {}
+    collected = {0: 0, 1: 0}
+    stolen = {0: 0, 1: 0}
+
+    for frame in frames:
+        for actor in frame.get("updated_actors", []):
+            obj_id = actor.get("object_id")
+            aid = actor["actor_id"]
+
+            if obj_id == team_paint_obj_id:
+                team = actor.get("attribute", {}).get("TeamPaint", {}).get("team")
+                if team is not None:
+                    car_team[aid] = team
+
+            elif obj_id == rb_obj_id:
+                loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
+                if loc and "x" in loc and "y" in loc:
+                    car_position[aid] = (loc["x"], loc["y"])
+
+            elif obj_id == pickup_obj_id:
+                pickup = actor.get("attribute", {}).get("PickupNew", {})
+                if not pickup.get("picked_up"):
+                    continue
+                instigator = pickup.get("instigator")
+                if instigator is None:
+                    continue
+                team = car_team.get(instigator)
+                pos = car_position.get(instigator)
+                if team is None or pos is None:
+                    continue
+
+                x, y = pos
+                # Classify big vs small by proximity to known big pad positions
+                is_big = any(
+                    (x - bx) ** 2 + (y - by) ** 2 <= BIG_PAD_RADIUS_SQ
+                    for bx, by in big_pads
+                )
+                boost_value = 100 if is_big else 12
+                collected[team] += boost_value
+
+                # Stolen = pickup on opponent's half (not center)
+                # Team 0 defends Y<0, Team 1 defends Y>0
+                if (team == 0 and y > 0) or (team == 1 and y < 0):
+                    stolen[team] += boost_value
+
+    if collected[0] == 0 and collected[1] == 0:
+        return None, None, None, None
+
+    team_collected = collected[tracked_team]
+    opp_collected = collected[1 - tracked_team]
+    team_stolen = stolen[tracked_team]
+    opp_stolen = stolen[1 - tracked_team]
+    return team_collected, opp_collected, team_stolen, opp_stolen
+
+
 def _extract_match_events(
     replay: dict, tracked_team: int | None
 ) -> list[tuple[str, float, str, str, int]]:
@@ -476,6 +582,10 @@ def _upsert_match(
     defensive_third_seconds: float | None,
     neutral_third_seconds: float | None,
     offensive_third_seconds: float | None,
+    team_boost_collected: int | None,
+    opponent_boost_collected: int | None,
+    team_boost_stolen: int | None,
+    opponent_boost_stolen: int | None,
 ) -> int:
     conn.execute(
         """
@@ -485,8 +595,10 @@ def _upsert_match(
             team, team_score, opponent_score, result, team_mvp_player_id,
             map_name, game_mode,
             team_possession_seconds, opponent_possession_seconds,
-            defensive_third_seconds, neutral_third_seconds, offensive_third_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            defensive_third_seconds, neutral_third_seconds, offensive_third_seconds,
+            team_boost_collected, opponent_boost_collected,
+            team_boost_stolen, opponent_boost_stolen
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(replay_hash) DO UPDATE SET
             played_at = excluded.played_at,
             duration_seconds = excluded.duration_seconds,
@@ -503,7 +615,11 @@ def _upsert_match(
             opponent_possession_seconds = excluded.opponent_possession_seconds,
             defensive_third_seconds = excluded.defensive_third_seconds,
             neutral_third_seconds = excluded.neutral_third_seconds,
-            offensive_third_seconds = excluded.offensive_third_seconds
+            offensive_third_seconds = excluded.offensive_third_seconds,
+            team_boost_collected = excluded.team_boost_collected,
+            opponent_boost_collected = excluded.opponent_boost_collected,
+            team_boost_stolen = excluded.team_boost_stolen,
+            opponent_boost_stolen = excluded.opponent_boost_stolen
         """,
         (
             replay_hash,
@@ -523,6 +639,10 @@ def _upsert_match(
             defensive_third_seconds,
             neutral_third_seconds,
             offensive_third_seconds,
+            team_boost_collected,
+            opponent_boost_collected,
+            team_boost_stolen,
+            opponent_boost_stolen,
         ),
     )
 
@@ -612,6 +732,9 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
     mvp_player_id = _resolve_mvp_player_id(conn, tracked_players)
     team_poss, opp_poss = _calculate_possession(replay, team)
     def_thirds, neu_thirds, off_thirds = _calculate_ball_thirds(replay, team)
+    team_boost, opp_boost, team_stolen, opp_stolen = _extract_boost_stats(
+        replay, team, game_mode
+    )
 
     match_id = _upsert_match(
         conn,
@@ -632,6 +755,10 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         defensive_third_seconds=def_thirds,
         neutral_third_seconds=neu_thirds,
         offensive_third_seconds=off_thirds,
+        team_boost_collected=team_boost,
+        opponent_boost_collected=opp_boost,
+        team_boost_stolen=team_stolen,
+        opponent_boost_stolen=opp_stolen,
     )
     demolitions = _extract_demolitions(replay)
     all_players = props.get("PlayerStats", [])
