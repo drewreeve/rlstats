@@ -375,6 +375,27 @@ async function loadMatch() {
         <div class="possession-fill opp-fill" style="width:${teamShots + oppShots > 0 ? (oppShots / (teamShots + oppShots)) * 100 : 50}%"></div>
       </div>
 
+      ${m.team_boost_collected != null ? `
+      <div class="match-stat-row">
+        <span class="match-stat-value team-color">${m.team_boost_collected}</span>
+        <span class="match-stat-label">BOOST COLLECTED</span>
+        <span class="match-stat-value opp-color">${m.opponent_boost_collected}</span>
+      </div>
+      <div class="shots-bar">
+        <div class="possession-fill team-fill" style="width:${(m.team_boost_collected / (m.team_boost_collected + m.opponent_boost_collected)) * 100}%"></div>
+        <div class="possession-fill opp-fill" style="width:${(m.opponent_boost_collected / (m.team_boost_collected + m.opponent_boost_collected)) * 100}%"></div>
+      </div>
+      <div class="match-stat-row">
+        <span class="match-stat-value team-color">${m.team_boost_stolen}</span>
+        <span class="match-stat-label">BOOST STOLEN</span>
+        <span class="match-stat-value opp-color">${m.opponent_boost_stolen}</span>
+      </div>
+      <div class="shots-bar">
+        <div class="possession-fill team-fill" style="width:${m.team_boost_stolen + m.opponent_boost_stolen > 0 ? (m.team_boost_stolen / (m.team_boost_stolen + m.opponent_boost_stolen)) * 100 : 50}%"></div>
+        <div class="possession-fill opp-fill" style="width:${m.team_boost_stolen + m.opponent_boost_stolen > 0 ? (m.opponent_boost_stolen / (m.team_boost_stolen + m.opponent_boost_stolen)) * 100 : 50}%"></div>
+      </div>
+      ` : ""}
+
       <div class="match-accuracy">
         <div class="match-accuracy-item">
           <span class="match-accuracy-label">SHOT ACCURACY</span>

@@ -14,7 +14,11 @@ SELECT
     m.opponent_possession_seconds,
     m.defensive_third_seconds,
     m.neutral_third_seconds,
-    m.offensive_third_seconds
+    m.offensive_third_seconds,
+    m.team_boost_collected,
+    m.opponent_boost_collected,
+    m.team_boost_stolen,
+    m.opponent_boost_stolen
 FROM matches m
 WHERE m.id = :match_id;
 
