@@ -412,8 +412,8 @@ async function loadMatch() {
     ${matchTimeline(events, m.team, m.duration_seconds)}
 
     <div class="player-tables">
-      ${playerTable(team_players, "Our Team", true)}
-      ${playerTable(opponent_players, "Opponents", false)}
+      ${playerTable(team_players, "Our Team", isWin)}
+      ${playerTable(opponent_players, "Opponents", !isWin)}
     </div>`;
 
   document.getElementById("match-content").innerHTML = html;
