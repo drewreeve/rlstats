@@ -362,12 +362,19 @@ def _extract_boost_stats(
     map_key = "hoops" if game_mode == "hoops" else "standard"
     big_pads = BIG_PAD_POSITIONS[map_key]
 
-    car_team: dict[int, int] = {}
-    car_position: dict[int, tuple[float, float]] = {}
+    actor_team: dict[int, int] = {}
+    actor_position: dict[int, tuple[float, float]] = {}
+    last_pickup_state: dict[int, int] = {}
     collected = {0: 0, 1: 0}
     stolen = {0: 0, 1: 0}
 
     for frame in frames:
+        # Clear stale state when actors are deleted and their IDs recycled
+        for aid in frame.get("deleted_actors", []):
+            actor_team.pop(aid, None)
+            actor_position.pop(aid, None)
+            last_pickup_state.pop(aid, None)
+
         for actor in frame.get("updated_actors", []):
             obj_id = actor.get("object_id")
             aid = actor["actor_id"]
@@ -375,22 +382,33 @@ def _extract_boost_stats(
             if obj_id == team_paint_obj_id:
                 team = actor.get("attribute", {}).get("TeamPaint", {}).get("team")
                 if team is not None:
-                    car_team[aid] = team
+                    actor_team[aid] = team
 
             elif obj_id == rb_obj_id:
                 loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
                 if loc and "x" in loc and "y" in loc:
-                    car_position[aid] = (loc["x"], loc["y"])
+                    actor_position[aid] = (loc["x"], loc["y"])
 
             elif obj_id == pickup_obj_id:
                 pickup = actor.get("attribute", {}).get("PickupNew", {})
-                if not pickup.get("picked_up"):
+                picked_up_state = pickup.get("picked_up")
+                # PickupNew is a replicated state/counter (not bool). Count only on
+                # state change to avoid double-counting repeated updates.
+                # 255 = no-pickup sentinel in replicated state
+                if picked_up_state is None or picked_up_state == 255:
                     continue
+                if last_pickup_state.get(aid) == picked_up_state:
+                    continue
+                last_pickup_state[aid] = picked_up_state
+
                 instigator = pickup.get("instigator")
                 if instigator is None:
                     continue
-                team = car_team.get(instigator)
-                pos = car_position.get(instigator)
+                team = actor_team.get(instigator)
+                # Prefer pickup actor position (pad location); fallback to instigator.
+                pos = actor_position.get(aid)
+                if pos is None:
+                    pos = actor_position.get(instigator)
                 if team is None or pos is None:
                     continue
 

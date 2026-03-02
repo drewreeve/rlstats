@@ -344,6 +344,7 @@ def test_boost_stats_tracking():
     ).fetchone()
     team_collected, opp_collected, team_stolen, opp_stolen = row
 
+    assert row == (6276, 8472, 2212, 3468)
     assert team_collected is not None
     assert opp_collected is not None
     assert team_stolen is not None
@@ -365,6 +366,67 @@ def test_boost_stats_none_without_network_data():
         "SELECT team_boost_collected, opponent_boost_collected, team_boost_stolen, opponent_boost_stolen FROM matches"
     ).fetchone()
     assert row == (None, None, None, None)
+
+
+def test_boost_stats_dedupes_repeated_pickup_state():
+    replay = {
+        "objects": [
+            "TAGame.Car_TA:TeamPaint",
+            "TAGame.RBActor_TA:ReplicatedRBState",
+            "TAGame.VehiclePickup_TA:NewReplicatedPickupData",
+        ],
+        "network_frames": {
+            "frames": [
+                {
+                    "time": 0.0,
+                    "updated_actors": [
+                        {
+                            "actor_id": 1,
+                            "object_id": 0,
+                            "attribute": {"TeamPaint": {"team": 0}},
+                        },
+                        {
+                            "actor_id": 10,
+                            "object_id": 1,
+                            "attribute": {"RigidBody": {"location": {"x": 0, "y": 100}}},
+                        },
+                        {
+                            "actor_id": 10,
+                            "object_id": 2,
+                            "attribute": {"PickupNew": {"picked_up": 1, "instigator": 1}},
+                        },
+                    ],
+                },
+                {
+                    "time": 0.1,
+                    "updated_actors": [
+                        {
+                            "actor_id": 10,
+                            "object_id": 2,
+                            "attribute": {"PickupNew": {"picked_up": 1, "instigator": 1}},
+                        }
+                    ],
+                },
+                {
+                    "time": 0.2,
+                    "updated_actors": [
+                        {
+                            "actor_id": 10,
+                            "object_id": 2,
+                            "attribute": {"PickupNew": {"picked_up": 3, "instigator": 1}},
+                        }
+                    ],
+                },
+            ]
+        },
+    }
+
+    assert _extract_boost_stats(replay, tracked_team=0, game_mode="3v3") == (
+        24,
+        0,
+        24,
+        0,
+    )
 
 
 def test_player_name_updates_on_change():
