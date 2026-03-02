@@ -770,19 +770,28 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
     all_players = props.get("PlayerStats", [])
     _upsert_match_players(conn, match_id, all_players, demolitions)
 
+    # Build identity -> player_id map (players were just upserted above)
+    player_id_map: dict[tuple[str, str], int] = {}
+    for player in all_players:
+        identity = _extract_platform_id(player)
+        if identity:
+            row = conn.execute(
+                "SELECT id FROM players WHERE platform = ? AND platform_id = ?",
+                (identity[0], identity[1]),
+            ).fetchone()
+            if row:
+                player_id_map[identity] = row[0]
+
     # Clear old events before re-inserting
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
     match_events = _extract_match_events(replay, team)
     for event_type, game_seconds, platform, platform_id, ev_team in match_events:
-        row = conn.execute(
-            "SELECT id FROM players WHERE platform = ? AND platform_id = ?",
-            (platform, platform_id),
-        ).fetchone()
-        if row is None:
+        player_id = player_id_map.get((platform, platform_id))
+        if player_id is None:
             continue
         conn.execute(
             "INSERT INTO match_events (match_id, event_type, game_seconds, player_id, team) VALUES (?, ?, ?, ?, ?)",
-            (match_id, event_type, game_seconds, row[0], ev_team),
+            (match_id, event_type, game_seconds, player_id, ev_team),
         )
 
 
