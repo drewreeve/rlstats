@@ -602,7 +602,7 @@ def _upsert_match(
     team_boost_stolen: int | None,
     opponent_boost_stolen: int | None,
 ) -> int:
-    conn.execute(
+    return conn.execute(
         """
         INSERT INTO matches (
             replay_hash,
@@ -635,6 +635,7 @@ def _upsert_match(
             opponent_boost_collected = excluded.opponent_boost_collected,
             team_boost_stolen = excluded.team_boost_stolen,
             opponent_boost_stolen = excluded.opponent_boost_stolen
+        RETURNING id
         """,
         (
             replay_hash,
@@ -659,15 +660,7 @@ def _upsert_match(
             team_boost_stolen,
             opponent_boost_stolen,
         ),
-    )
-
-    row = conn.execute(
-        "SELECT id FROM matches WHERE replay_hash = ?",
-        (replay_hash,),
-    ).fetchone()
-    if row is None:
-        raise RuntimeError("Match insert failed; no row found for replay_hash")
-    return row[0]
+    ).fetchone()[0]
 
 
 def _upsert_match_players(
