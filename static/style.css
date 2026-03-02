@@ -238,6 +238,22 @@ header h1 {
     letter-spacing: 0.02em;
 }
 
+.reset-zoom-btn {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--cyan);
+    background: rgba(0, 229, 255, 0.08);
+    border: 1px solid rgba(0, 229, 255, 0.2);
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.reset-zoom-btn:hover {
+    background: rgba(0, 229, 255, 0.18);
+}
+
 /* ── Charts ─────────────────────────────────────── */
 .chart-wrap {
     position: relative;
@@ -270,6 +286,10 @@ header h1 {
 
     .history-view {
         padding: 1rem;
+    }
+
+    #card-win-rate .chart-wrap {
+        min-height: 300px;
     }
 
     .history-controls {

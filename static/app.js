@@ -154,6 +154,9 @@ async function renderWinRateDaily() {
       ],
     },
     options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: window.innerWidth <= 768 ? 1.2 : 2,
       plugins: {
         legend: {
           labels: {
@@ -168,10 +171,30 @@ async function renderWinRateDaily() {
             label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%`,
           },
         },
+        zoom: {
+          pan: {
+            enabled: true,
+            mode: 'x',
+            onPan: () => { document.getElementById("reset-zoom").hidden = false; },
+          },
+          zoom: {
+            wheel: { enabled: true },
+            pinch: { enabled: true },
+            mode: 'x',
+            onZoom: () => { document.getElementById("reset-zoom").hidden = false; },
+          },
+          limits: {
+            x: { minRange: 5 },
+          },
+        },
       },
       scales: {
         y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
-        x: { grid: { display: false } },
+        x: {
+          grid: { display: false },
+          min: Math.max(0, data.length - 15),
+          max: data.length - 1,
+        },
       },
       onHover: (event, elements) => {
         event.native.target.style.cursor = elements.length ? "pointer" : "";
@@ -607,6 +630,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   renderAll();
+
+  document.getElementById("reset-zoom").addEventListener("click", () => {
+    if (charts.winRate) {
+      charts.winRate.resetZoom();
+      document.getElementById("reset-zoom").hidden = true;
+    }
+  });
 
   const navWrap = document.querySelector(".mode-nav-wrap");
   const nav = document.querySelector(".mode-nav");

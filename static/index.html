@@ -10,6 +10,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
 </head>
 <body>
     <div class="noise"></div>
@@ -94,6 +96,7 @@
             <div class="card-header">
                 <div class="card-tag">TIMELINE</div>
                 <h2>Win Rate Over Time</h2>
+                <button class="reset-zoom-btn" id="reset-zoom" hidden>Reset zoom</button>
             </div>
             <div class="chart-wrap"><canvas id="chart-win-rate"></canvas></div>
         </section>
