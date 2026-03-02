@@ -82,12 +82,10 @@ def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
 
 
 def _tracked_player_stats(props: dict[str, Any]) -> list[dict[str, Any]]:
-    result = []
-    for p in props.get("PlayerStats", []):
-        identity = _extract_platform_id(p)
-        if identity and identity in TRACKED_PLAYERS:
-            result.append(p)
-    return result
+    return [
+        p for p in props.get("PlayerStats", [])
+        if (identity := _extract_platform_id(p)) and identity in TRACKED_PLAYERS
+    ]
 
 
 def _resolve_team_scores(
