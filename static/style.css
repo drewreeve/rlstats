@@ -954,6 +954,27 @@ header h1 {
     .match-player-table {
         overflow-x: auto;
     }
+
+    .match-timeline {
+        overflow-x: auto;
+    }
+
+    .timeline-svg {
+        min-width: 500px;
+    }
+
+    .match-accuracy {
+        flex-wrap: wrap;
+    }
+
+    .match-accuracy-item {
+        flex: 1 1 40%;
+    }
+
+    .pitch-diagram {
+        flex: 1 1 100%;
+        order: 1;
+    }
 }
 
 /* ── Upload Page ──────────────────────────────── */
