@@ -51,14 +51,11 @@ def get_or_create_player(
     conn: sqlite3.Connection, platform: str, platform_id: str, name: str
 ) -> int:
     tracked = 1 if (platform, platform_id) in TRACKED_PLAYERS else 0
-    conn.execute(
-        """INSERT INTO players (platform, platform_id, name, is_tracked) VALUES (?, ?, ?, ?)
-           ON CONFLICT(platform, platform_id) DO UPDATE SET name = excluded.name""",
-        (platform, platform_id, name, tracked),
-    )
     return conn.execute(
-        "SELECT id FROM players WHERE platform = ? AND platform_id = ?",
-        (platform, platform_id),
+        """INSERT INTO players (platform, platform_id, name, is_tracked) VALUES (?, ?, ?, ?)
+           ON CONFLICT(platform, platform_id) DO UPDATE SET name = excluded.name
+           RETURNING id""",
+        (platform, platform_id, name, tracked),
     ).fetchone()[0]
 
 
