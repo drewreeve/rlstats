@@ -608,6 +608,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderAll();
 
+  const navWrap = document.querySelector(".mode-nav-wrap");
+  const nav = document.querySelector(".mode-nav");
+  if (nav && navWrap) {
+    nav.addEventListener("scroll", () => {
+      const atEnd = nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 4;
+      navWrap.classList.toggle("scrolled-end", atEnd);
+    });
+  }
+
   document.querySelectorAll(".mode-btn[data-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const mode = btn.dataset.mode;

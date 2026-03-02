@@ -417,4 +417,15 @@ async function loadMatch() {
   document.getElementById("match-content").innerHTML = html;
 }
 
-document.addEventListener("DOMContentLoaded", loadMatch);
+document.addEventListener("DOMContentLoaded", () => {
+  const navWrap = document.querySelector(".mode-nav-wrap");
+  const nav = document.querySelector(".mode-nav");
+  if (nav && navWrap) {
+    nav.addEventListener("scroll", () => {
+      const atEnd = nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 4;
+      navWrap.classList.toggle("scrolled-end", atEnd);
+    });
+  }
+
+  loadMatch();
+});

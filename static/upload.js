@@ -1,4 +1,13 @@
 (function () {
+    var navWrap = document.querySelector(".mode-nav-wrap");
+    var nav = document.querySelector(".mode-nav");
+    if (nav && navWrap) {
+        nav.addEventListener("scroll", function () {
+            var atEnd = nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 4;
+            navWrap.classList.toggle("scrolled-end", atEnd);
+        });
+    }
+
     var authSection = document.getElementById("auth-section");
     var uploadSection = document.getElementById("upload-section");
     var authForm = document.getElementById("auth-form");

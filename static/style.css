@@ -275,6 +275,37 @@ header h1 {
     .history-controls {
         flex-direction: column;
     }
+
+    .mode-nav-wrap {
+        position: relative;
+        max-width: 100%;
+    }
+
+    .mode-nav {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 0.9rem;
+    }
+
+    .mode-btn {
+        flex-shrink: 0;
+    }
+
+    .mode-nav-wrap::after {
+        content: '';
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 3rem;
+        background: linear-gradient(to right, transparent, #08080C);
+        pointer-events: none;
+        transition: opacity 0.2s;
+    }
+
+    .mode-nav-wrap.scrolled-end::after {
+        opacity: 0;
+    }
 }
 
 /* ── History View ──────────────────────────────── */
