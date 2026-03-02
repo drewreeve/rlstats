@@ -55,8 +55,6 @@ function playerRow(p, isMvp) {
       <td>${p.assists}</td>
       <td>${p.saves}</td>
       <td>${p.shots}</td>
-      <td>${p.shooting_pct}%</td>
-      <td>${p.demos}</td>
     </tr>`;
 }
 
@@ -72,7 +70,7 @@ function playerTable(players, label, isMvpTeam) {
         <thead>
           <tr>
             <th>Player</th><th>Score</th><th>Goals</th><th>Assists</th>
-            <th>Saves</th><th>Shots</th><th>Shot%</th><th>Demos</th>
+            <th>Saves</th><th>Shots</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
