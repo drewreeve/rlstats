@@ -607,15 +607,18 @@ def _extract_player_movement_stats(
         if speeds:
             # Sort by time for supersonic calculation
             speeds.sort(key=lambda s: s[0])
-            stats["avg_speed"] = round(sum(s for _, s in speeds) / len(speeds))
-
-            # Time supersonic: for consecutive samples, if speed >= 2200, add time delta
+            # Time-weighted average speed and supersonic time from consecutive samples
+            total_weight = 0.0
+            weighted_sum = 0.0
             supersonic_time = 0.0
             for (t1, s1), (t2, _) in pairwise(speeds):
-                if s1 >= 2200:
-                    dt = t2 - t1
-                    if 0 < dt < 5:  # Skip unreasonable gaps (goal replays etc)
+                dt = t2 - t1
+                if 0 < dt < 5:  # Skip unreasonable gaps (goal replays etc)
+                    weighted_sum += s1 * dt
+                    total_weight += dt
+                    if s1 >= 2200:
                         supersonic_time += dt
+            stats["avg_speed"] = round(weighted_sum / total_weight) if total_weight > 0 else 0
             stats["time_supersonic_pct"] = round(supersonic_time / duration * 100, 1)
         else:
             stats["avg_speed"] = 0
