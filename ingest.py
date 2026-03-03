@@ -2,6 +2,7 @@
 # rrrocket JSON -> SQLite
 
 import json
+import math
 import sqlite3
 from itertools import pairwise
 from pathlib import Path
@@ -450,6 +451,181 @@ def _extract_boost_stats(
     return team_collected, opp_collected, team_stolen, opp_stolen
 
 
+def _extract_player_movement_stats(
+    replay: dict, duration: int | None
+) -> dict[tuple[str, str], dict[str, float]]:
+    """Extract per-player boost consumption, average speed, and supersonic time.
+
+    Returns dict mapping (platform, platform_id) -> {
+        "boost_per_minute": float,
+        "avg_speed": float,
+        "time_supersonic_pct": float,
+    }, or {} if network data is unavailable.
+    """
+    if not duration or duration <= 0:
+        return {}
+
+    objects = replay.get("objects")
+    frames = replay.get("network_frames", {}).get("frames")
+    if not objects or not frames:
+        return {}
+
+    try:
+        car_archetype = objects.index("Archetypes.Car.Car_Default")
+        ball_archetype = objects.index("Archetypes.Ball.Ball_Default")
+        boost_comp_archetype = objects.index("Archetypes.CarComponents.CarComponent_Boost")
+        rb_obj_id = objects.index("TAGame.RBActor_TA:ReplicatedRBState")
+        boost_obj_id = objects.index("TAGame.CarComponent_Boost_TA:ReplicatedBoost")
+        vehicle_obj_id = objects.index("TAGame.CarComponent_TA:Vehicle")
+        pri_obj_id = objects.index("Engine.Pawn:PlayerReplicationInfo")
+        uid_obj_id = objects.index("Engine.PlayerReplicationInfo:UniqueId")
+    except ValueError:
+        return {}
+
+    car_actors: set[int] = set()
+    ball_actors: set[int] = set()
+    boost_comp_actors: set[int] = set()
+
+    # Component -> car mapping (via Vehicle obj 85)
+    component_to_car: dict[int, int] = {}
+    # Car -> PRI actor mapping (via PRI obj 25)
+    car_to_pri: dict[int, int] = {}
+    # PRI actor -> identity mapping (via UniqueId obj 121)
+    pri_identity: dict[int, tuple[str, str]] = {}
+
+    # Per boost-component: last known boost_amount
+    comp_boost: dict[int, int] = {}
+    # Per boost-component: total consumed (in 0-255 scale), resolved to identity post-loop
+    comp_boost_consumed: dict[int, float] = {}
+
+    # Per car actor: list of (time, speed) samples, resolved to identity post-loop
+    car_speed_samples: dict[int, list[tuple[float, float]]] = {}
+
+    for frame in frames:
+        ft = frame["time"]
+
+        for new_actor in frame.get("new_actors", []):
+            oid = new_actor.get("object_id")
+            aid = new_actor["actor_id"]
+            if oid == car_archetype:
+                car_actors.add(aid)
+            elif oid == ball_archetype:
+                ball_actors.add(aid)
+            elif oid == boost_comp_archetype:
+                boost_comp_actors.add(aid)
+
+        for aid in frame.get("deleted_actors", []):
+            car_actors.discard(aid)
+            ball_actors.discard(aid)
+            boost_comp_actors.discard(aid)
+            # Don't clear component_to_car, car_to_pri, car_speed_samples,
+            # or comp_boost_consumed — we need them for post-processing.
+            # Only clear transient per-frame state.
+            comp_boost.pop(aid, None)
+
+        for actor in frame.get("updated_actors", []):
+            oid = actor.get("object_id")
+            aid = actor["actor_id"]
+
+            if oid == vehicle_obj_id:
+                car_id = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
+                if car_id is not None:
+                    component_to_car[aid] = car_id
+
+            elif oid == pri_obj_id:
+                pri_actor = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
+                if pri_actor is not None and aid in car_actors:
+                    car_to_pri[aid] = pri_actor
+
+            elif oid == uid_obj_id:
+                uid = actor.get("attribute", {}).get("UniqueId", {})
+                identity = _resolve_network_identity(uid)
+                if identity:
+                    pri_identity[aid] = identity
+
+            elif oid == boost_obj_id and aid in boost_comp_actors:
+                amount = actor.get("attribute", {}).get("ReplicatedBoost", {}).get("boost_amount")
+                if amount is None:
+                    continue
+                prev = comp_boost.get(aid)
+                comp_boost[aid] = amount
+                if prev is not None and amount < prev and prev != 255 and amount != 255:
+                    comp_boost_consumed[aid] = (
+                        comp_boost_consumed.get(aid, 0.0) + (prev - amount)
+                    )
+
+            elif oid == rb_obj_id and aid in car_actors:
+                rb = actor.get("attribute", {}).get("RigidBody", {})
+                lv = rb.get("linear_velocity")
+                if lv is not None and "x" in lv and "y" in lv and "z" in lv:
+                    speed = math.sqrt(lv["x"] ** 2 + lv["y"] ** 2 + lv["z"] ** 2)
+                    if aid not in car_speed_samples:
+                        car_speed_samples[aid] = []
+                    car_speed_samples[aid].append((ft, speed))
+
+    # Post-process: resolve all buffered data to player identities.
+    # Build car -> identity from car_to_pri + pri_identity (accumulated over full replay)
+    car_identity: dict[int, tuple[str, str]] = {}
+    for car_id, pri_actor in car_to_pri.items():
+        identity = pri_identity.get(pri_actor)
+        if identity:
+            car_identity[car_id] = identity
+
+    # Aggregate boost consumed per identity via component -> car -> identity
+    identity_boost_consumed: dict[tuple[str, str], float] = {}
+    for comp_id, consumed in comp_boost_consumed.items():
+        car_id = component_to_car.get(comp_id)
+        if car_id is not None:
+            identity = car_identity.get(car_id)
+            if identity:
+                identity_boost_consumed[identity] = (
+                    identity_boost_consumed.get(identity, 0.0) + consumed
+                )
+
+    # Aggregate speed samples per identity
+    identity_speeds: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    for car_id, samples in car_speed_samples.items():
+        identity = car_identity.get(car_id)
+        if identity:
+            if identity not in identity_speeds:
+                identity_speeds[identity] = []
+            identity_speeds[identity].extend(samples)
+
+    # Build results
+    all_identities = set(identity_boost_consumed.keys()) | set(identity_speeds.keys())
+    result: dict[tuple[str, str], dict[str, float]] = {}
+
+    for identity in all_identities:
+        stats: dict[str, float | None] = {}
+
+        # Boost per minute: consumed is in 0-255 scale, convert to 0-100 scale
+        consumed = identity_boost_consumed.get(identity, 0.0)
+        stats["boost_per_minute"] = round((consumed / 255 * 100) / (duration / 60), 1)
+
+        # Average speed
+        speeds = identity_speeds.get(identity, [])
+        if speeds:
+            # Sort by time for supersonic calculation
+            speeds.sort(key=lambda s: s[0])
+            stats["avg_speed"] = round(sum(s for _, s in speeds) / len(speeds))
+
+            # Time supersonic: for consecutive samples, if speed >= 2200, add time delta
+            supersonic_time = 0.0
+            for (t1, s1), (t2, _) in pairwise(speeds):
+                if s1 >= 2200:
+                    dt = t2 - t1
+                    if 0 < dt < 5:  # Skip unreasonable gaps (goal replays etc)
+                        supersonic_time += dt
+            stats["time_supersonic_pct"] = round(supersonic_time / duration * 100, 1)
+        else:
+            stats["avg_speed"] = 0
+            stats["time_supersonic_pct"] = 0.0
+
+        result[identity] = stats
+
+    return result
+
+
 def _extract_match_events(
     replay: dict, tracked_team: int | None
 ) -> list[tuple[str, float, str, str, int]]:
@@ -682,6 +858,7 @@ def _upsert_match_players(
     match_id: int,
     all_players: list[dict[str, Any]],
     demolitions: dict[tuple[str, str], int],
+    movement_stats: dict[tuple[str, str], dict[str, float]],
 ):
     for player in all_players:
         if player.get("bBot"):
@@ -697,13 +874,15 @@ def _upsert_match_players(
             name = tracked_name
         player_id = get_or_create_player(conn, platform, platform_id, name)
         demos = demolitions.get(identity, 0)
+        mv = movement_stats.get(identity, {})
 
         conn.execute(
             """
             INSERT INTO match_players (
                 match_id, player_id, team,
-                goals, assists, saves, shots, score, demos
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                goals, assists, saves, shots, score, demos,
+                boost_per_minute, avg_speed, time_supersonic_pct
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id, player_id) DO UPDATE SET
                 team = excluded.team,
                 goals = excluded.goals,
@@ -711,7 +890,10 @@ def _upsert_match_players(
                 saves = excluded.saves,
                 shots = excluded.shots,
                 score = excluded.score,
-                demos = excluded.demos
+                demos = excluded.demos,
+                boost_per_minute = excluded.boost_per_minute,
+                avg_speed = excluded.avg_speed,
+                time_supersonic_pct = excluded.time_supersonic_pct
             """,
             (
                 match_id,
@@ -723,6 +905,9 @@ def _upsert_match_players(
                 player.get("Shots", 0),
                 player.get("Score", 0),
                 demos,
+                mv.get("boost_per_minute"),
+                mv.get("avg_speed"),
+                mv.get("time_supersonic_pct"),
             ),
         )
 
@@ -783,8 +968,9 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         opponent_boost_stolen=opp_stolen,
     )
     demolitions = _extract_demolitions(replay)
+    movement_stats = _extract_player_movement_stats(replay, duration)
     all_players = props.get("PlayerStats", [])
-    _upsert_match_players(conn, match_id, all_players, demolitions)
+    _upsert_match_players(conn, match_id, all_players, demolitions, movement_stats)
 
     # Build identity -> player_id map (players were just upserted above)
     player_id_map: dict[tuple[str, str], int] = {}

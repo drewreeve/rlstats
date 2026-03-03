@@ -1,5 +1,5 @@
 import pytest
-from ingest import ingest_match, get_or_create_player, _extract_demolitions, _extract_match_events, _extract_boost_stats
+from ingest import ingest_match, get_or_create_player, _extract_demolitions, _extract_match_events, _extract_boost_stats, _extract_player_movement_stats
 from tests.fixtures import in_memory_db, load_replay
 
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
@@ -427,6 +427,60 @@ def test_boost_stats_dedupes_repeated_pickup_state():
         24,
         0,
     )
+
+
+def test_player_movement_stats_tracking():
+    conn = ingest_fixture("match.json")
+    rows = conn.execute("""
+        SELECT p.name, mp.boost_per_minute, mp.avg_speed, mp.time_supersonic_pct
+        FROM match_players mp
+        JOIN players p ON p.id = mp.player_id
+        ORDER BY p.name
+    """).fetchall()
+
+    assert len(rows) == 6
+    for name, bpm, avg_spd, supersonic in rows:
+        assert bpm is not None, f"{name} boost_per_minute is null"
+        assert avg_spd is not None, f"{name} avg_speed is null"
+        assert supersonic is not None, f"{name} time_supersonic_pct is null"
+        assert bpm >= 0, f"{name} boost_per_minute negative"
+        assert avg_spd >= 0, f"{name} avg_speed negative"
+        assert 0 <= supersonic <= 100, f"{name} supersonic% out of range"
+
+
+def test_player_movement_stats_none_without_network_data():
+    conn = in_memory_db()
+    replay = load_replay("match.json")
+    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
+    ingest_match(conn, replay)
+    rows = conn.execute(
+        "SELECT boost_per_minute, avg_speed, time_supersonic_pct FROM match_players"
+    ).fetchall()
+    for row in rows:
+        assert row == (None, None, None)
+
+
+def test_extract_player_movement_stats():
+    replay = load_replay("match.json")
+    duration = replay["properties"].get("TotalSecondsPlayed")
+    stats = _extract_player_movement_stats(replay, duration)
+
+    assert isinstance(stats, dict)
+    assert len(stats) > 0
+
+    # Known players should be present
+    drew_key = ("steam", "76561197969365901")
+    jeff_key = ("steam", "76561197964215253")
+    assert drew_key in stats
+    assert jeff_key in stats
+
+    for identity, s in stats.items():
+        assert "boost_per_minute" in s
+        assert "avg_speed" in s
+        assert "time_supersonic_pct" in s
+        assert s["boost_per_minute"] >= 0
+        assert s["avg_speed"] >= 0
+        assert 0 <= s["time_supersonic_pct"] <= 100
 
 
 def test_player_name_updates_on_change():

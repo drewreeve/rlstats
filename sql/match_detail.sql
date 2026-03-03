@@ -43,7 +43,10 @@ SELECT
     mp.demos,
     CASE WHEN mp.shots > 0
          THEN ROUND(CAST(mp.goals AS REAL) / mp.shots * 100, 1)
-         ELSE 0 END AS shooting_pct
+         ELSE 0 END AS shooting_pct,
+    mp.boost_per_minute,
+    mp.avg_speed,
+    mp.time_supersonic_pct
 FROM match_players mp
 JOIN players p ON mp.player_id = p.id
 WHERE mp.match_id = :match_id

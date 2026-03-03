@@ -43,6 +43,11 @@ function ringChart(pct, color, size) {
     </svg>`;
 }
 
+function fmtStat(val, decimals) {
+  if (val == null) return '-';
+  return decimals ? val.toFixed(decimals) : Math.round(val);
+}
+
 function playerRow(p, isMvp) {
   const mvpBadge = isMvp
     ? '<span class="match-mvp-badge">MVP</span>'
@@ -55,6 +60,9 @@ function playerRow(p, isMvp) {
       <td>${p.assists}</td>
       <td>${p.saves}</td>
       <td>${p.shots}</td>
+      <td>${fmtStat(p.boost_per_minute, 1)}</td>
+      <td>${fmtStat(p.avg_speed, 0)}</td>
+      <td>${p.time_supersonic_pct != null ? fmtStat(p.time_supersonic_pct, 1) + '%' : '-'}</td>
     </tr>`;
 }
 
@@ -70,7 +78,7 @@ function playerTable(players, label, isMvpTeam) {
         <thead>
           <tr>
             <th>Player</th><th>Score</th><th>Goals</th><th>Assists</th>
-            <th>Saves</th><th>Shots</th>
+            <th>Saves</th><th>Shots</th><th>Boost/m</th><th>Avg Spd</th><th>Supersonic</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
