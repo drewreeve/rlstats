@@ -1,22 +1,16 @@
 import pytest
 from ingest import ingest_match, get_or_create_player, _extract_demolitions, _extract_match_events, _extract_boost_stats, _extract_player_movement_stats
-from tests.fixtures import in_memory_db, load_replay
+from tests.fixtures import in_memory_db, load_replay, cached_db
 
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
 
 
 def ingest_fixture(fixture):
-    conn = in_memory_db()
-    replay = load_replay(fixture)
-    ingest_match(conn, replay)
-    return conn
+    return cached_db(fixture)
 
 
 def ingest_all_fixtures():
-    conn = in_memory_db()
-    for name in ALL_FIXTURES:
-        ingest_match(conn, load_replay(name))
-    return conn
+    return cached_db(*ALL_FIXTURES)
 
 
 # -- Per-fixture: result and scores --

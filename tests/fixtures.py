@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from db import apply_migrations
+from ingest import ingest_match
 
 TEST_DATA_DIR = Path(__file__).parent / "data"
 
@@ -18,6 +19,25 @@ def load_replay(name: str):
 def in_memory_db():
     conn = sqlite3.connect(":memory:")
     apply_migrations(conn)
+    return conn
+
+
+@functools.cache
+def _cached_ingested_db(replay_names: tuple[str, ...]) -> sqlite3.Connection:
+    """Ingest replays once and cache the result."""
+    conn = sqlite3.connect(":memory:")
+    apply_migrations(conn)
+    for name in replay_names:
+        ingest_match(conn, load_replay(name))
+    conn.commit()
+    return conn
+
+
+def cached_db(*replay_names: str) -> sqlite3.Connection:
+    """Return a fresh copy of a cached ingested DB."""
+    source = _cached_ingested_db(tuple(replay_names))
+    conn = sqlite3.connect(":memory:")
+    source.backup(conn)
     return conn
 
 

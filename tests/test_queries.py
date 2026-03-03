@@ -3,36 +3,27 @@ import sqlite3
 import pytest
 
 from db import queries
-from ingest import ingest_match
-from tests.fixtures import in_memory_db, load_replay
+from tests.fixtures import cached_db
 
 
-def _db_with_replays(replay_names):
-    conn = in_memory_db()
-    for name in replay_names:
-        ingest_match(conn, load_replay(name))
+def _all_modes_db():
+    conn = cached_db("zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json")
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def _all_modes_db():
-    return _db_with_replays(
-        ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
-    )
-
-
 def _mvp_losses_modes_db():
-    return _db_with_replays(
-        [
-            "zero_score.json",
-            "match.json",
-            "forefeit.json",
-            "team_size_2.json",
-            "hoops.json",
-            "loss_2v2.json",
-            "loss_hoops.json",
-        ]
+    conn = cached_db(
+        "zero_score.json",
+        "match.json",
+        "forefeit.json",
+        "team_size_2.json",
+        "hoops.json",
+        "loss_2v2.json",
+        "loss_hoops.json",
     )
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def _as_tuples(rows, columns):
