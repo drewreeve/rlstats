@@ -254,10 +254,35 @@ def _calculate_ball_thirds(
 NETWORK_PLATFORM_MAP = {
     "Steam": "steam",
     "Epic": "epic",
-    "PS4": "ps4",
-    "Switch": "switch",
+    "PlayStation": "ps4",
+    "PsyNet": "switch",
     "Xbox": "xbox",
 }
+
+
+def _resolve_network_identity(
+    uid: dict[str, Any],
+) -> tuple[str, str] | None:
+    """Resolve a UniqueId attribute from network frames to (platform, platform_id).
+
+    Handles both string remote_ids (Steam, Epic) and dict remote_ids with
+    an 'online_id' field (PlayStation, PsyNet).
+    """
+    remote = uid.get("remote_id", {})
+    if not remote:
+        return None
+    platform_key = next(iter(remote))
+    platform = NETWORK_PLATFORM_MAP.get(platform_key)
+    if not platform:
+        return None
+    value = remote[platform_key]
+    if isinstance(value, dict):
+        platform_id = value.get("online_id")
+    else:
+        platform_id = value
+    if not platform_id:
+        return None
+    return (platform, str(platform_id))
 
 
 def _extract_demolitions(replay: dict) -> dict[tuple[str, str], int]:
@@ -285,15 +310,9 @@ def _extract_demolitions(replay: dict) -> dict[tuple[str, str], int]:
             obj_id = actor.get("object_id")
             if obj_id == uid_obj_id:
                 uid = actor.get("attribute", {}).get("UniqueId", {})
-                remote = uid.get("remote_id", {})
-                if remote:
-                    platform_key = next(iter(remote))
-                    platform = NETWORK_PLATFORM_MAP.get(platform_key)
-                    if platform:
-                        actor_identity[actor["actor_id"]] = (
-                            platform,
-                            remote[platform_key],
-                        )
+                identity = _resolve_network_identity(uid)
+                if identity:
+                    actor_identity[actor["actor_id"]] = identity
             elif obj_id == demo_obj_id:
                 val = actor.get("attribute", {}).get("Int", 0)
                 aid = actor["actor_id"]
@@ -491,12 +510,9 @@ def _extract_match_events(
 
             elif obj_id == uid_obj_id:
                 uid = actor.get("attribute", {}).get("UniqueId", {})
-                remote = uid.get("remote_id", {})
-                if remote:
-                    platform_key = next(iter(remote))
-                    platform = NETWORK_PLATFORM_MAP.get(platform_key)
-                    if platform:
-                        actor_identity[aid] = (platform, remote[platform_key])
+                identity = _resolve_network_identity(uid)
+                if identity:
+                    actor_identity[aid] = identity
 
             elif obj_id == team_obj_id:
                 team_actor = (
