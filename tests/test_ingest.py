@@ -483,6 +483,109 @@ def test_extract_player_movement_stats():
         assert 0 <= s["time_supersonic_pct"] <= 100
 
 
+def test_actor_id_recycling_separates_boost_consumption():
+    """When a boost component actor ID is recycled for a different player's car,
+    each player should only get their own boost consumption attributed."""
+    # Minimal replay with two players whose boost component shares actor ID 10.
+    # Player A (car 1) uses boost, then actor 10 is deleted and recycled for
+    # Player B (car 2) who also uses boost.
+    objects = [
+        "Archetypes.Car.Car_Default",         # 0 - car archetype
+        "Archetypes.Ball.Ball_Default",        # 1 - ball archetype
+        "Archetypes.CarComponents.CarComponent_Boost",  # 2 - boost comp archetype
+        "TAGame.RBActor_TA:ReplicatedRBState", # 3 - rigid body
+        "TAGame.CarComponent_Boost_TA:ReplicatedBoost", # 4 - boost amount
+        "TAGame.CarComponent_TA:Vehicle",      # 5 - component->car link
+        "Engine.Pawn:PlayerReplicationInfo",   # 6 - car->PRI link
+        "Engine.PlayerReplicationInfo:UniqueId", # 7 - PRI->identity
+    ]
+    frames = [
+        # Frame 0: Create car 1 (player A) and car 2 (player B)
+        {"time": 0.0, "delta": 0.033,
+         "new_actors": [
+             {"actor_id": 1, "object_id": 0},  # car 1
+             {"actor_id": 2, "object_id": 0},  # car 2
+         ],
+         "updated_actors": [], "deleted_actors": []},
+        # Frame 1: Set up PRI and identity for both cars
+        {"time": 0.033, "delta": 0.033,
+         "new_actors": [],
+         "updated_actors": [
+             # car 1 -> PRI 101
+             {"actor_id": 1, "object_id": 6,
+              "attribute": {"ActiveActor": {"actor": 101}}},
+             # car 2 -> PRI 102
+             {"actor_id": 2, "object_id": 6,
+              "attribute": {"ActiveActor": {"actor": 102}}},
+             # PRI 101 = player A (steam AAA)
+             {"actor_id": 101, "object_id": 7,
+              "attribute": {"UniqueId": {"remote_id": {"Steam": "AAA"}}}},
+             # PRI 102 = player B (steam BBB)
+             {"actor_id": 102, "object_id": 7,
+              "attribute": {"UniqueId": {"remote_id": {"Steam": "BBB"}}}},
+         ],
+         "deleted_actors": []},
+        # Frame 2: Create boost component 10, link to car 1 (player A)
+        {"time": 0.066, "delta": 0.033,
+         "new_actors": [{"actor_id": 10, "object_id": 2}],
+         "updated_actors": [
+             {"actor_id": 10, "object_id": 5,
+              "attribute": {"ActiveActor": {"actor": 1}}},
+             # Initial boost = 85 (~33%)
+             {"actor_id": 10, "object_id": 4,
+              "attribute": {"ReplicatedBoost": {"boost_amount": 85}}},
+         ],
+         "deleted_actors": []},
+        # Frame 3: Player A uses some boost (85 -> 50 = 35 consumed)
+        {"time": 0.1, "delta": 0.033,
+         "new_actors": [],
+         "updated_actors": [
+             {"actor_id": 10, "object_id": 4,
+              "attribute": {"ReplicatedBoost": {"boost_amount": 50}}},
+         ],
+         "deleted_actors": []},
+        # Frame 4: Delete boost component 10 (goal scored, etc.)
+        {"time": 0.133, "delta": 0.033,
+         "new_actors": [], "updated_actors": [],
+         "deleted_actors": [10]},
+        # Frame 5: Recycle actor ID 10 as boost component for car 2 (player B)
+        {"time": 0.166, "delta": 0.033,
+         "new_actors": [{"actor_id": 10, "object_id": 2}],
+         "updated_actors": [
+             {"actor_id": 10, "object_id": 5,
+              "attribute": {"ActiveActor": {"actor": 2}}},
+             {"actor_id": 10, "object_id": 4,
+              "attribute": {"ReplicatedBoost": {"boost_amount": 100}}},
+         ],
+         "deleted_actors": []},
+        # Frame 6: Player B uses boost (100 -> 20 = 80 consumed)
+        {"time": 0.2, "delta": 0.033,
+         "new_actors": [],
+         "updated_actors": [
+             {"actor_id": 10, "object_id": 4,
+              "attribute": {"ReplicatedBoost": {"boost_amount": 20}}},
+         ],
+         "deleted_actors": []},
+    ]
+
+    replay = {
+        "objects": objects,
+        "network_frames": {"frames": frames},
+    }
+    stats = _extract_player_movement_stats(replay, duration=300)
+
+    player_a = stats.get(("steam", "AAA"))
+    player_b = stats.get(("steam", "BBB"))
+    assert player_a is not None, "Player A missing from stats"
+    assert player_b is not None, "Player B missing from stats"
+
+    # Player A consumed 35 units, Player B consumed 80 units (0-255 scale).
+    # Without the recycling fix, Player B would get 35+80=115.
+    a_bpm = player_a["boost_per_minute"]
+    b_bpm = player_b["boost_per_minute"]
+    assert b_bpm > a_bpm, f"Player B ({b_bpm}) should have higher boost/min than A ({a_bpm})"
+
+
 def test_player_name_updates_on_change():
     conn = in_memory_db()
     get_or_create_player(conn, "steam", "123", "OldName")

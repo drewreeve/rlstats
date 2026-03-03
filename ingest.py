@@ -84,7 +84,8 @@ def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
 
 def _tracked_player_stats(props: dict[str, Any]) -> list[dict[str, Any]]:
     return [
-        p for p in props.get("PlayerStats", [])
+        p
+        for p in props.get("PlayerStats", [])
         if (identity := _extract_platform_id(p)) and identity in TRACKED_PLAYERS
     ]
 
@@ -473,7 +474,9 @@ def _extract_player_movement_stats(
     try:
         car_archetype = objects.index("Archetypes.Car.Car_Default")
         ball_archetype = objects.index("Archetypes.Ball.Ball_Default")
-        boost_comp_archetype = objects.index("Archetypes.CarComponents.CarComponent_Boost")
+        boost_comp_archetype = objects.index(
+            "Archetypes.CarComponents.CarComponent_Boost"
+        )
         rb_obj_id = objects.index("TAGame.RBActor_TA:ReplicatedRBState")
         boost_obj_id = objects.index("TAGame.CarComponent_Boost_TA:ReplicatedBoost")
         vehicle_obj_id = objects.index("TAGame.CarComponent_TA:Vehicle")
@@ -495,11 +498,16 @@ def _extract_player_movement_stats(
 
     # Per boost-component: last known boost_amount
     comp_boost: dict[int, int] = {}
-    # Per boost-component: total consumed (in 0-255 scale), resolved to identity post-loop
+    # Per boost-component: total consumed (in 0-255 scale)
     comp_boost_consumed: dict[int, float] = {}
 
-    # Per car actor: list of (time, speed) samples, resolved to identity post-loop
+    # Per car actor: list of (time, speed) samples
     car_speed_samples: dict[int, list[tuple[float, float]]] = {}
+
+    # Finalized data snapshotted on actor deletion to handle actor-ID recycling.
+    # Identity is resolved at deletion time to avoid misattribution when IDs are reused.
+    finalized_boost: list[tuple[tuple[str, str], float]] = []
+    finalized_speeds: list[tuple[tuple[str, str], list[tuple[float, float]]]] = []
 
     for frame in frames:
         ft = frame["time"]
@@ -518,10 +526,24 @@ def _extract_player_movement_stats(
             car_actors.discard(aid)
             ball_actors.discard(aid)
             boost_comp_actors.discard(aid)
-            # Don't clear component_to_car, car_to_pri, car_speed_samples,
-            # or comp_boost_consumed — we need them for post-processing.
-            # Only clear transient per-frame state.
             comp_boost.pop(aid, None)
+            # Snapshot accumulated data before clearing so recycled actor IDs
+            # don't merge data from different players.  Resolve identity now
+            # (not post-hoc) since car_to_pri may be overwritten by recycling.
+            consumed = comp_boost_consumed.pop(aid, None)
+            if consumed:
+                car_id = component_to_car.pop(aid, None)
+                if car_id is not None:
+                    pri = car_to_pri.get(car_id)
+                    identity = pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                    if identity:
+                        finalized_boost.append((identity, consumed))
+            samples = car_speed_samples.pop(aid, None)
+            if samples:
+                pri = car_to_pri.get(aid)
+                identity = pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                if identity:
+                    finalized_speeds.append((identity, samples))
 
         for actor in frame.get("updated_actors", []):
             oid = actor.get("object_id")
@@ -529,12 +551,14 @@ def _extract_player_movement_stats(
 
             if oid == vehicle_obj_id:
                 car_id = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
-                if car_id is not None:
+                if car_id is not None and car_id >= 0:
                     component_to_car[aid] = car_id
 
             elif oid == pri_obj_id:
-                pri_actor = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
-                if pri_actor is not None and aid in car_actors:
+                pri_actor = (
+                    actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
+                )
+                if pri_actor is not None and pri_actor >= 0 and aid in car_actors:
                     car_to_pri[aid] = pri_actor
 
             elif oid == uid_obj_id:
@@ -544,14 +568,18 @@ def _extract_player_movement_stats(
                     pri_identity[aid] = identity
 
             elif oid == boost_obj_id and aid in boost_comp_actors:
-                amount = actor.get("attribute", {}).get("ReplicatedBoost", {}).get("boost_amount")
+                amount = (
+                    actor.get("attribute", {})
+                    .get("ReplicatedBoost", {})
+                    .get("boost_amount")
+                )
                 if amount is None:
                     continue
                 prev = comp_boost.get(aid)
                 comp_boost[aid] = amount
-                if prev is not None and amount < prev and prev != 255 and amount != 255:
-                    comp_boost_consumed[aid] = (
-                        comp_boost_consumed.get(aid, 0.0) + (prev - amount)
+                if prev is not None and amount < prev:
+                    comp_boost_consumed[aid] = comp_boost_consumed.get(aid, 0.0) + (
+                        prev - amount
                     )
 
             elif oid == rb_obj_id and aid in car_actors:
@@ -563,16 +591,22 @@ def _extract_player_movement_stats(
                         car_speed_samples[aid] = []
                     car_speed_samples[aid].append((ft, speed))
 
-    # Post-process: resolve all buffered data to player identities.
+    # Post-process: resolve still-active data to player identities.
     # Build car -> identity from car_to_pri + pri_identity (accumulated over full replay)
     car_identity: dict[int, tuple[str, str]] = {}
     for car_id, pri_actor in car_to_pri.items():
-        identity = pri_identity.get(pri_actor)
-        if identity:
-            car_identity[car_id] = identity
+        if pri_actor >= 0:
+            identity = pri_identity.get(pri_actor)
+            if identity:
+                car_identity[car_id] = identity
 
-    # Aggregate boost consumed per identity via component -> car -> identity
+    # Aggregate boost consumed per identity.
+    # Finalized entries already have identity resolved; still-active use car_identity.
     identity_boost_consumed: dict[tuple[str, str], float] = {}
+    for identity, consumed in finalized_boost:
+        identity_boost_consumed[identity] = (
+            identity_boost_consumed.get(identity, 0.0) + consumed
+        )
     for comp_id, consumed in comp_boost_consumed.items():
         car_id = component_to_car.get(comp_id)
         if car_id is not None:
@@ -582,8 +616,12 @@ def _extract_player_movement_stats(
                     identity_boost_consumed.get(identity, 0.0) + consumed
                 )
 
-    # Aggregate speed samples per identity
+    # Aggregate speed samples per identity (finalized + still-active).
     identity_speeds: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    for identity, samples in finalized_speeds:
+        if identity not in identity_speeds:
+            identity_speeds[identity] = []
+        identity_speeds[identity].extend(samples)
     for car_id, samples in car_speed_samples.items():
         identity = car_identity.get(car_id)
         if identity:
@@ -596,7 +634,7 @@ def _extract_player_movement_stats(
     result: dict[tuple[str, str], dict[str, float]] = {}
 
     for identity in all_identities:
-        stats: dict[str, float | None] = {}
+        stats: dict[str, float] = {}
 
         # Boost per minute: consumed is in 0-255 scale, convert to 0-100 scale
         consumed = identity_boost_consumed.get(identity, 0.0)
@@ -618,7 +656,9 @@ def _extract_player_movement_stats(
                     total_weight += dt
                     if s1 >= 2200:
                         supersonic_time += dt
-            stats["avg_speed"] = round(weighted_sum / total_weight) if total_weight > 0 else 0
+            stats["avg_speed"] = (
+                round(weighted_sum / total_weight) if total_weight > 0 else 0
+            )
             stats["time_supersonic_pct"] = round(supersonic_time / duration * 100, 1)
         else:
             stats["avg_speed"] = 0
