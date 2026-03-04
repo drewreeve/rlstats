@@ -492,10 +492,20 @@ def test_actor_id_recycling_separates_boost_consumption():
         "TAGame.CarComponent_TA:Vehicle",      # 5 - component->car link
         "Engine.Pawn:PlayerReplicationInfo",   # 6 - car->PRI link
         "Engine.PlayerReplicationInfo:UniqueId", # 7 - PRI->identity
+        "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam",  # 8
+        "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",  # 9
     ]
     frames = [
-        # Frame 0: Create car 1 (player A) and car 2 (player B)
+        # Frame 0: Countdown finishes -> play begins
         {"time": 0.0, "delta": 0.033,
+         "new_actors": [],
+         "updated_actors": [
+             {"actor_id": 200, "object_id": 9,
+              "attribute": {"Int": 0}},
+         ],
+         "deleted_actors": []},
+        # Frame 1: Create car 1 (player A) and car 2 (player B)
+        {"time": 0.01, "delta": 0.033,
          "new_actors": [
              {"actor_id": 1, "object_id": 0},  # car 1
              {"actor_id": 2, "object_id": 0},  # car 2

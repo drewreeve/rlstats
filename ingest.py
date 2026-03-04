@@ -482,9 +482,16 @@ def _extract_player_movement_stats(
         vehicle_obj_id = objects.index("TAGame.CarComponent_TA:Vehicle")
         pri_obj_id = objects.index("Engine.Pawn:PlayerReplicationInfo")
         uid_obj_id = objects.index("Engine.PlayerReplicationInfo:UniqueId")
+        scored_obj_id = objects.index(
+            "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam"
+        )
+        countdown_obj_id = objects.index(
+            "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber"
+        )
     except ValueError:
         return {}
 
+    is_playing = False  # Starts False; game begins with a countdown
     car_actors: set[int] = set()
     ball_actors: set[int] = set()
     boost_comp_actors: set[int] = set()
@@ -549,6 +556,17 @@ def _extract_player_movement_stats(
             oid = actor.get("object_id")
             aid = actor["actor_id"]
 
+            if oid == scored_obj_id:
+                team = actor.get("attribute", {}).get("Byte")
+                if team in (0, 1):
+                    is_playing = False
+                continue
+            elif oid == countdown_obj_id:
+                val = actor.get("attribute", {}).get("Int")
+                if val == 0:
+                    is_playing = True
+                continue
+
             if oid == vehicle_obj_id:
                 car_id = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
                 if car_id is not None and car_id >= 0:
@@ -567,7 +585,7 @@ def _extract_player_movement_stats(
                 if identity:
                     pri_identity[aid] = identity
 
-            elif oid == boost_obj_id and aid in boost_comp_actors:
+            elif oid == boost_obj_id and is_playing and aid in boost_comp_actors:
                 amount = (
                     actor.get("attribute", {})
                     .get("ReplicatedBoost", {})
@@ -582,7 +600,7 @@ def _extract_player_movement_stats(
                         prev - amount
                     )
 
-            elif oid == rb_obj_id and aid in car_actors:
+            elif oid == rb_obj_id and is_playing and aid in car_actors:
                 rb = actor.get("attribute", {}).get("RigidBody", {})
                 lv = rb.get("linear_velocity")
                 if lv is not None and "x" in lv and "y" in lv and "z" in lv:
