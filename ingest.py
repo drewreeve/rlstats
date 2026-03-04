@@ -453,14 +453,18 @@ def _extract_boost_stats(
 
 
 def _extract_player_movement_stats(
-    replay: dict, duration: int | None
-) -> dict[tuple[str, str], dict[str, float]]:
-    """Extract per-player boost consumption, average speed, and supersonic time.
+    replay: dict, duration: int | None, game_mode: str | None = None
+) -> dict[tuple[str, str], dict[str, float | int]]:
+    """Extract per-player boost consumption, average speed, supersonic time, and pad pickups.
 
     Returns dict mapping (platform, platform_id) -> {
         "boost_per_minute": float,
         "avg_speed": float,
         "time_supersonic_pct": float,
+        "small_pads": int,
+        "large_pads": int,
+        "stolen_small_pads": int,
+        "stolen_large_pads": int,
     }, or {} if network data is unavailable.
     """
     if not duration or duration <= 0:
@@ -488,6 +492,10 @@ def _extract_player_movement_stats(
         countdown_obj_id = objects.index(
             "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber"
         )
+        pickup_obj_id = objects.index(
+            "TAGame.VehiclePickup_TA:NewReplicatedPickupData"
+        )
+        team_paint_obj_id = objects.index("TAGame.Car_TA:TeamPaint")
     except ValueError:
         return {}
 
@@ -510,6 +518,14 @@ def _extract_player_movement_stats(
 
     # Per car actor: list of (time, speed) samples
     car_speed_samples: dict[int, list[tuple[float, float]]] = {}
+
+    # Pad pickup tracking
+    actor_team: dict[int, int] = {}  # car actor -> team (from TeamPaint)
+    actor_position: dict[int, tuple[float, float]] = {}  # any actor -> (x, y)
+    last_pickup_state: dict[int, int] = {}  # dedup counter per pickup actor
+    identity_pads: dict[tuple[str, str], dict[str, int]] = {}
+    map_key = "hoops" if game_mode == "hoops" else "standard"
+    big_pads = BIG_PAD_POSITIONS[map_key]
 
     # Finalized data snapshotted on actor deletion to handle actor-ID recycling.
     # Identity is resolved at deletion time to avoid misattribution when IDs are reused.
@@ -534,6 +550,9 @@ def _extract_player_movement_stats(
             ball_actors.discard(aid)
             boost_comp_actors.discard(aid)
             comp_boost.pop(aid, None)
+            actor_team.pop(aid, None)
+            actor_position.pop(aid, None)
+            last_pickup_state.pop(aid, None)
             # Snapshot accumulated data before clearing so recycled actor IDs
             # don't merge data from different players.  Resolve identity now
             # (not post-hoc) since car_to_pri may be overwritten by recycling.
@@ -600,14 +619,69 @@ def _extract_player_movement_stats(
                         prev - amount
                     )
 
-            elif oid == rb_obj_id and is_playing and aid in car_actors:
+            elif oid == rb_obj_id:
                 rb = actor.get("attribute", {}).get("RigidBody", {})
-                lv = rb.get("linear_velocity")
-                if lv is not None and "x" in lv and "y" in lv and "z" in lv:
-                    speed = math.sqrt(lv["x"] ** 2 + lv["y"] ** 2 + lv["z"] ** 2)
-                    if aid not in car_speed_samples:
-                        car_speed_samples[aid] = []
-                    car_speed_samples[aid].append((ft, speed))
+                loc = rb.get("location")
+                if loc and "x" in loc and "y" in loc:
+                    actor_position[aid] = (loc["x"], loc["y"])
+                if is_playing and aid in car_actors:
+                    lv = rb.get("linear_velocity")
+                    if lv is not None and "x" in lv and "y" in lv and "z" in lv:
+                        speed = math.sqrt(lv["x"] ** 2 + lv["y"] ** 2 + lv["z"] ** 2)
+                        if aid not in car_speed_samples:
+                            car_speed_samples[aid] = []
+                        car_speed_samples[aid].append((ft, speed))
+
+            elif oid == team_paint_obj_id:
+                team = actor.get("attribute", {}).get("TeamPaint", {}).get("team")
+                if team is not None:
+                    actor_team[aid] = team
+
+            elif oid == pickup_obj_id and is_playing:
+                pickup = actor.get("attribute", {}).get("PickupNew", {})
+                picked_up_state = pickup.get("picked_up")
+                if picked_up_state is None or picked_up_state == 255:
+                    continue
+                if last_pickup_state.get(aid) == picked_up_state:
+                    continue
+                last_pickup_state[aid] = picked_up_state
+
+                instigator = pickup.get("instigator")
+                if instigator is None:
+                    continue
+                # Resolve instigator -> identity
+                pri = car_to_pri.get(instigator)
+                identity = pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                if identity is None:
+                    continue
+                team = actor_team.get(instigator)
+                pos = actor_position.get(aid)
+                if pos is None:
+                    pos = actor_position.get(instigator)
+                if team is None or pos is None:
+                    continue
+
+                x, y = pos
+                is_big = any(
+                    (x - bx) ** 2 + (y - by) ** 2 <= BIG_PAD_RADIUS_SQ
+                    for bx, by in big_pads
+                )
+                is_stolen = (team == 0 and y > 0) or (team == 1 and y < 0)
+
+                if identity not in identity_pads:
+                    identity_pads[identity] = {
+                        "small_pads": 0, "large_pads": 0,
+                        "stolen_small_pads": 0, "stolen_large_pads": 0,
+                    }
+                pads = identity_pads[identity]
+                if is_big:
+                    pads["large_pads"] += 1
+                    if is_stolen:
+                        pads["stolen_large_pads"] += 1
+                else:
+                    pads["small_pads"] += 1
+                    if is_stolen:
+                        pads["stolen_small_pads"] += 1
 
     # Post-process: resolve still-active data to player identities.
     # Build car -> identity from car_to_pri + pri_identity (accumulated over full replay)
@@ -648,8 +722,8 @@ def _extract_player_movement_stats(
             identity_speeds[identity].extend(samples)
 
     # Build results
-    all_identities = set(identity_boost_consumed.keys()) | set(identity_speeds.keys())
-    result: dict[tuple[str, str], dict[str, float]] = {}
+    all_identities = set(identity_boost_consumed.keys()) | set(identity_speeds.keys()) | set(identity_pads.keys())
+    result: dict[tuple[str, str], dict[str, float | int]] = {}
 
     for identity in all_identities:
         stats: dict[str, float] = {}
@@ -681,6 +755,12 @@ def _extract_player_movement_stats(
         else:
             stats["avg_speed"] = 0
             stats["time_supersonic_pct"] = 0.0
+
+        pads = identity_pads.get(identity, {})
+        stats["small_pads"] = pads.get("small_pads", 0)
+        stats["large_pads"] = pads.get("large_pads", 0)
+        stats["stolen_small_pads"] = pads.get("stolen_small_pads", 0)
+        stats["stolen_large_pads"] = pads.get("stolen_large_pads", 0)
 
         result[identity] = stats
 
@@ -942,8 +1022,9 @@ def _upsert_match_players(
             INSERT INTO match_players (
                 match_id, player_id, team,
                 goals, assists, saves, shots, score, demos,
-                boost_per_minute, avg_speed, time_supersonic_pct
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                boost_per_minute, avg_speed, time_supersonic_pct,
+                small_pads, large_pads, stolen_small_pads, stolen_large_pads
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id, player_id) DO UPDATE SET
                 team = excluded.team,
                 goals = excluded.goals,
@@ -954,7 +1035,11 @@ def _upsert_match_players(
                 demos = excluded.demos,
                 boost_per_minute = excluded.boost_per_minute,
                 avg_speed = excluded.avg_speed,
-                time_supersonic_pct = excluded.time_supersonic_pct
+                time_supersonic_pct = excluded.time_supersonic_pct,
+                small_pads = excluded.small_pads,
+                large_pads = excluded.large_pads,
+                stolen_small_pads = excluded.stolen_small_pads,
+                stolen_large_pads = excluded.stolen_large_pads
             """,
             (
                 match_id,
@@ -969,6 +1054,10 @@ def _upsert_match_players(
                 mv.get("boost_per_minute"),
                 mv.get("avg_speed"),
                 mv.get("time_supersonic_pct"),
+                mv.get("small_pads"),
+                mv.get("large_pads"),
+                mv.get("stolen_small_pads"),
+                mv.get("stolen_large_pads"),
             ),
         )
 
@@ -1029,7 +1118,7 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
         opponent_boost_stolen=opp_stolen,
     )
     demolitions = _extract_demolitions(replay)
-    movement_stats = _extract_player_movement_stats(replay, duration)
+    movement_stats = _extract_player_movement_stats(replay, duration, game_mode)
     all_players = props.get("PlayerStats", [])
     _upsert_match_players(conn, match_id, all_players, demolitions, movement_stats)
 

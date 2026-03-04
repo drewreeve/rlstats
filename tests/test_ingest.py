@@ -475,6 +475,10 @@ def test_extract_player_movement_stats():
         assert s["boost_per_minute"] >= 0
         assert s["avg_speed"] >= 0
         assert 0 <= s["time_supersonic_pct"] <= 100
+        assert "small_pads" in s
+        assert "large_pads" in s
+        assert "stolen_small_pads" in s
+        assert "stolen_large_pads" in s
 
 
 def test_actor_id_recycling_separates_boost_consumption():
@@ -494,6 +498,8 @@ def test_actor_id_recycling_separates_boost_consumption():
         "Engine.PlayerReplicationInfo:UniqueId", # 7 - PRI->identity
         "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam",  # 8
         "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",  # 9
+        "TAGame.VehiclePickup_TA:NewReplicatedPickupData",  # 10
+        "TAGame.Car_TA:TeamPaint",             # 11
     ]
     frames = [
         # Frame 0: Countdown finishes -> play begins
@@ -588,6 +594,30 @@ def test_actor_id_recycling_separates_boost_consumption():
     a_bpm = player_a["boost_per_minute"]
     b_bpm = player_b["boost_per_minute"]
     assert b_bpm > a_bpm, f"Player B ({b_bpm}) should have higher boost/min than A ({a_bpm})"
+
+
+def test_extract_player_pad_stats():
+    replay = load_replay("match.json")
+    duration = replay["properties"].get("TotalSecondsPlayed")
+    stats = _extract_player_movement_stats(replay, duration, game_mode="standard")
+
+    assert len(stats) > 0
+
+    for identity, s in stats.items():
+        small = s["small_pads"]
+        large = s["large_pads"]
+        stolen_small = s["stolen_small_pads"]
+        stolen_large = s["stolen_large_pads"]
+        assert small >= 0
+        assert large >= 0
+        assert stolen_small >= 0
+        assert stolen_large >= 0
+        assert stolen_small <= small, f"stolen_small ({stolen_small}) > small ({small})"
+        assert stolen_large <= large, f"stolen_large ({stolen_large}) > large ({large})"
+
+    # At least some players should have collected pads
+    total_pads = sum(s["small_pads"] + s["large_pads"] for s in stats.values())
+    assert total_pads > 0, "Expected at least some pad pickups"
 
 
 def test_player_name_updates_on_change():
