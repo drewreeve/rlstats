@@ -380,7 +380,7 @@ def test_boost_stats_dedupes_repeated_pickup_state():
                             "attribute": {"TeamPaint": {"team": 0}},
                         },
                         {
-                            "actor_id": 10,
+                            "actor_id": 1,
                             "object_id": 1,
                             "attribute": {"RigidBody": {"location": {"x": 0, "y": 100}}},
                         },

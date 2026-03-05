@@ -352,6 +352,43 @@ BIG_PAD_RADIUS = 400
 BIG_PAD_RADIUS_SQ = BIG_PAD_RADIUS**2
 
 
+def _parse_pickup(
+    actor: dict,
+    last_pickup_state: dict[int, int],
+    actor_team: dict[int, int],
+    actor_position: dict[int, tuple[float, float]],
+    big_pads: list[tuple[float, float]],
+) -> tuple[int, int, bool, bool] | None:
+    """Parse a NewReplicatedPickupData actor update.
+
+    Returns (instigator_actor_id, team, is_big, is_stolen) or None to skip.
+    """
+    aid = actor["actor_id"]
+    pickup = actor.get("attribute", {}).get("PickupNew", {})
+    picked_up_state = pickup.get("picked_up")
+    if picked_up_state is None or picked_up_state == 255:
+        return None
+    if last_pickup_state.get(aid) == picked_up_state:
+        return None
+    last_pickup_state[aid] = picked_up_state
+
+    instigator = pickup.get("instigator")
+    if instigator is None:
+        return None
+    team = actor_team.get(instigator)
+    pos = actor_position.get(instigator)   # pad actors don't emit RigidBody; use car position
+    if team is None or pos is None:
+        return None
+
+    x, y = pos
+    is_big = any(
+        (x - bx) ** 2 + (y - by) ** 2 <= BIG_PAD_RADIUS_SQ
+        for bx, by in big_pads
+    )
+    is_stolen = (team == 0 and y > 0) or (team == 1 and y < 0)
+    return instigator, team, is_big, is_stolen
+
+
 def _extract_boost_stats(
     replay: dict, tracked_team: int | None, game_mode: str | None
 ) -> tuple[int | None, int | None, int | None, int | None]:
@@ -406,40 +443,13 @@ def _extract_boost_stats(
                     actor_position[aid] = (loc["x"], loc["y"])
 
             elif obj_id == pickup_obj_id:
-                pickup = actor.get("attribute", {}).get("PickupNew", {})
-                picked_up_state = pickup.get("picked_up")
-                # PickupNew is a replicated state/counter (not bool). Count only on
-                # state change to avoid double-counting repeated updates.
-                # 255 = no-pickup sentinel in replicated state
-                if picked_up_state is None or picked_up_state == 255:
+                result = _parse_pickup(actor, last_pickup_state, actor_team, actor_position, big_pads)
+                if result is None:
                     continue
-                if last_pickup_state.get(aid) == picked_up_state:
-                    continue
-                last_pickup_state[aid] = picked_up_state
-
-                instigator = pickup.get("instigator")
-                if instigator is None:
-                    continue
-                team = actor_team.get(instigator)
-                # Prefer pickup actor position (pad location); fallback to instigator.
-                pos = actor_position.get(aid)
-                if pos is None:
-                    pos = actor_position.get(instigator)
-                if team is None or pos is None:
-                    continue
-
-                x, y = pos
-                # Classify big vs small by proximity to known big pad positions
-                is_big = any(
-                    (x - bx) ** 2 + (y - by) ** 2 <= BIG_PAD_RADIUS_SQ
-                    for bx, by in big_pads
-                )
+                _, team, is_big, is_stolen = result
                 boost_value = 100 if is_big else 12
                 collected[team] += boost_value
-
-                # Stolen = pickup on opponent's half (not center)
-                # Team 0 defends Y<0, Team 1 defends Y>0
-                if (team == 0 and y > 0) or (team == 1 and y < 0):
+                if is_stolen:
                     stolen[team] += boost_value
 
     if collected[0] == 0 and collected[1] == 0:
@@ -621,16 +631,17 @@ def _extract_player_movement_stats(
 
             elif oid == rb_obj_id:
                 rb = actor.get("attribute", {}).get("RigidBody", {})
-                loc = rb.get("location")
-                if loc and "x" in loc and "y" in loc:
-                    actor_position[aid] = (loc["x"], loc["y"])
-                if is_playing and aid in car_actors:
-                    lv = rb.get("linear_velocity")
-                    if lv is not None and "x" in lv and "y" in lv and "z" in lv:
-                        speed = math.sqrt(lv["x"] ** 2 + lv["y"] ** 2 + lv["z"] ** 2)
-                        if aid not in car_speed_samples:
-                            car_speed_samples[aid] = []
-                        car_speed_samples[aid].append((ft, speed))
+                if aid in car_actors:
+                    loc = rb.get("location")
+                    if loc and "x" in loc and "y" in loc:
+                        actor_position[aid] = (loc["x"], loc["y"])
+                    if is_playing:
+                        lv = rb.get("linear_velocity")
+                        if lv is not None and "x" in lv and "y" in lv and "z" in lv:
+                            speed = math.sqrt(lv["x"] ** 2 + lv["y"] ** 2 + lv["z"] ** 2)
+                            if aid not in car_speed_samples:
+                                car_speed_samples[aid] = []
+                            car_speed_samples[aid].append((ft, speed))
 
             elif oid == team_paint_obj_id:
                 team = actor.get("attribute", {}).get("TeamPaint", {}).get("team")
@@ -638,42 +649,18 @@ def _extract_player_movement_stats(
                     actor_team[aid] = team
 
             elif oid == pickup_obj_id and is_playing:
-                pickup = actor.get("attribute", {}).get("PickupNew", {})
-                picked_up_state = pickup.get("picked_up")
-                if picked_up_state is None or picked_up_state == 255:
+                result = _parse_pickup(actor, last_pickup_state, actor_team, actor_position, big_pads)
+                if result is None:
                     continue
-                if last_pickup_state.get(aid) == picked_up_state:
-                    continue
-                last_pickup_state[aid] = picked_up_state
-
-                instigator = pickup.get("instigator")
-                if instigator is None:
-                    continue
-                # Resolve instigator -> identity
+                instigator, team, is_big, is_stolen = result
                 pri = car_to_pri.get(instigator)
                 identity = pri_identity.get(pri) if pri is not None and pri >= 0 else None
                 if identity is None:
                     continue
-                team = actor_team.get(instigator)
-                pos = actor_position.get(aid)
-                if pos is None:
-                    pos = actor_position.get(instigator)
-                if team is None or pos is None:
-                    continue
-
-                x, y = pos
-                is_big = any(
-                    (x - bx) ** 2 + (y - by) ** 2 <= BIG_PAD_RADIUS_SQ
-                    for bx, by in big_pads
-                )
-                is_stolen = (team == 0 and y > 0) or (team == 1 and y < 0)
-
-                if identity not in identity_pads:
-                    identity_pads[identity] = {
-                        "small_pads": 0, "large_pads": 0,
-                        "stolen_small_pads": 0, "stolen_large_pads": 0,
-                    }
-                pads = identity_pads[identity]
+                pads = identity_pads.setdefault(identity, {
+                    "small_pads": 0, "large_pads": 0,
+                    "stolen_small_pads": 0, "stolen_large_pads": 0,
+                })
                 if is_big:
                     pads["large_pads"] += 1
                     if is_stolen:
