@@ -328,6 +328,9 @@ def _extract_demolitions(replay: dict) -> dict[tuple[str, str], int]:
     return result
 
 
+# Coordinates are taken from wiki.rlbot.org
+# https://wiki.rlbot.org/v4/botmaking/useful-game-values/
+# https://wiki.rlbot.org/v4/botmaking/hoops/
 BIG_PAD_POSITIONS = {
     "standard": [
         (-3072, -4096),
@@ -338,12 +341,12 @@ BIG_PAD_POSITIONS = {
         (3072, 4096),
     ],
     "hoops": [
-        (-2176, -2880),
-        (2176, -2880),
-        (-2400, 0),
-        (2400, 0),
-        (-2176, 2880),
-        (2176, 2880),
+        (-2176, -2944),
+        (2176, -2944),
+        (-2432, 0),
+        (2432, 0),
+        (-2176, 2944),
+        (2176, 2944),
     ],
 }
 # Official hitbox radius is 208uu (wiki.rlbot.org); we use 400 to allow for
@@ -376,14 +379,15 @@ def _parse_pickup(
     if instigator is None:
         return None
     team = actor_team.get(instigator)
-    pos = actor_position.get(instigator)   # pad actors don't emit RigidBody; use car position
+    pos = actor_position.get(
+        instigator
+    )  # pad actors don't emit RigidBody; use car position
     if team is None or pos is None:
         return None
 
     x, y = pos
     is_big = any(
-        (x - bx) ** 2 + (y - by) ** 2 <= BIG_PAD_RADIUS_SQ
-        for bx, by in big_pads
+        (x - bx) ** 2 + (y - by) ** 2 <= BIG_PAD_RADIUS_SQ for bx, by in big_pads
     )
     is_stolen = (team == 0 and y > 0) or (team == 1 and y < 0)
     return instigator, team, is_big, is_stolen
@@ -443,7 +447,9 @@ def _extract_boost_stats(
                     actor_position[aid] = (loc["x"], loc["y"])
 
             elif obj_id == pickup_obj_id:
-                result = _parse_pickup(actor, last_pickup_state, actor_team, actor_position, big_pads)
+                result = _parse_pickup(
+                    actor, last_pickup_state, actor_team, actor_position, big_pads
+                )
                 if result is None:
                     continue
                 _, team, is_big, is_stolen = result
@@ -502,9 +508,7 @@ def _extract_player_movement_stats(
         countdown_obj_id = objects.index(
             "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber"
         )
-        pickup_obj_id = objects.index(
-            "TAGame.VehiclePickup_TA:NewReplicatedPickupData"
-        )
+        pickup_obj_id = objects.index("TAGame.VehiclePickup_TA:NewReplicatedPickupData")
         team_paint_obj_id = objects.index("TAGame.Car_TA:TeamPaint")
     except ValueError:
         return {}
@@ -571,13 +575,17 @@ def _extract_player_movement_stats(
                 car_id = component_to_car.pop(aid, None)
                 if car_id is not None:
                     pri = car_to_pri.get(car_id)
-                    identity = pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                    identity = (
+                        pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                    )
                     if identity:
                         finalized_boost.append((identity, consumed))
             samples = car_speed_samples.pop(aid, None)
             if samples:
                 pri = car_to_pri.get(aid)
-                identity = pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                identity = (
+                    pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                )
                 if identity:
                     finalized_speeds.append((identity, samples))
 
@@ -638,7 +646,9 @@ def _extract_player_movement_stats(
                     if is_playing:
                         lv = rb.get("linear_velocity")
                         if lv is not None and "x" in lv and "y" in lv and "z" in lv:
-                            speed = math.sqrt(lv["x"] ** 2 + lv["y"] ** 2 + lv["z"] ** 2)
+                            speed = math.sqrt(
+                                lv["x"] ** 2 + lv["y"] ** 2 + lv["z"] ** 2
+                            )
                             if aid not in car_speed_samples:
                                 car_speed_samples[aid] = []
                             car_speed_samples[aid].append((ft, speed))
@@ -649,18 +659,27 @@ def _extract_player_movement_stats(
                     actor_team[aid] = team
 
             elif oid == pickup_obj_id and is_playing:
-                result = _parse_pickup(actor, last_pickup_state, actor_team, actor_position, big_pads)
+                result = _parse_pickup(
+                    actor, last_pickup_state, actor_team, actor_position, big_pads
+                )
                 if result is None:
                     continue
                 instigator, team, is_big, is_stolen = result
                 pri = car_to_pri.get(instigator)
-                identity = pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                identity = (
+                    pri_identity.get(pri) if pri is not None and pri >= 0 else None
+                )
                 if identity is None:
                     continue
-                pads = identity_pads.setdefault(identity, {
-                    "small_pads": 0, "large_pads": 0,
-                    "stolen_small_pads": 0, "stolen_large_pads": 0,
-                })
+                pads = identity_pads.setdefault(
+                    identity,
+                    {
+                        "small_pads": 0,
+                        "large_pads": 0,
+                        "stolen_small_pads": 0,
+                        "stolen_large_pads": 0,
+                    },
+                )
                 if is_big:
                     pads["large_pads"] += 1
                     if is_stolen:
@@ -709,7 +728,11 @@ def _extract_player_movement_stats(
             identity_speeds[identity].extend(samples)
 
     # Build results
-    all_identities = set(identity_boost_consumed.keys()) | set(identity_speeds.keys()) | set(identity_pads.keys())
+    all_identities = (
+        set(identity_boost_consumed.keys())
+        | set(identity_speeds.keys())
+        | set(identity_pads.keys())
+    )
     result: dict[tuple[str, str], dict[str, float | int]] = {}
 
     for identity in all_identities:
