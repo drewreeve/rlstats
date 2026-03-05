@@ -1026,7 +1026,125 @@ header h1 {
         flex: 1 1 100%;
         order: 1;
     }
+
+    .player-charts-row {
+        flex-direction: column;
+    }
 }
+
+/* Player Charts */
+.player-charts {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-top: 1px;
+}
+
+.player-charts-row {
+    display: flex;
+    gap: 1px;
+}
+
+.player-charts-row > .player-chart {
+    flex: 1;
+    min-width: 0;
+}
+
+.player-chart {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    padding: 1.25rem 1.25rem 0.75rem;
+}
+
+.chart-label {
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    margin-bottom: 0.5rem;
+}
+
+.chart-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.2rem 0;
+}
+
+.chart-name {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    min-width: 5.5rem;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chart-bar-track {
+    flex: 1;
+    display: flex;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.chart-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.chart-bar-fill.team { background: var(--cyan); }
+.chart-bar-fill.opp  { background: #ff3c3c; }
+
+.chart-bar-fill.pad-sm-col { background: rgba(0, 200, 120, 0.85); border-radius: 3px 0 0 3px; }
+.chart-bar-fill.pad-lg-col { background: rgba(0, 229, 255, 0.9); border-radius: 0; }
+.chart-bar-fill.pad-sm-stl { background: rgba(255, 160, 50, 0.85); border-radius: 0; }
+.chart-bar-fill.pad-lg-stl { background: rgba(180, 80, 255, 0.9); border-radius: 0 3px 3px 0; }
+
+.chart-value {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    min-width: 2.5rem;
+    text-align: left;
+}
+
+.chart-team-separator {
+    border-bottom: 1px solid var(--border);
+    margin: 0.25rem 0;
+}
+
+.chart-legend {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.chart-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--text-dim);
+}
+
+.chart-legend-swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 1px;
+}
+
+.chart-legend-swatch.pad-sm-col { background: rgba(0, 200, 120, 0.85); }
+.chart-legend-swatch.pad-lg-col { background: rgba(0, 229, 255, 0.9); }
+.chart-legend-swatch.pad-sm-stl { background: rgba(255, 160, 50, 0.85); }
+.chart-legend-swatch.pad-lg-stl { background: rgba(180, 80, 255, 0.9); }
 
 /* ── Upload Page ──────────────────────────────── */
 .upload-container {

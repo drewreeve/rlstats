@@ -44,14 +44,12 @@ function ringChart(pct, color, size) {
 }
 
 function fmtStat(val, decimals) {
-  if (val == null) return '-';
+  if (val == null) return "-";
   return decimals ? val.toFixed(decimals) : Math.round(val);
 }
 
 function playerRow(p, isMvp) {
-  const mvpBadge = isMvp
-    ? '<span class="match-mvp-badge">MVP</span>'
-    : "";
+  const mvpBadge = isMvp ? '<span class="match-mvp-badge">MVP</span>' : "";
   return `
     <tr>
       <td class="player-name">${esc(p.name)}${mvpBadge}</td>
@@ -60,14 +58,13 @@ function playerRow(p, isMvp) {
       <td>${p.assists}</td>
       <td>${p.saves}</td>
       <td>${p.shots}</td>
-      <td>${fmtStat(p.boost_per_minute, 1)}</td>
-      <td>${fmtStat(p.avg_speed, 0)}</td>
-      <td>${p.time_supersonic_pct != null ? fmtStat(p.time_supersonic_pct, 1) + '%' : '-'}</td>
     </tr>`;
 }
 
 function playerTable(players, label, isMvpTeam) {
-  const topScore = players.length ? Math.max(...players.map((p) => p.score ?? 0)) : -1;
+  const topScore = players.length
+    ? Math.max(...players.map((p) => p.score ?? 0))
+    : -1;
   const rows = players
     .map((p) => playerRow(p, isMvpTeam && (p.score ?? 0) === topScore))
     .join("");
@@ -78,7 +75,7 @@ function playerTable(players, label, isMvpTeam) {
         <thead>
           <tr>
             <th>Player</th><th>Score</th><th>Goals</th><th>Assists</th>
-            <th>Saves</th><th>Shots</th><th>Boost/m</th><th>Avg Spd</th><th>Supersonic</th>
+            <th>Saves</th><th>Shots</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -138,26 +135,38 @@ function pitchDiagram(defSec, neuSec, offSec) {
         ${neuW > 20 ? `<circle cx="${midX}" cy="${cy}" r="${cr}" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>` : ""}
 
         <!-- Labels -->
-        ${defW > 50 ? `
+        ${
+          defW > 50
+            ? `
         <text x="${defX + defW / 2}" y="${cy - 8}" text-anchor="middle" dominant-baseline="central"
           fill="#ff3c3c" font-family="var(--font-display)" font-size="14" font-weight="700">${defPct.toFixed(0)}%</text>
         <text x="${defX + defW / 2}" y="${cy + 10}" text-anchor="middle" dominant-baseline="central"
           fill="rgba(255,60,60,0.6)" font-family="var(--font-display)" font-size="8" font-weight="700" letter-spacing="0.1em">DEFENSIVE</text>
-        ` : ""}
+        `
+            : ""
+        }
 
-        ${neuW > 50 ? `
+        ${
+          neuW > 50
+            ? `
         <text x="${neuX + neuW / 2}" y="${cy - 8}" text-anchor="middle" dominant-baseline="central"
           fill="var(--text)" font-family="var(--font-display)" font-size="14" font-weight="700">${neuPct.toFixed(0)}%</text>
         <text x="${neuX + neuW / 2}" y="${cy + 10}" text-anchor="middle" dominant-baseline="central"
           fill="var(--text-dim)" font-family="var(--font-display)" font-size="8" font-weight="700" letter-spacing="0.1em">NEUTRAL</text>
-        ` : ""}
+        `
+            : ""
+        }
 
-        ${offW > 50 ? `
+        ${
+          offW > 50
+            ? `
         <text x="${offX + offW / 2}" y="${cy - 8}" text-anchor="middle" dominant-baseline="central"
           fill="var(--cyan)" font-family="var(--font-display)" font-size="14" font-weight="700">${offPct.toFixed(0)}%</text>
         <text x="${offX + offW / 2}" y="${cy + 10}" text-anchor="middle" dominant-baseline="central"
           fill="rgba(0,229,255,0.6)" font-family="var(--font-display)" font-size="8" font-weight="700" letter-spacing="0.1em">OFFENSIVE</text>
-        ` : ""}
+        `
+            : ""
+        }
       </svg>
     </div>`;
 }
@@ -184,7 +193,8 @@ function matchTimeline(events, teamNum, durationSeconds) {
     const x = xPos(t);
     const min = Math.floor(t / 60);
     const sec = t % 60;
-    const label = sec === 0 ? `${min}:00` : `${min}:${String(sec).padStart(2, "0")}`;
+    const label =
+      sec === 0 ? `${min}:00` : `${min}:${String(sec).padStart(2, "0")}`;
     ticksSvg += `
       <line x1="${x}" y1="${midY - 12}" x2="${x}" y2="${midY + 12}"
         stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
@@ -195,8 +205,18 @@ function matchTimeline(events, teamNum, durationSeconds) {
   // Event markers
   const eventConfig = {
     goal: { r: 6, teamColor: "var(--cyan)", oppColor: "#ff3c3c", label: "G" },
-    shot: { r: 3, teamColor: "rgba(0,229,255,0.4)", oppColor: "rgba(255,60,60,0.4)", label: "S" },
-    save: { r: 4, teamColor: "rgba(0,229,255,0.7)", oppColor: "rgba(255,60,60,0.7)", label: "V" },
+    shot: {
+      r: 3,
+      teamColor: "rgba(0,229,255,0.4)",
+      oppColor: "rgba(255,60,60,0.4)",
+      label: "S",
+    },
+    save: {
+      r: 4,
+      teamColor: "rgba(0,229,255,0.7)",
+      oppColor: "rgba(255,60,60,0.7)",
+      label: "V",
+    },
     demo: { r: 4, teamColor: "#ff6b00", oppColor: "#ff6b00", label: "D" },
   };
 
@@ -221,7 +241,8 @@ function matchTimeline(events, teamNum, durationSeconds) {
     const stackDir = isTeam ? -1 : 1;
     const y = baseY + stackIdx * stackDir * 14;
 
-    const label = ev.event_type.charAt(0).toUpperCase() + ev.event_type.slice(1);
+    const label =
+      ev.event_type.charAt(0).toUpperCase() + ev.event_type.slice(1);
     const tooltip = `${label} by ${ev.name}`;
 
     if (ev.event_type === "goal") {
@@ -300,6 +321,122 @@ function matchTimeline(events, teamNum, durationSeconds) {
     </div>`;
 }
 
+function barChart(allPlayers, key, label, fmt) {
+  const vals = allPlayers.map((p) => p[key]);
+  if (vals.every((v) => v == null)) return "";
+  const maxVal = Math.max(...vals.filter((v) => v != null));
+  const sorted = [
+    ...allPlayers.filter((p) => p.isTeam),
+    ...allPlayers.filter((p) => !p.isTeam),
+  ];
+  const firstOppIdx = sorted.findIndex((p) => !p.isTeam);
+
+  const rows = sorted
+    .map((p, i) => {
+      const pct = p[key] != null ? (p[key] / maxVal) * 100 : 0;
+      const valText = p[key] != null ? fmt(p[key]) : "-";
+      const side = p.isTeam ? "team" : "opp";
+      const sep =
+        i === firstOppIdx && firstOppIdx > 0
+          ? '<div class="chart-team-separator"></div>'
+          : "";
+      return `${sep}
+      <div class="chart-row">
+        <span class="chart-name ${side}-color">${esc(p.name)}</span>
+        <span class="chart-bar-track">
+          <span class="chart-bar-fill ${side}" style="width:${pct.toFixed(1)}%"></span>
+        </span>
+        <span class="chart-value">${valText}</span>
+      </div>`;
+    })
+    .join("");
+
+  return `
+    <div class="player-chart">
+      <div class="chart-label">${label}</div>
+      ${rows}
+    </div>`;
+}
+
+function avgSpeedChart(allPlayers) {
+  return barChart(allPlayers, "avg_speed", "AVG SPEED", (v) => Math.round(v));
+}
+
+function boostPerMinChart(allPlayers) {
+  return barChart(allPlayers, "boost_per_minute", "BOOST / MIN", (v) =>
+    v.toFixed(1),
+  );
+}
+
+function padStatsChart(allPlayers) {
+  const hasData = allPlayers.some(
+    (p) =>
+      p.small_pads != null ||
+      p.large_pads != null ||
+      p.stolen_small_pads != null ||
+      p.stolen_large_pads != null,
+  );
+  if (!hasData) return "";
+
+  // Segments: stolen is a subset of collected, so split into own + stolen slices
+  const segments = [
+    { fn: (p) => (p.small_pads ?? 0) - (p.stolen_small_pads ?? 0), cls: "pad-sm-col", label: "Small (own)" },
+    { fn: (p) => (p.stolen_small_pads ?? 0),                        cls: "pad-sm-stl", label: "Small (stolen)" },
+    { fn: (p) => (p.large_pads ?? 0) - (p.stolen_large_pads ?? 0), cls: "pad-lg-col", label: "Large (own)" },
+    { fn: (p) => (p.stolen_large_pads ?? 0),                        cls: "pad-lg-stl", label: "Large (stolen)" },
+  ];
+
+  const totals = allPlayers.map((p) => (p.small_pads ?? 0) + (p.large_pads ?? 0));
+  const maxTotal = Math.max(...totals, 1);
+
+  const sorted = [
+    ...allPlayers.filter((p) => p.isTeam),
+    ...allPlayers.filter((p) => !p.isTeam),
+  ];
+  const firstOppIdx = sorted.findIndex((p) => !p.isTeam);
+
+  const rows = sorted
+    .map((p, i) => {
+      const total = (p.small_pads ?? 0) + (p.large_pads ?? 0);
+      const side = p.isTeam ? "team" : "opp";
+      const sep =
+        i === firstOppIdx && firstOppIdx > 0
+          ? '<div class="chart-team-separator"></div>'
+          : "";
+      const bars = segments
+        .map((seg) => {
+          const val = seg.fn(p);
+          const pct = (val / maxTotal) * 100;
+          return pct > 0
+            ? `<span class="chart-bar-fill ${seg.cls}" style="width:${pct.toFixed(1)}%"></span>`
+            : "";
+        })
+        .join("");
+
+      return `${sep}
+      <div class="chart-row">
+        <span class="chart-name ${side}-color">${esc(p.name)}</span>
+        <span class="chart-bar-track">${bars}</span>
+        <span class="chart-value">${total}</span>
+      </div>`;
+    })
+    .join("");
+
+  const legend = segments
+    .map(
+      (seg) =>
+        `<span class="chart-legend-item"><span class="chart-legend-swatch ${seg.cls}"></span>${seg.label}</span>`,
+    )
+    .join("");
+
+  return `
+    <div class="player-chart">
+      <div class="chart-label">PAD STATS</div>
+      ${rows}
+      <div class="chart-legend">${legend}</div>
+    </div>`;
+}
+
 async function loadMatch() {
   const parts = window.location.pathname.split("/");
   const matchId = parts[parts.length - 1];
@@ -328,7 +465,8 @@ async function loadMatch() {
   const oppPct = oppShots > 0 ? (oppGoals / oppShots) * 100 : 0;
 
   // Possession
-  const hasPossession = m.team_possession_seconds != null && m.opponent_possession_seconds != null;
+  const hasPossession =
+    m.team_possession_seconds != null && m.opponent_possession_seconds != null;
   let possessionHTML = "";
   if (hasPossession) {
     const total = m.team_possession_seconds + m.opponent_possession_seconds;
@@ -346,7 +484,7 @@ async function loadMatch() {
       </div>`;
   }
 
-  const html = `
+  let html = `
     <div class="match-header ${accentClass}">
       <div class="match-teams">
         <div class="match-team-name team-color">Our Team</div>
@@ -381,7 +519,9 @@ async function loadMatch() {
         <div class="possession-fill opp-fill" style="width:${teamShots + oppShots > 0 ? (oppShots / (teamShots + oppShots)) * 100 : 50}%"></div>
       </div>
 
-      ${m.team_boost_collected != null ? `
+      ${
+        m.team_boost_collected != null
+          ? `
       <div class="match-stat-row">
         <span class="match-stat-value team-color">${m.team_boost_collected}</span>
         <span class="match-stat-label">BOOST COLLECTED</span>
@@ -400,7 +540,9 @@ async function loadMatch() {
         <div class="possession-fill team-fill" style="width:${m.team_boost_stolen + m.opponent_boost_stolen > 0 ? (m.team_boost_stolen / (m.team_boost_stolen + m.opponent_boost_stolen)) * 100 : 50}%"></div>
         <div class="possession-fill opp-fill" style="width:${m.team_boost_stolen + m.opponent_boost_stolen > 0 ? (m.opponent_boost_stolen / (m.team_boost_stolen + m.opponent_boost_stolen)) * 100 : 50}%"></div>
       </div>
-      ` : ""}
+      `
+          : ""
+      }
 
       <div class="match-accuracy">
         <div class="match-accuracy-item">
@@ -421,6 +563,31 @@ async function loadMatch() {
       ${playerTable(team_players, "Our Team", isWin)}
       ${playerTable(opponent_players, "Opponents", !isWin)}
     </div>`;
+
+  const allPlayers = [
+    ...team_players.map((p) => ({ ...p, isTeam: true })),
+    ...opponent_players.map((p) => ({ ...p, isTeam: false })),
+  ];
+
+  const speedChart = avgSpeedChart(allPlayers);
+  const boostChart = boostPerMinChart(allPlayers);
+  const padChart = padStatsChart(allPlayers);
+
+  if (speedChart || boostChart || padChart) {
+    const topRow =
+      speedChart || boostChart
+        ? `
+        <div class="player-charts-row">
+          ${speedChart}
+          ${boostChart}
+        </div>`
+        : "";
+    html += `
+      <div class="player-charts">
+        ${topRow}
+        ${padChart}
+      </div>`;
+  }
 
   document.getElementById("match-content").innerHTML = html;
 }

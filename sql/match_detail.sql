@@ -46,7 +46,11 @@ SELECT
          ELSE 0 END AS shooting_pct,
     mp.boost_per_minute,
     mp.avg_speed,
-    mp.time_supersonic_pct
+    mp.time_supersonic_pct,
+    mp.small_pads,
+    mp.large_pads,
+    mp.stolen_small_pads,
+    mp.stolen_large_pads
 FROM match_players mp
 JOIN players p ON mp.player_id = p.id
 WHERE mp.match_id = :match_id
