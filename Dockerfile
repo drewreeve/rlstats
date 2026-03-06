@@ -17,7 +17,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-editable --compile-bytecode --no-dev --no-install-project
 
-COPY server.py ingest.py db.py process.py ./
+COPY server.py ingest.py db.py process.py frame_analysis.py ./
 COPY migrations/ migrations/
 COPY sql/ sql/
 COPY static/ static/
