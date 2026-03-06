@@ -3,13 +3,14 @@ import logging
 import os
 import secrets
 import sqlite3
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from flask import Flask, abort, g, jsonify, request, session
 from werkzeug.utils import secure_filename
 
 from db import apply_migrations, queries
-from ingest import ingest_match
+from ingest import analyze_replay, write_match
 from process import UploadProcessor, parse_replay
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,6 @@ REPLAY_DIR = Path("replays")
 MIN_FILE_SIZE = 256 * 1024
 
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
-
 
 
 def query_matches(conn, params):
@@ -107,7 +107,12 @@ def query_match_detail(conn, match_id):
     opponent_players = [dict(p) for p in players if p["team"] != team_num]
 
     events = [
-        {"event_type": e["event_type"], "game_seconds": e["game_seconds"], "team": e["team"], "name": e["name"]}
+        {
+            "event_type": e["event_type"],
+            "game_seconds": e["game_seconds"],
+            "team": e["team"],
+            "name": e["name"],
+        }
         for e in queries.match_events(conn, match_id=match_id)
     ]
 
@@ -141,7 +146,12 @@ def query_match_detail(conn, match_id):
 def query_shooting_pct(conn, mode):
     rows = queries.shooting_pct(conn, game_mode=mode)
     return [
-        {"player": r["player_name"], "goals": r["total_goals"], "shots": r["total_shots"], "shooting_pct": r["shooting_pct"]}
+        {
+            "player": r["player_name"],
+            "goals": r["total_goals"],
+            "shots": r["total_shots"],
+            "shooting_pct": r["shooting_pct"],
+        }
         for r in rows
     ]
 
@@ -149,7 +159,12 @@ def query_shooting_pct(conn, mode):
 def query_win_loss_daily(conn, mode):
     rows = queries.win_loss_daily(conn, game_mode=mode)
     return [
-        {"date": r["play_date"], "wins": r["wins"], "losses": r["losses"], "win_rate": r["win_rate"]}
+        {
+            "date": r["play_date"],
+            "wins": r["wins"],
+            "losses": r["losses"],
+            "win_rate": r["win_rate"],
+        }
         for r in rows
     ]
 
@@ -157,7 +172,15 @@ def query_win_loss_daily(conn, mode):
 def query_player_stats(conn, mode):
     rows = queries.player_stats(conn, game_mode=mode)
     return [
-        {"player": r["player_name"], "matches": r["matches_played"], "goals": r["total_goals"], "assists": r["total_assists"], "saves": r["total_saves"], "shots": r["total_shots"], "demos": r["total_demos"]}
+        {
+            "player": r["player_name"],
+            "matches": r["matches_played"],
+            "goals": r["total_goals"],
+            "assists": r["total_assists"],
+            "saves": r["total_saves"],
+            "shots": r["total_shots"],
+            "demos": r["total_demos"],
+        }
         for r in rows
     ]
 
@@ -165,23 +188,31 @@ def query_player_stats(conn, mode):
 def query_mvp_wins(conn, mode):
     rows = queries.mvp_wins(conn, game_mode=mode)
     return [
-        {"player": r["player_name"], "mvp_matches": r["mvp_matches"], "mvp_wins": r["mvp_wins"], "win_rate": r["mvp_win_rate"]}
+        {
+            "player": r["player_name"],
+            "mvp_matches": r["mvp_matches"],
+            "mvp_wins": r["mvp_wins"],
+            "win_rate": r["mvp_win_rate"],
+        }
         for r in rows
     ]
 
 
 def query_mvp_losses(conn, mode):
     rows = queries.mvp_losses(conn, game_mode=mode)
-    return [
-        {"player": r["player_name"], "loss_mvps": r["loss_mvps"]}
-        for r in rows
-    ]
+    return [{"player": r["player_name"], "loss_mvps": r["loss_mvps"]} for r in rows]
 
 
 def query_weekday(conn, mode):
     rows = queries.weekday(conn, game_mode=mode)
     return [
-        {"weekday": r["weekday"], "matches": r["matches_played"], "wins": r["wins"], "losses": r["losses"], "win_rate": r["win_rate"]}
+        {
+            "weekday": r["weekday"],
+            "matches": r["matches_played"],
+            "wins": r["wins"],
+            "losses": r["losses"],
+            "win_rate": r["win_rate"],
+        }
         for r in rows
     ]
 
@@ -189,7 +220,12 @@ def query_weekday(conn, mode):
 def query_avg_score(conn, mode):
     rows = queries.avg_score(conn, game_mode=mode)
     return [
-        {"player": r["player_name"], "matches": r["matches_played"], "total_score": r["total_score"], "avg_score": r["avg_score"]}
+        {
+            "player": r["player_name"],
+            "matches": r["matches_played"],
+            "total_score": r["total_score"],
+            "avg_score": r["avg_score"],
+        }
         for r in rows
     ]
 
@@ -213,7 +249,11 @@ def query_streaks(conn, mode):
 def query_avg_goal_contribution(conn, mode):
     rows = queries.avg_goal_contribution(conn, game_mode=mode)
     return [
-        {"player": r["player_name"], "matches": r["matches_played"], "avg_goal_contribution": r["avg_goal_contribution"]}
+        {
+            "player": r["player_name"],
+            "matches": r["matches_played"],
+            "avg_goal_contribution": r["avg_goal_contribution"],
+        }
         for r in rows
     ]
 
@@ -302,10 +342,12 @@ def create_app(db_path, replay_dir=None, processor=None):
     def auth_status():
         if "csrf_token" not in session:
             session["csrf_token"] = secrets.token_hex(32)
-        return jsonify({
-            "authenticated": session.get("authenticated", False),
-            "csrf_token": session["csrf_token"],
-        })
+        return jsonify(
+            {
+                "authenticated": session.get("authenticated", False),
+                "csrf_token": session["csrf_token"],
+            }
+        )
 
     @app.route("/api/upload", methods=["POST"])
     def upload():
@@ -321,7 +363,9 @@ def create_app(db_path, replay_dir=None, processor=None):
             return jsonify({"error": "Invalid filename"}), 400
         content = f.read()
         if len(content) < MIN_FILE_SIZE:
-            return jsonify({"error": f"File too small (minimum {MIN_FILE_SIZE // 1024}KB)"}), 400
+            return jsonify(
+                {"error": f"File too small (minimum {MIN_FILE_SIZE // 1024}KB)"}
+            ), 400
         dest = upload_dir / safe_name
         try:
             fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
@@ -430,6 +474,14 @@ def create_app(db_path, replay_dir=None, processor=None):
     return app
 
 
+def _parse_and_analyze(replay_path):
+    """Worker for parallel startup: parse + analyze a replay without DB access."""
+    replay, error = parse_replay(replay_path)
+    if replay is None:
+        return None
+    return analyze_replay(replay)
+
+
 def main():
     import os
 
@@ -448,17 +500,20 @@ def main():
 
     # Parse and ingest any unprocessed replay files
     unprocessed = [
-        p for p in REPLAY_DIR.glob("*.replay")
+        p
+        for p in REPLAY_DIR.glob("*.replay")
         if not p.with_suffix(p.suffix + ".ingested").exists()
     ]
     if unprocessed:
-        print(f"Processing {len(unprocessed)} unprocessed replay(s) at startup...")
+        replay_paths = sorted(unprocessed)
+        print(f"Processing {len(replay_paths)} unprocessed replay(s) at startup...")
+        with ProcessPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(_parse_and_analyze, replay_paths))
         ingested = []
-        for replay_path in sorted(unprocessed):
-            replay, error = parse_replay(replay_path)
-            if replay is not None:
-                ingest_match(conn, replay)
-                ingested.append(replay_path)
+        for path, analysis in zip(replay_paths, results):
+            if analysis is not None:
+                write_match(conn, analysis)
+                ingested.append(path)
         conn.commit()
         for replay_path in ingested:
             replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
