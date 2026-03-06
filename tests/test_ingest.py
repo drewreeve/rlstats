@@ -1,5 +1,6 @@
 import pytest
-from ingest import ingest_match, get_or_create_player, _extract_demolitions, _extract_match_events, _extract_boost_stats, _extract_player_movement_stats
+from ingest import ingest_match, get_or_create_player, TRACKED_PLAYERS
+from frame_analysis import _extract_demolitions, _extract_match_events, _extract_boost_stats, _extract_player_movement_stats
 from tests.fixtures import in_memory_db, load_replay, cached_db
 
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
@@ -262,7 +263,7 @@ def test_ball_thirds_none_without_network_data():
 def test_extract_match_events():
     replay = load_replay("match.json")
     # tracked_team is 0 for match.json (Drew/Steve/Jeff are team 0)
-    events = _extract_match_events(replay, 0)
+    events = _extract_match_events(replay, 0, set(TRACKED_PLAYERS.keys()))
 
     assert isinstance(events, list)
     assert len(events) > 0
@@ -285,7 +286,7 @@ def test_extract_match_events():
 
 
 def test_extract_match_events_without_network_data():
-    events = _extract_match_events({"properties": {}}, 0)
+    events = _extract_match_events({"properties": {}}, 0, set(TRACKED_PLAYERS.keys()))
     assert events == []
 
 
@@ -318,7 +319,7 @@ def test_match_events_have_valid_players():
 
 def test_overtime_goals_positioned_after_regulation():
     replay = load_replay("overtime.json")
-    events = _extract_match_events(replay, 0)
+    events = _extract_match_events(replay, 0, set(TRACKED_PLAYERS.keys()))
 
     goals = [e for e in events if e[0] == "goal"]
     assert len(goals) == 3
