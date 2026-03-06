@@ -380,13 +380,31 @@ function padStatsChart(allPlayers) {
 
   // Segments: stolen is a subset of collected, so split into own + stolen slices
   const segments = [
-    { fn: (p) => (p.small_pads ?? 0) - (p.stolen_small_pads ?? 0), cls: "pad-sm-col", label: "Small (own)" },
-    { fn: (p) => (p.stolen_small_pads ?? 0),                        cls: "pad-sm-stl", label: "Small (stolen)" },
-    { fn: (p) => (p.large_pads ?? 0) - (p.stolen_large_pads ?? 0), cls: "pad-lg-col", label: "Large (own)" },
-    { fn: (p) => (p.stolen_large_pads ?? 0),                        cls: "pad-lg-stl", label: "Large (stolen)" },
+    {
+      fn: (p) => (p.small_pads ?? 0) - (p.stolen_small_pads ?? 0),
+      cls: "pad-sm-col",
+      label: "Small (own)",
+    },
+    {
+      fn: (p) => p.stolen_small_pads ?? 0,
+      cls: "pad-sm-stl",
+      label: "Small (stolen)",
+    },
+    {
+      fn: (p) => (p.large_pads ?? 0) - (p.stolen_large_pads ?? 0),
+      cls: "pad-lg-col",
+      label: "Large (own)",
+    },
+    {
+      fn: (p) => p.stolen_large_pads ?? 0,
+      cls: "pad-lg-stl",
+      label: "Large (stolen)",
+    },
   ];
 
-  const totals = allPlayers.map((p) => (p.small_pads ?? 0) + (p.large_pads ?? 0));
+  const totals = allPlayers.map(
+    (p) => (p.small_pads ?? 0) + (p.large_pads ?? 0),
+  );
   const maxTotal = Math.max(...totals, 1);
 
   const sorted = [
@@ -408,7 +426,7 @@ function padStatsChart(allPlayers) {
           const val = seg.fn(p);
           const pct = (val / maxTotal) * 100;
           return pct > 0
-            ? `<span class="chart-bar-fill ${seg.cls}" style="width:${pct.toFixed(1)}%"></span>`
+            ? `<span class="chart-bar-fill ${seg.cls}" style="width:${pct.toFixed(1)}%" title="${seg.label}: ${val}"></span>`
             : "";
         })
         .join("");
@@ -431,7 +449,7 @@ function padStatsChart(allPlayers) {
 
   return `
     <div class="player-chart">
-      <div class="chart-label">PAD STATS</div>
+      <div class="chart-label">BOOST PAD STATS</div>
       ${rows}
       <div class="chart-legend">${legend}</div>
     </div>`;

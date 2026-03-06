@@ -563,10 +563,10 @@ async function renderRawTable() {
     const forfeitTag = m.forfeit ? '<span class="forfeit-tag">FF</span>' : "";
 
     tr.innerHTML = `
-            <td class="col-date">${date}</td>
+            <td class="col-date">${esc(date)}</td>
             <td><span class="mode-tag">${esc((m.game_mode || "").toUpperCase())}</span></td>
             <td><span class="result-badge ${resultClass}">${resultText}</span>${forfeitTag}</td>
-            <td class="col-score">${m.score}</td>
+            <td class="col-score">${esc(m.score)}</td>
             <td class="col-mvp">${esc(m.mvp || "—")}</td>
         `;
 
