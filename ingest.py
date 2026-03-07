@@ -1,10 +1,11 @@
 # Replay Ingestion Pipeline
 # rrrocket JSON -> SQLite
 
-import json
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+import orjson
 
 from db import apply_migrations
 from frame_analysis import (
@@ -422,8 +423,8 @@ def ingest_all():
     apply_migrations(conn)
 
     for path in sorted(PARSED_REPLAY_DIR.glob("*.json")):
-        with open(path, "r", encoding="utf-8") as f:
-            replay = json.load(f)
+        with open(path, "rb") as f:
+            replay = orjson.loads(f.read())
         ingest_match(conn, replay)
 
     conn.commit()

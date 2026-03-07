@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "aiosql>=15.0",
     "flask>=3.1.2",
+    "orjson>=3.11.7",
     "waitress>=3.0.2",
 ]
 

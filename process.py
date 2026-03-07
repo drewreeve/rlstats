@@ -1,7 +1,8 @@
-import json
 import logging
 import sqlite3
 import subprocess
+
+import orjson
 import threading
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def parse_replay(replay_path: Path) -> tuple[dict | None, str | None]:
         replay_path.unlink(missing_ok=True)
         return None, msg
 
-    return json.loads(result.stdout), None
+    return orjson.loads(result.stdout), None
 
 
 def process_replay(replay_path: Path, conn: sqlite3.Connection) -> tuple[bool, str | None]:
