@@ -1,17 +1,19 @@
 [project]
 name = "rlstats"
-version = "0.6.5"
+version = "0.7.0"
 description = "Personal project for tracking our RL teams' stats"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "aiosql>=15.0",
-    "flask>=3.1.2",
+    "fastapi>=0.115",
     "orjson>=3.11.7",
-    "waitress>=3.0.2",
+    "python-multipart>=0.0.20",
+    "uvicorn[standard]>=0.34",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28",
     "pytest>=9.0.2",
 ]

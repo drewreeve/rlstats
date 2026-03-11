@@ -1,13 +1,16 @@
 import hmac
 import logging
 import os
+import re
 import secrets
 import sqlite3
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from flask import Flask, abort, g, jsonify, request, session
-from werkzeug.utils import secure_filename
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from db import apply_migrations, queries
 from ingest import analyze_replay, write_match
@@ -19,8 +22,19 @@ DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
 REPLAY_DIR = Path("replays")
 MIN_FILE_SIZE = 256 * 1024
+MAX_CONTENT_LENGTH = 3 * 1024 * 1024
 
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
+
+_SECURE_RE = re.compile(r"[^\w.-]")
+
+
+def _secure_filename(filename: str) -> str:
+    """Sanitize a filename, similar to werkzeug.utils.secure_filename."""
+    name = os.path.basename(filename)
+    name = _SECURE_RE.sub("_", name)
+    name = name.lstrip(".")
+    return name
 
 
 def query_matches(conn, params):
@@ -282,177 +296,28 @@ API_ROUTES = {
 
 
 def _get_conn(db_path):
-    """Return a per-request read connection, creating it if needed."""
-    if "db_conn" not in g:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        g.db_conn = conn
-    return g.db_conn
+    """Open a read connection to the database."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def create_app(db_path, replay_dir=None, processor=None):
-    app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
-    app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
-    app.config["MAX_CONTENT_LENGTH"] = 3 * 1024 * 1024
-    app.config["SESSION_COOKIE_HTTPONLY"] = True
-    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    app.config["SESSION_COOKIE_SECURE"] = True
+    app = FastAPI()
 
     upload_dir = replay_dir or REPLAY_DIR
 
-    @app.before_request
-    def csrf_check():
-        if request.method == "POST":
-            token = request.headers.get("X-CSRF-Token", "")
-            expected = session.get("csrf_token", "")
-            if not expected or not hmac.compare_digest(token, expected):
-                return jsonify({"error": "CSRF token missing or invalid"}), 403
-
-    @app.teardown_appcontext
-    def close_db(exc):
-        conn = g.pop("db_conn", None)
-        if conn is not None:
+    def get_conn():
+        conn = _get_conn(db_path)
+        try:
+            yield conn
+        finally:
             conn.close()
 
-    @app.route("/")
-    @app.route("/2v2")
-    @app.route("/hoops")
-    @app.route("/history")
-    def index():
-        return app.send_static_file("index.html")
-
-    @app.route("/upload")
-    def upload_page():
-        return app.send_static_file("upload.html")
-
-    @app.route("/api/auth", methods=["POST"])
-    def auth():
-        upload_password = os.environ.get("UPLOAD_PASSWORD")
-        if not upload_password:
-            return jsonify({"error": "Upload disabled"}), 403
-        data = request.get_json(silent=True) or {}
-        password = data.get("password", "")
-        if hmac.compare_digest(password, upload_password):
-            session["authenticated"] = True
-            return jsonify({"authenticated": True})
-        return jsonify({"error": "Wrong password"}), 401
-
-    @app.route("/api/auth/status")
-    def auth_status():
-        if "csrf_token" not in session:
-            session["csrf_token"] = secrets.token_hex(32)
-        return jsonify(
-            {
-                "authenticated": session.get("authenticated", False),
-                "csrf_token": session["csrf_token"],
-            }
-        )
-
-    @app.route("/api/upload", methods=["POST"])
-    def upload():
-        if not session.get("authenticated"):
-            return jsonify({"error": "Not authenticated"}), 401
-        if "file" not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-        f = request.files["file"]
-        if not f.filename or not f.filename.lower().endswith(".replay"):
-            return jsonify({"error": "Only .replay files are accepted"}), 400
-        safe_name = secure_filename(f.filename)
-        if not safe_name.lower().endswith(".replay"):
-            return jsonify({"error": "Invalid filename"}), 400
-        content = f.read()
-        if len(content) < MIN_FILE_SIZE:
-            return jsonify(
-                {"error": f"File too small (minimum {MIN_FILE_SIZE // 1024}KB)"}
-            ), 400
-        dest = upload_dir / safe_name
-        try:
-            fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-            try:
-                os.write(fd, content)
-            finally:
-                os.close(fd)
-        except FileExistsError:
-            return jsonify({"error": "File already exists", "duplicate": True}), 409
-        if processor is not None:
-            processor.enqueue(dest)
-        return jsonify({"filename": safe_name}), 201
-
-    @app.route("/api/upload/status")
-    def upload_status():
-        filename = request.args.get("filename", "")
-        if not filename:
-            return jsonify({"error": "filename parameter required"}), 400
-        safe_name = secure_filename(filename)
-        if not safe_name:
-            return jsonify({"status": "unknown"})
-        replay_path = upload_dir / safe_name
-        ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
-        if ingested_path.exists():
-            return jsonify({"status": "processed"})
-        if not replay_path.exists():
-            return jsonify({"status": "error"})
-        return jsonify({"status": "pending"})
-
-    @app.route("/api/matches")
-    def matches():
-        conn = _get_conn(db_path)
-        params = request.args.to_dict(flat=False)
-        try:
-            return jsonify(query_matches(conn, params))
-        except ValueError, TypeError:
-            abort(400)
-
-    @app.route("/api/matches/<int:match_id>/players")
-    def match_players(match_id):
-        conn = _get_conn(db_path)
-        return jsonify(query_match_players(conn, match_id))
-
-    @app.route("/api/matches/<int:match_id>")
-    def match_detail(match_id):
-        conn = _get_conn(db_path)
-        data = query_match_detail(conn, match_id)
-        if data is None:
-            abort(404)
-        return jsonify(data)
-
-    @app.route("/match/<int:match_id>")
-    def match_page(match_id):
-        return app.send_static_file("match.html")
-
-    for path, handler_fn in API_ROUTES.items():
-
-        def make_view(fn):
-            def view():
-                conn = _get_conn(db_path)
-                mode = request.args.get("mode", "3v3")
-                if mode not in ALLOWED_MODES:
-                    mode = "3v3"
-                return jsonify(fn(conn, mode))
-
-            return view
-
-        app.add_url_rule(path, endpoint=path, view_func=make_view(handler_fn))
-
-    @app.errorhandler(400)
-    def bad_request(e):
-        return jsonify({"error": "Bad request"}), 400
-
-    @app.errorhandler(404)
-    def not_found(e):
-        return jsonify({"error": "Not found"}), 404
-
-    @app.errorhandler(413)
-    def too_large(e):
-        return jsonify({"error": "File too large (maximum 3MB)"}), 413
-
-    @app.errorhandler(500)
-    def internal_error(e):
-        return jsonify({"error": "Internal server error"}), 500
-
-    @app.after_request
-    def security_headers(response):
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -471,6 +336,180 @@ def create_app(db_path, replay_dir=None, processor=None):
         )
         return response
 
+    @app.middleware("http")
+    async def csrf_check(request: Request, call_next):
+        if request.method == "POST":
+            token = request.headers.get("X-CSRF-Token", "")
+            expected = request.session.get("csrf_token", "")
+            if not expected or not hmac.compare_digest(token, expected):
+                return JSONResponse(
+                    {"error": "CSRF token missing or invalid"}, status_code=403
+                )
+        return await call_next(request)
+
+    # SessionMiddleware must be added AFTER @app.middleware("http") decorators
+    # because add_middleware inserts at position 0, making the last-added
+    # middleware outermost. Session must wrap CSRF so request.session is available.
+    secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+    app.add_middleware(
+        SessionMiddleware,  # type: ignore[arg-type]
+        secret_key=secret_key,
+        https_only=True,
+    )
+
+    # -- HTML page routes --
+
+    index_path = str(STATIC_DIR / "index.html")
+    for html_path in ["/", "/2v2", "/hoops", "/history"]:
+
+        def _make_index(p=html_path):
+            async def _index():
+                return FileResponse(index_path)
+
+            _index.__name__ = f"index_{p.strip('/')}" if p != "/" else "index_root"
+            return _index
+
+        app.get(html_path)(_make_index())
+
+    @app.get("/upload")
+    async def upload_page():
+        return FileResponse(str(STATIC_DIR / "upload.html"))
+
+    @app.get("/match/{match_id}")
+    async def match_page(match_id: int):
+        return FileResponse(str(STATIC_DIR / "match.html"))
+
+    # -- Auth routes --
+
+    @app.post("/api/auth")
+    async def auth(request: Request):
+        upload_password = os.environ.get("UPLOAD_PASSWORD")
+        if not upload_password:
+            return JSONResponse({"error": "Upload disabled"}, status_code=403)
+        data = await request.json()
+        password = data.get("password", "")
+        if hmac.compare_digest(password, upload_password):
+            request.session["authenticated"] = True
+            return JSONResponse({"authenticated": True})
+        return JSONResponse({"error": "Wrong password"}, status_code=401)
+
+    @app.get("/api/auth/status")
+    async def auth_status(request: Request):
+        if "csrf_token" not in request.session:
+            request.session["csrf_token"] = secrets.token_hex(32)
+        return JSONResponse(
+            {
+                "authenticated": request.session.get("authenticated", False),
+                "csrf_token": request.session["csrf_token"],
+            }
+        )
+
+    # -- Upload routes --
+
+    @app.post("/api/upload")
+    async def upload(request: Request, file: UploadFile | None = None):
+        if not request.session.get("authenticated"):
+            return JSONResponse({"error": "Not authenticated"}, status_code=401)
+        if file is None:
+            return JSONResponse({"error": "No file provided"}, status_code=400)
+        if not file.filename or not file.filename.lower().endswith(".replay"):
+            return JSONResponse(
+                {"error": "Only .replay files are accepted"}, status_code=400
+            )
+        safe_name = _secure_filename(file.filename)
+        if not safe_name.lower().endswith(".replay"):
+            return JSONResponse({"error": "Invalid filename"}, status_code=400)
+        content = await file.read()
+        if len(content) > MAX_CONTENT_LENGTH:
+            return JSONResponse(
+                {"error": "File too large (maximum 3MB)"}, status_code=413
+            )
+        if len(content) < MIN_FILE_SIZE:
+            return JSONResponse(
+                {"error": f"File too small (minimum {MIN_FILE_SIZE // 1024}KB)"},
+                status_code=400,
+            )
+        dest = upload_dir / safe_name
+        try:
+            fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+            try:
+                os.write(fd, content)
+            finally:
+                os.close(fd)
+        except FileExistsError:
+            return JSONResponse(
+                {"error": "File already exists", "duplicate": True}, status_code=409
+            )
+        if processor is not None:
+            processor.enqueue(dest)
+        return JSONResponse({"filename": safe_name}, status_code=201)
+
+    @app.get("/api/upload/status")
+    async def upload_status(request: Request):
+        filename = request.query_params.get("filename", "")
+        if not filename:
+            return JSONResponse(
+                {"error": "filename parameter required"}, status_code=400
+            )
+        safe_name = _secure_filename(filename)
+        if not safe_name:
+            return JSONResponse({"status": "unknown"})
+        replay_path = upload_dir / safe_name
+        ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
+        if ingested_path.exists():
+            return JSONResponse({"status": "processed"})
+        if not replay_path.exists():
+            return JSONResponse({"status": "error"})
+        return JSONResponse({"status": "pending"})
+
+    # -- Match routes --
+
+    @app.get("/api/matches")
+    async def matches(request: Request, conn=Depends(get_conn)):
+        params: dict[str, list[str]] = {}
+        for k, v in request.query_params.multi_items():
+            params.setdefault(k, []).append(v)
+        try:
+            return JSONResponse(query_matches(conn, params))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Bad request")
+
+    @app.get("/api/matches/{match_id}/players")
+    async def match_players_route(match_id: int, conn=Depends(get_conn)):
+        return JSONResponse(query_match_players(conn, match_id))
+
+    @app.get("/api/matches/{match_id}")
+    async def match_detail(match_id: int, conn=Depends(get_conn)):
+        data = query_match_detail(conn, match_id)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        return JSONResponse(data)
+
+    # -- Stats routes --
+
+    for path, handler_fn in API_ROUTES.items():
+
+        def make_view(fn):
+            async def view(request: Request, conn=Depends(get_conn)):
+                mode = request.query_params.get("mode", "3v3")
+                if mode not in ALLOWED_MODES:
+                    mode = "3v3"
+                return JSONResponse(fn(conn, mode))
+
+            return view
+
+        app.get(path, name=path)(make_view(handler_fn))
+
+    # -- Exception handlers --
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+    # -- Static files (must be last) --
+
+    app.mount("/", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
     return app
 
 
@@ -485,7 +524,7 @@ def _parse_and_analyze(replay_path):
 def main():
     import os
 
-    from waitress import serve
+    import uvicorn
 
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8080"))
@@ -493,9 +532,7 @@ def main():
     DB_PATH.parent.mkdir(exist_ok=True)
 
     # Use a temporary connection for startup tasks only
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = _get_conn(DB_PATH)
     apply_migrations(conn)
 
     # Parse and ingest any unprocessed replay files
@@ -523,7 +560,7 @@ def main():
     processor = UploadProcessor(DB_PATH)
     app = create_app(DB_PATH, processor=processor)
     print(f"Serving on http://{host}:{port}")
-    serve(app, host=host, port=port, threads=8)
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":
