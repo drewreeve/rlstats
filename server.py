@@ -1,7 +1,6 @@
 import hmac
 import logging
 import os
-import re
 import secrets
 import sqlite3
 from concurrent.futures import ProcessPoolExecutor
@@ -15,26 +14,14 @@ from starlette.middleware.sessions import SessionMiddleware
 from db import apply_migrations, queries
 from ingest import analyze_replay, write_match
 from process import UploadProcessor, parse_replay
+from replay_validator import secure_filename, validate as validate_replay
 
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
 REPLAY_DIR = Path("replays")
-MIN_FILE_SIZE = 256 * 1024
-MAX_CONTENT_LENGTH = 3 * 1024 * 1024
-
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
-
-_SECURE_RE = re.compile(r"[^\w.-]")
-
-
-def _secure_filename(filename: str) -> str:
-    """Sanitize a filename, similar to werkzeug.utils.secure_filename."""
-    name = os.path.basename(filename)
-    name = _SECURE_RE.sub("_", name)
-    name = name.lstrip(".")
-    return name
 
 
 def query_matches(conn, params):
@@ -410,23 +397,12 @@ def create_app(db_path, replay_dir=None, processor=None):
             return JSONResponse({"error": "Not authenticated"}, status_code=401)
         if file is None:
             return JSONResponse({"error": "No file provided"}, status_code=400)
-        if not file.filename or not file.filename.lower().endswith(".replay"):
-            return JSONResponse(
-                {"error": "Only .replay files are accepted"}, status_code=400
-            )
-        safe_name = _secure_filename(file.filename)
-        if not safe_name.lower().endswith(".replay"):
-            return JSONResponse({"error": "Invalid filename"}, status_code=400)
         content = await file.read()
-        if len(content) > MAX_CONTENT_LENGTH:
-            return JSONResponse(
-                {"error": "File too large (maximum 3MB)"}, status_code=413
-            )
-        if len(content) < MIN_FILE_SIZE:
-            return JSONResponse(
-                {"error": f"File too small (minimum {MIN_FILE_SIZE // 1024}KB)"},
-                status_code=400,
-            )
+        safe_name, error, status_code = validate_replay(
+            file.filename or "", len(content)
+        )
+        if error:
+            return JSONResponse({"error": error}, status_code=status_code)
         dest = upload_dir / safe_name
         try:
             fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL)
@@ -449,7 +425,7 @@ def create_app(db_path, replay_dir=None, processor=None):
             return JSONResponse(
                 {"error": "filename parameter required"}, status_code=400
             )
-        safe_name = _secure_filename(filename)
+        safe_name = secure_filename(filename)
         if not safe_name:
             return {"status": "unknown"}
         replay_path = upload_dir / safe_name
