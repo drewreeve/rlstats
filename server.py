@@ -291,7 +291,7 @@ def _get_conn(db_path):
 
 
 def create_app(db_path, replay_dir=None, processor=None):
-    app = FastAPI()
+    app = FastAPI(docs_url=None, redoc_url=None)
 
     upload_dir = replay_dir or REPLAY_DIR
 
@@ -481,7 +481,7 @@ def create_app(db_path, replay_dir=None, processor=None):
 
     # -- Static files (must be last) --
 
-    app.mount("/", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     return app
 
