@@ -297,7 +297,7 @@ API_ROUTES = {
 
 def _get_conn(db_path):
     """Open a read connection to the database."""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -390,19 +390,17 @@ def create_app(db_path, replay_dir=None, processor=None):
         password = data.get("password", "")
         if hmac.compare_digest(password, upload_password):
             request.session["authenticated"] = True
-            return JSONResponse({"authenticated": True})
+            return {"authenticated": True}
         return JSONResponse({"error": "Wrong password"}, status_code=401)
 
     @app.get("/api/auth/status")
     async def auth_status(request: Request):
         if "csrf_token" not in request.session:
             request.session["csrf_token"] = secrets.token_hex(32)
-        return JSONResponse(
-            {
-                "authenticated": request.session.get("authenticated", False),
-                "csrf_token": request.session["csrf_token"],
-            }
-        )
+        return {
+            "authenticated": request.session.get("authenticated", False),
+            "csrf_token": request.session["csrf_token"],
+        }
 
     # -- Upload routes --
 
@@ -453,14 +451,14 @@ def create_app(db_path, replay_dir=None, processor=None):
             )
         safe_name = _secure_filename(filename)
         if not safe_name:
-            return JSONResponse({"status": "unknown"})
+            return {"status": "unknown"}
         replay_path = upload_dir / safe_name
         ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
         if ingested_path.exists():
-            return JSONResponse({"status": "processed"})
+            return {"status": "processed"}
         if not replay_path.exists():
-            return JSONResponse({"status": "error"})
-        return JSONResponse({"status": "pending"})
+            return {"status": "error"}
+        return {"status": "pending"}
 
     # -- Match routes --
 
@@ -470,31 +468,30 @@ def create_app(db_path, replay_dir=None, processor=None):
         for k, v in request.query_params.multi_items():
             params.setdefault(k, []).append(v)
         try:
-            return JSONResponse(query_matches(conn, params))
-        except (ValueError, TypeError):
+            return query_matches(conn, params)
+        except ValueError, TypeError:
             raise HTTPException(status_code=400, detail="Bad request")
 
     @app.get("/api/matches/{match_id}/players")
     async def match_players_route(match_id: int, conn=Depends(get_conn)):
-        return JSONResponse(query_match_players(conn, match_id))
+        return query_match_players(conn, match_id)
 
     @app.get("/api/matches/{match_id}")
     async def match_detail(match_id: int, conn=Depends(get_conn)):
         data = query_match_detail(conn, match_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Not found")
-        return JSONResponse(data)
+        return data
 
     # -- Stats routes --
 
     for path, handler_fn in API_ROUTES.items():
 
         def make_view(fn):
-            async def view(request: Request, conn=Depends(get_conn)):
-                mode = request.query_params.get("mode", "3v3")
+            async def view(mode: str = "3v3", conn=Depends(get_conn)):
                 if mode not in ALLOWED_MODES:
                     mode = "3v3"
-                return JSONResponse(fn(conn, mode))
+                return fn(conn, mode)
 
             return view
 
