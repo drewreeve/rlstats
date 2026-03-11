@@ -1,6 +1,6 @@
 FROM python:3.14-slim
 
-ARG RRROCKET_VERSION=0.10.11
+ARG RRROCKET_VERSION=0.10.12
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
