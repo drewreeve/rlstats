@@ -1,9 +1,9 @@
 -- name: shooting_pct(game_mode)
 -- Shooting percentage per player for a given game mode.
 SELECT
-    p.name AS player_name,
-    SUM(mp.goals) AS total_goals,
-    SUM(mp.shots) AS total_shots,
+    p.name AS player,
+    SUM(mp.goals) AS goals,
+    SUM(mp.shots) AS shots,
     ROUND(
         CAST(SUM(mp.goals) AS REAL)
         / NULLIF(SUM(mp.shots), 0),
@@ -19,13 +19,13 @@ ORDER BY p.name;
 -- name: player_stats(game_mode)
 -- Aggregated per-player stats for a given game mode.
 SELECT
-    p.name AS player_name,
-    COUNT(*) AS matches_played,
-    SUM(mp.goals) AS total_goals,
-    SUM(mp.assists) AS total_assists,
-    SUM(mp.saves) AS total_saves,
-    SUM(mp.shots) AS total_shots,
-    SUM(mp.demos) AS total_demos
+    p.name AS player,
+    COUNT(*) AS matches,
+    SUM(mp.goals) AS goals,
+    SUM(mp.assists) AS assists,
+    SUM(mp.saves) AS saves,
+    SUM(mp.shots) AS shots,
+    SUM(mp.demos) AS demos
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
@@ -36,8 +36,8 @@ ORDER BY p.name;
 -- name: avg_score(game_mode)
 -- Average score per player for a given game mode.
 SELECT
-    p.name AS player_name,
-    COUNT(*) AS matches_played,
+    p.name AS player,
+    COUNT(*) AS matches,
     SUM(mp.score) AS total_score,
     ROUND(
         CAST(SUM(mp.score) AS REAL) / COUNT(*),
@@ -53,9 +53,9 @@ ORDER BY p.name;
 -- name: score_range(game_mode)
 -- Min and max score per player for a given game mode.
 SELECT
-    p.name AS player_name,
-    MIN(mp.score) AS min_score,
-    MAX(mp.score) AS max_score
+    p.name AS player,
+    MIN(mp.score) AS min,
+    MAX(mp.score) AS max
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
@@ -66,8 +66,8 @@ ORDER BY p.name;
 -- name: avg_goal_contribution(game_mode)
 -- Average goal contribution per player for a given game mode.
 SELECT
-    p.name AS player_name,
-    COUNT(*) AS matches_played,
+    p.name AS player,
+    COUNT(*) AS matches,
     ROUND(
         AVG(
             CAST(mp.goals + mp.assists AS REAL)

@@ -41,7 +41,7 @@ session_summary AS (
     GROUP BY session_id
 )
 SELECT
-    session_date AS play_date,
+    session_date AS date,
     SUM(wins) AS wins,
     SUM(losses) AS losses,
     ROUND(
@@ -50,7 +50,7 @@ SELECT
     ) AS win_rate
 FROM session_summary
 GROUP BY session_date
-ORDER BY play_date;
+ORDER BY date;
 
 -- name: weekday(game_mode)
 -- Win/loss record by day of week for a given game mode.
@@ -64,7 +64,7 @@ SELECT
         WHEN '5' THEN 'Friday'
         WHEN '6' THEN 'Saturday'
     END AS weekday,
-    COUNT(*) AS matches_played,
+    COUNT(*) AS matches,
     SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
     SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses,
     ROUND(

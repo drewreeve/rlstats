@@ -145,90 +145,31 @@ def query_match_detail(conn, match_id):
 
 
 def query_shooting_pct(conn, mode):
-    rows = queries.shooting_pct(conn, game_mode=mode)
-    return [
-        {
-            "player": r["player_name"],
-            "goals": r["total_goals"],
-            "shots": r["total_shots"],
-            "shooting_pct": r["shooting_pct"],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in queries.shooting_pct(conn, game_mode=mode)]
 
 
 def query_win_loss_daily(conn, mode):
-    rows = queries.win_loss_daily(conn, game_mode=mode)
-    return [
-        {
-            "date": r["play_date"],
-            "wins": r["wins"],
-            "losses": r["losses"],
-            "win_rate": r["win_rate"],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in queries.win_loss_daily(conn, game_mode=mode)]
 
 
 def query_player_stats(conn, mode):
-    rows = queries.player_stats(conn, game_mode=mode)
-    return [
-        {
-            "player": r["player_name"],
-            "matches": r["matches_played"],
-            "goals": r["total_goals"],
-            "assists": r["total_assists"],
-            "saves": r["total_saves"],
-            "shots": r["total_shots"],
-            "demos": r["total_demos"],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in queries.player_stats(conn, game_mode=mode)]
 
 
 def query_mvp_wins(conn, mode):
-    rows = queries.mvp_wins(conn, game_mode=mode)
-    return [
-        {
-            "player": r["player_name"],
-            "mvp_matches": r["mvp_matches"],
-            "mvp_wins": r["mvp_wins"],
-            "win_rate": r["mvp_win_rate"],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in queries.mvp_wins(conn, game_mode=mode)]
 
 
 def query_mvp_losses(conn, mode):
-    rows = queries.mvp_losses(conn, game_mode=mode)
-    return [{"player": r["player_name"], "loss_mvps": r["loss_mvps"]} for r in rows]
+    return [dict(r) for r in queries.mvp_losses(conn, game_mode=mode)]
 
 
 def query_weekday(conn, mode):
-    rows = queries.weekday(conn, game_mode=mode)
-    return [
-        {
-            "weekday": r["weekday"],
-            "matches": r["matches_played"],
-            "wins": r["wins"],
-            "losses": r["losses"],
-            "win_rate": r["win_rate"],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in queries.weekday(conn, game_mode=mode)]
 
 
 def query_avg_score(conn, mode):
-    rows = queries.avg_score(conn, game_mode=mode)
-    return [
-        {
-            "player": r["player_name"],
-            "matches": r["matches_played"],
-            "total_score": r["total_score"],
-            "avg_score": r["avg_score"],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in queries.avg_score(conn, game_mode=mode)]
 
 
 def query_score_differential(conn, mode):
@@ -248,23 +189,11 @@ def query_streaks(conn, mode):
 
 
 def query_avg_goal_contribution(conn, mode):
-    rows = queries.avg_goal_contribution(conn, game_mode=mode)
-    return [
-        {
-            "player": r["player_name"],
-            "matches": r["matches_played"],
-            "avg_goal_contribution": r["avg_goal_contribution"],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in queries.avg_goal_contribution(conn, game_mode=mode)]
 
 
 def query_score_range(conn, mode):
-    rows = queries.score_range(conn, game_mode=mode)
-    return [
-        {"player": r["player_name"], "min": r["min_score"], "max": r["max_score"]}
-        for r in rows
-    ]
+    return [dict(r) for r in queries.score_range(conn, game_mode=mode)]
 
 
 API_ROUTES = {

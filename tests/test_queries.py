@@ -51,7 +51,7 @@ def _as_tuples(rows, columns):
 def test_shooting_pct_values_by_mode(mode, expected):
     conn = _all_modes_db()
     rows = queries.shooting_pct(conn, game_mode=mode)
-    actual = _as_tuples(rows, ("player_name", "total_goals", "total_shots", "shooting_pct"))
+    actual = _as_tuples(rows, ("player", "goals", "shots", "shooting_pct"))
     assert actual == expected
 
 
@@ -78,7 +78,7 @@ def test_player_stats_values_by_mode(mode, expected):
     rows = queries.player_stats(conn, game_mode=mode)
     actual = _as_tuples(
         rows,
-        ("player_name", "matches_played", "total_goals", "total_assists", "total_saves", "total_shots"),
+        ("player", "matches", "goals", "assists", "saves", "shots"),
     )
     assert actual == expected
 
@@ -94,7 +94,7 @@ def test_player_stats_values_by_mode(mode, expected):
 def test_mvp_wins_values_by_mode(mode, expected):
     conn = _all_modes_db()
     rows = queries.mvp_wins(conn, game_mode=mode)
-    actual = _as_tuples(rows, ("player_name", "mvp_matches", "mvp_wins", "mvp_win_rate"))
+    actual = _as_tuples(rows, ("player", "mvp_matches", "mvp_wins", "win_rate"))
     assert actual == expected
 
 
@@ -109,7 +109,7 @@ def test_mvp_wins_values_by_mode(mode, expected):
 def test_mvp_losses_values_by_mode(mode, expected):
     conn = _mvp_losses_modes_db()
     rows = queries.mvp_losses(conn, game_mode=mode)
-    actual = _as_tuples(rows, ("player_name", "loss_mvps"))
+    actual = _as_tuples(rows, ("player", "loss_mvps"))
     assert actual == expected
 
 
@@ -134,14 +134,14 @@ def test_mvp_losses_values_by_mode(mode, expected):
 def test_avg_score_values_by_mode(mode, expected):
     conn = _all_modes_db()
     rows = queries.avg_score(conn, game_mode=mode)
-    actual = _as_tuples(rows, ("player_name", "matches_played", "total_score", "avg_score"))
+    actual = _as_tuples(rows, ("player", "matches", "total_score", "avg_score"))
     assert actual == expected
 
 
 def test_weekday_values_3v3():
     conn = _all_modes_db()
     rows = queries.weekday(conn, game_mode="3v3")
-    actual = _as_tuples(rows, ("weekday", "matches_played", "wins", "losses", "win_rate"))
+    actual = _as_tuples(rows, ("weekday", "matches", "wins", "losses", "win_rate"))
     assert actual == [
         ("Sunday", 1, 1, 0, 1.0),
         ("Tuesday", 1, 1, 0, 1.0),
@@ -170,14 +170,14 @@ def test_weekday_values_3v3():
 def test_score_range_values_by_mode(mode, expected):
     conn = _all_modes_db()
     rows = queries.score_range(conn, game_mode=mode)
-    actual = _as_tuples(rows, ("player_name", "min_score", "max_score"))
+    actual = _as_tuples(rows, ("player", "min", "max"))
     assert actual == expected
 
 
 def test_win_loss_daily_values_3v3():
     conn = _all_modes_db()
     rows = queries.win_loss_daily(conn, game_mode="3v3")
-    actual = _as_tuples(rows, ("play_date", "wins", "losses", "win_rate"))
+    actual = _as_tuples(rows, ("date", "wins", "losses", "win_rate"))
     assert actual == [
         ("2026-01-27", 1, 0, 1.0),
         ("2026-02-05", 0, 1, 0.0),
