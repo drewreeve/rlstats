@@ -116,7 +116,7 @@ async function playerBarChart(
 }
 
 async function renderWinRateDaily() {
-  const data = await fetchJSON(`/api/win-loss-daily?mode=${currentMode}`);
+  const data = await fetchJSON(`/api/stats/timeline?mode=${currentMode}`);
   const canvas = document.getElementById("chart-win-rate");
   const lineColor = { r: 0, g: 229, b: 255 };
   const rates = data.map((d) => (d.win_rate ?? 0) * 100);
@@ -214,7 +214,7 @@ async function renderWinRateDaily() {
 }
 
 async function renderPlayerStats() {
-  const data = await fetchJSON(`/api/player-stats?mode=${currentMode}`);
+  const data = await fetchJSON(`/api/stats/players?mode=${currentMode}`);
   const canvas = document.getElementById("chart-player-stats");
   charts.playerStats = new Chart(canvas, {
     type: "bar",
@@ -279,7 +279,7 @@ async function renderPlayerStats() {
 }
 
 function renderMvpWins() {
-  return playerBarChart("mvpWins", "chart-mvp-wins", "/api/mvp-wins", {
+  return playerBarChart("mvpWins", "chart-mvp-wins", "/api/stats/mvp-wins", {
     label: "MVP Wins",
     getValue: (d) => d.mvp_wins,
     tooltipExtra: (d) =>
@@ -288,14 +288,14 @@ function renderMvpWins() {
 }
 
 function renderMvpLosses() {
-  return playerBarChart("mvpLosses", "chart-mvp-losses", "/api/mvp-losses", {
+  return playerBarChart("mvpLosses", "chart-mvp-losses", "/api/stats/mvp-losses", {
     label: "Loss MVPs",
     getValue: (d) => d.loss_mvps,
   });
 }
 
 async function renderScoreDifferential() {
-  const data = await fetchJSON(`/api/score-differential?mode=${currentMode}`);
+  const data = await fetchJSON(`/api/stats/score-differential?mode=${currentMode}`);
   const canvas = document.getElementById("chart-score-diff");
   charts.scoreDiff = new Chart(canvas, {
     type: "bar",
@@ -343,7 +343,7 @@ async function renderScoreDifferential() {
 }
 
 async function renderWeekday() {
-  const data = await fetchJSON(`/api/weekday?mode=${currentMode}`);
+  const data = await fetchJSON(`/api/stats/weekday?mode=${currentMode}`);
   const canvas = document.getElementById("chart-weekday");
   charts.weekday = new Chart(canvas, {
     type: "bar",
@@ -398,7 +398,7 @@ async function renderWeekday() {
 }
 
 async function renderStreaks() {
-  const data = await fetchJSON(`/api/streaks?mode=${currentMode}`);
+  const data = await fetchJSON(`/api/stats/streaks?mode=${currentMode}`);
   document.getElementById("streak-win-value").textContent =
     data.longest_win_streak ?? "—";
   document.getElementById("streak-loss-value").textContent =
@@ -406,7 +406,7 @@ async function renderStreaks() {
 }
 
 async function renderScoreRange() {
-  const data = await fetchJSON(`/api/score-range?mode=${currentMode}`);
+  const data = await fetchJSON(`/api/stats/score-range?mode=${currentMode}`);
   const canvas = document.getElementById("chart-score-range");
   charts.scoreRange = new Chart(canvas, {
     type: "bar",
@@ -450,7 +450,7 @@ function renderGoalContribution() {
   return playerBarChart(
     "goalContribution",
     "chart-goal-contribution",
-    "/api/avg-goal-contribution",
+    "/api/stats/goal-contributions",
     {
       label: "Avg Goal Contribution",
       getValue: (d) => (d.avg_goal_contribution ?? 0) * 100,
@@ -481,13 +481,13 @@ async function renderAll() {
   }
   destroyCharts();
   updateCardVisibility();
-  playerBarChart("shooting", "chart-shooting", "/api/shooting-pct", {
+  playerBarChart("shooting", "chart-shooting", "/api/stats/shooting", {
     label: "Shooting %",
     getValue: (d) => (d.shooting_pct ?? 0) * 100,
     yPct: true,
     tooltipExtra: (d) => `${d.goals} goals / ${d.shots} shots`,
   });
-  playerBarChart("avgScore", "chart-avg-score", "/api/avg-score", {
+  playerBarChart("avgScore", "chart-avg-score", "/api/stats/avg-score", {
     label: "Avg Score",
     getValue: (d) => d.avg_score ?? 0,
     tooltipExtra: (d) => `${d.total_score} total / ${d.matches} matches`,

@@ -268,17 +268,17 @@ def query_score_range(conn, mode):
 
 
 API_ROUTES = {
-    "/api/shooting-pct": query_shooting_pct,
-    "/api/win-loss-daily": query_win_loss_daily,
-    "/api/player-stats": query_player_stats,
-    "/api/mvp-wins": query_mvp_wins,
-    "/api/mvp-losses": query_mvp_losses,
-    "/api/weekday": query_weekday,
-    "/api/avg-score": query_avg_score,
-    "/api/score-differential": query_score_differential,
-    "/api/streaks": query_streaks,
-    "/api/avg-goal-contribution": query_avg_goal_contribution,
-    "/api/score-range": query_score_range,
+    "/api/stats/shooting": query_shooting_pct,
+    "/api/stats/timeline": query_win_loss_daily,
+    "/api/stats/players": query_player_stats,
+    "/api/stats/mvp-wins": query_mvp_wins,
+    "/api/stats/mvp-losses": query_mvp_losses,
+    "/api/stats/weekday": query_weekday,
+    "/api/stats/avg-score": query_avg_score,
+    "/api/stats/score-differential": query_score_differential,
+    "/api/stats/streaks": query_streaks,
+    "/api/stats/goal-contributions": query_avg_goal_contribution,
+    "/api/stats/score-range": query_score_range,
 }
 
 
