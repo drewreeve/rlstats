@@ -56,8 +56,9 @@ def query_matches(conn, *, page, per_page, search, game_mode, result, date_from,
     total = conn.execute(count_sql, bindings).fetchone()[0]
 
     query_sql = f"""
-        SELECT m.id, m.game_mode, m.result, m.forfeit, m.team_score,
-               m.opponent_score, m.played_at, p.name as mvp_name
+        SELECT m.id, m.game_mode, m.result, m.forfeit,
+               m.team_score || '-' || m.opponent_score AS score,
+               m.played_at, p.name AS mvp
         FROM matches m
         LEFT JOIN players p ON m.team_mvp_player_id = p.id
         WHERE 1=1{where_clause}
@@ -68,18 +69,7 @@ def query_matches(conn, *, page, per_page, search, game_mode, result, date_from,
     bindings["offset"] = offset
 
     rows = conn.execute(query_sql, bindings).fetchall()
-    matches = [
-        {
-            "id": r["id"],
-            "game_mode": r["game_mode"],
-            "result": r["result"],
-            "forfeit": r["forfeit"],
-            "score": f"{r['team_score']}-{r['opponent_score']}",
-            "played_at": r["played_at"],
-            "mvp": r["mvp_name"],
-        }
-        for r in rows
-    ]
+    matches = [dict(r) for r in rows]
     return {"matches": matches, "total": total, "page": page, "per_page": per_page}
 
 
