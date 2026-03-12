@@ -14,6 +14,11 @@ const STAT_COLORS = {
   losses: { r: 255, g: 60, b: 60 },
 };
 
+const SEASONS = [
+  { label: "S22", date: "2026-03-11" },
+  // add future seasons here
+];
+
 function esc(str) {
   const d = document.createElement("div");
   d.textContent = str;
@@ -50,7 +55,8 @@ const PATH_MODES = Object.fromEntries(
 );
 
 let currentMode = PATH_MODES[window.location.pathname] || "3v3";
-const initialPage = parseInt(new URLSearchParams(window.location.search).get("page")) || 1;
+const initialPage =
+  parseInt(new URLSearchParams(window.location.search).get("page")) || 1;
 const charts = {};
 
 async function fetchJSON(url) {
@@ -153,6 +159,37 @@ async function renderWinRateDaily() {
         },
       ],
     },
+    plugins: [
+      {
+        id: "seasonMarkers",
+        afterDraw(chart) {
+          const labels = chart.data.labels;
+          const xScale = chart.scales.x;
+          const { top, bottom } = chart.chartArea;
+          const ctx = chart.ctx;
+
+          SEASONS.forEach(({ label, date }) => {
+            const match = labels.find((l) => l >= date);
+            if (!match) return;
+
+            const x = xScale.getPixelForValue(match);
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(x, top);
+            ctx.lineTo(x, bottom);
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+            ctx.font = "10px 'DM Mono', monospace";
+            ctx.textAlign = "left";
+            ctx.fillText(label, x + 4, top + 12);
+            ctx.restore();
+          });
+        },
+      },
+    ],
     options: {
       responsive: true,
       maintainAspectRatio: true,
@@ -174,14 +211,18 @@ async function renderWinRateDaily() {
         zoom: {
           pan: {
             enabled: true,
-            mode: 'x',
-            onPan: () => { document.getElementById("reset-zoom").hidden = false; },
+            mode: "x",
+            onPan: () => {
+              document.getElementById("reset-zoom").hidden = false;
+            },
           },
           zoom: {
             wheel: { enabled: true },
             pinch: { enabled: true },
-            mode: 'x',
-            onZoom: () => { document.getElementById("reset-zoom").hidden = false; },
+            mode: "x",
+            onZoom: () => {
+              document.getElementById("reset-zoom").hidden = false;
+            },
           },
           limits: {
             x: { minRange: 5 },
@@ -288,14 +329,21 @@ function renderMvpWins() {
 }
 
 function renderMvpLosses() {
-  return playerBarChart("mvpLosses", "chart-mvp-losses", "/api/stats/mvp-losses", {
-    label: "Loss MVPs",
-    getValue: (d) => d.loss_mvps,
-  });
+  return playerBarChart(
+    "mvpLosses",
+    "chart-mvp-losses",
+    "/api/stats/mvp-losses",
+    {
+      label: "Loss MVPs",
+      getValue: (d) => d.loss_mvps,
+    },
+  );
 }
 
 async function renderScoreDifferential() {
-  const data = await fetchJSON(`/api/stats/score-differential?mode=${currentMode}`);
+  const data = await fetchJSON(
+    `/api/stats/score-differential?mode=${currentMode}`,
+  );
   const canvas = document.getElementById("chart-score-diff");
   charts.scoreDiff = new Chart(canvas, {
     type: "bar",
@@ -659,7 +707,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.addEventListener("popstate", (e) => {
     const mode = e.state?.mode || PATH_MODES[window.location.pathname] || "3v3";
-    const page = e.state?.page || parseInt(new URLSearchParams(window.location.search).get("page")) || 1;
+    const page =
+      e.state?.page ||
+      parseInt(new URLSearchParams(window.location.search).get("page")) ||
+      1;
     if (mode === "history" && mode === currentMode && page !== rawPage) {
       rawPage = page;
       renderRawTable();
