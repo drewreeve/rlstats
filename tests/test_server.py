@@ -130,8 +130,10 @@ def test_shooting_pct_handler():
     data = query_shooting_pct(conn, "3v3")
 
     assert len(data) == 3
-    assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
-    assert all("shooting_pct" in d for d in data)
+    by_player = {d["player"]: d for d in data}
+    assert by_player["Drew"]["shooting_pct"] == 0.0   # 0 goals / 2 shots
+    assert by_player["Jeff"]["shooting_pct"] == 0.0   # 0 goals / 2 shots
+    assert by_player["Steve"]["shooting_pct"] is None  # 0 shots → NULL
 
 
 def test_player_stats_handler():
@@ -139,20 +141,27 @@ def test_player_stats_handler():
     data = query_player_stats(conn, "3v3")
 
     assert len(data) == 3
-    assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
-    for d in data:
-        assert "player" in d
-        assert "goals" in d
-        assert "assists" in d
-        assert "saves" in d
+    by_player = {d["player"]: d for d in data}
+    assert by_player["Drew"]["goals"] == 0
+    assert by_player["Drew"]["assists"] == 0
+    assert by_player["Drew"]["saves"] == 0
+    assert by_player["Jeff"]["goals"] == 0
+    assert by_player["Jeff"]["assists"] == 0
+    assert by_player["Jeff"]["saves"] == 2
+    assert by_player["Steve"]["goals"] == 0
+    assert by_player["Steve"]["assists"] == 0
+    assert by_player["Steve"]["saves"] == 0
 
 
 def test_mvp_wins_handler():
     conn = _db_with_replay()
     data = query_mvp_wins(conn, "3v3")
 
-    assert len(data) >= 1
-    assert all("player" in d and "win_rate" in d for d in data)
+    # one match, one possible MVP (Jeff had highest score on a loss)
+    assert len(data) == 1
+    assert data[0]["player"] == "Jeff"
+    assert data[0]["mvp_matches"] == 1
+    assert data[0]["win_rate"] == 0.0
 
 
 def test_mvp_losses_handler():
@@ -160,7 +169,8 @@ def test_mvp_losses_handler():
     data = query_mvp_losses(conn, "3v3")
 
     assert len(data) == 1
-    assert all("player" in d and "loss_mvps" in d for d in data)
+    assert data[0]["player"] == "Jeff"
+    assert data[0]["loss_mvps"] == 1
 
 
 def test_weekday_handler():
@@ -168,7 +178,11 @@ def test_weekday_handler():
     data = query_weekday(conn, "3v3")
 
     assert len(data) == 1
-    assert all("weekday" in d and "matches" in d and "wins" in d and "losses" in d and "win_rate" in d for d in data)
+    assert data[0]["weekday"] == "Thursday"
+    assert data[0]["matches"] == 1
+    assert data[0]["wins"] == 0
+    assert data[0]["losses"] == 1
+    assert data[0]["win_rate"] == 0.0
 
 
 def test_win_loss_daily_handler():
@@ -176,7 +190,10 @@ def test_win_loss_daily_handler():
     data = query_win_loss_daily(conn, "3v3")
 
     assert len(data) == 1
-    assert all("date" in d and "wins" in d and "losses" in d and "win_rate" in d for d in data)
+    assert data[0]["date"] == "2026-02-05"
+    assert data[0]["wins"] == 0
+    assert data[0]["losses"] == 1
+    assert data[0]["win_rate"] == 0.0
 
 
 def test_win_loss_daily_no_matches_for_mode():
@@ -191,8 +208,13 @@ def test_avg_score_handler():
     data = query_avg_score(conn, "3v3")
 
     assert len(data) == 3
-    assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
-    assert all("avg_score" in d and "total_score" in d for d in data)
+    by_player = {d["player"]: d for d in data}
+    assert by_player["Drew"]["avg_score"] == 182.0
+    assert by_player["Drew"]["total_score"] == 182
+    assert by_player["Jeff"]["avg_score"] == 340.0
+    assert by_player["Jeff"]["total_score"] == 340
+    assert by_player["Steve"]["avg_score"] == 104.0
+    assert by_player["Steve"]["total_score"] == 104
 
 
 def test_score_differential_handler():
@@ -240,12 +262,21 @@ def test_streaks_no_matches():
 
 
 def test_avg_goal_contribution_shape():
-    conn = _db_with_replay()
+    # Use match.json (5-4 win) so contributions are non-null and meaningful
+    conn = cached_db("match.json")
+    conn.row_factory = sqlite3.Row
     data = query_avg_goal_contribution(conn, "3v3")
 
     assert len(data) == 3
     assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
-    assert all("avg_goal_contribution" in d and "matches" in d for d in data)
+    by_player = {d["player"]: d for d in data}
+    # All three scored (Drew 2, Jeff 2, Steve 1) — contributions must be in (0, 1]
+    for player in ("Drew", "Jeff", "Steve"):
+        c = by_player[player]["avg_goal_contribution"]
+        assert c is not None
+        assert 0 < c <= 1
+    # Jeff had most goal involvement (2 goals + 2 assists = 4/5 = 0.8)
+    assert by_player["Jeff"]["avg_goal_contribution"] > by_player["Drew"]["avg_goal_contribution"]
 
 
 def test_avg_goal_contribution_zero_team_score_excluded():

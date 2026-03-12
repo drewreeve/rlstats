@@ -174,10 +174,12 @@ def test_possession_tracking():
     assert team_poss > 0
     assert opp_poss > 0
 
-    # Total possession should be in a reasonable range
-    # (exceeds TotalSecondsPlayed due to goal replays/countdowns in frame times)
+    # Both teams had distinct possession (not the same constant)
+    assert team_poss != opp_poss
+
+    # Total possession should be in a tighter range for a ~5-minute match
     total_poss = team_poss + opp_poss
-    assert 60 < total_poss < 600
+    assert 200 < total_poss < 450
 
 
 def test_possession_none_without_network_data():
@@ -239,13 +241,20 @@ def test_ball_thirds_tracking():
     assert def_s is not None
     assert neu_s is not None
     assert off_s is not None
-    assert def_s >= 0
-    assert neu_s >= 0
-    assert off_s >= 0
 
-    # Total should be in a reasonable range for a match
+    # Ball must have visited all three zones during a full match
+    assert def_s > 0
+    assert neu_s > 0
+    assert off_s > 0
+
+    # Total should be in a tighter range for a ~5-minute match
     total = def_s + neu_s + off_s
-    assert 60 < total < 600
+    assert 200 < total < 450
+
+    # No single zone should implausibly dominate (>90% of total)
+    assert def_s < total * 0.9
+    assert neu_s < total * 0.9
+    assert off_s < total * 0.9
 
 
 def test_ball_thirds_none_without_network_data():
@@ -427,20 +436,34 @@ def test_boost_stats_dedupes_repeated_pickup_state():
 def test_player_movement_stats_tracking():
     conn = ingest_fixture("match.json")
     rows = conn.execute("""
-        SELECT p.name, mp.boost_per_minute, mp.avg_speed, mp.time_supersonic_pct
+        SELECT p.name, mp.boost_per_minute, mp.avg_speed, mp.time_supersonic_pct,
+               mp.small_pads, mp.large_pads
         FROM match_players mp
         JOIN players p ON p.id = mp.player_id
         ORDER BY p.name
     """).fetchall()
 
     assert len(rows) == 6
-    for name, bpm, avg_spd, supersonic in rows:
+    for name, bpm, avg_spd, supersonic, small_pads, large_pads in rows:
         assert bpm is not None, f"{name} boost_per_minute is null"
         assert avg_spd is not None, f"{name} avg_speed is null"
         assert supersonic is not None, f"{name} time_supersonic_pct is null"
         assert bpm >= 0, f"{name} boost_per_minute negative"
         assert avg_spd >= 0, f"{name} avg_speed negative"
         assert 0 <= supersonic <= 100, f"{name} supersonic% out of range"
+
+    tracked = [r for r in rows if r[0] in {"Drew", "Jeff", "Steve"}]
+    assert len(tracked) == 3
+
+    # Tracked players must have distinct avg_speed values (not all the same constant)
+    tracked_speeds = [avg_spd for _, _, avg_spd, *_ in tracked]
+    assert len(set(tracked_speeds)) > 1, "All tracked players have identical avg_speed"
+
+    # At least one tracked player went supersonic in a real match
+    assert any(supersonic > 0 for _, _, _, supersonic, *_ in tracked), "No tracked player has supersonic time"
+
+    # At least one tracked player collected boost pads
+    assert any(small + large > 0 for _, _, _, _, small, large in tracked), "No tracked player collected any boost pads"
 
 
 def test_player_movement_stats_none_without_network_data():
