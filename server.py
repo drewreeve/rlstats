@@ -6,7 +6,7 @@ import sqlite3
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -24,12 +24,7 @@ REPLAY_DIR = Path("replays")
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
 
-def query_matches(conn, params):
-    page = max(1, int(params.get("page", ["1"])[0]))
-    per_page = max(1, min(int(params.get("per_page", ["25"])[0]), 100))
-    search = params.get("search", [""])[0].strip()
-    game_mode = params.get("game_mode", [""])[0].strip()
-    result = params.get("result", [""])[0].strip()
+def query_matches(conn, *, page, per_page, search, game_mode, result, date_from, date_to):
     offset = (page - 1) * per_page
 
     where = []
@@ -44,9 +39,6 @@ def query_matches(conn, params):
         where.append("p.name LIKE :search ESCAPE '\\'")
         escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         bindings["search"] = f"%{escaped}%"
-
-    date_from = params.get("date_from", [""])[0].strip()
-    date_to = params.get("date_to", [""])[0].strip()
     if date_from:
         where.append("m.played_at >= :date_from")
         bindings["date_from"] = date_from
@@ -368,14 +360,26 @@ def create_app(db_path, replay_dir=None, processor=None):
     # -- Match routes --
 
     @app.get("/api/matches")
-    async def matches(request: Request, conn=Depends(get_conn)):
-        params: dict[str, list[str]] = {}
-        for k, v in request.query_params.multi_items():
-            params.setdefault(k, []).append(v)
-        try:
-            return query_matches(conn, params)
-        except ValueError, TypeError:
-            raise HTTPException(status_code=400, detail="Bad request")
+    async def matches(
+        conn=Depends(get_conn),
+        page: int = Query(1, ge=1),
+        per_page: int = Query(25, ge=1, le=100),
+        search: str = "",
+        game_mode: str = "",
+        result: str = "",
+        date_from: str = "",
+        date_to: str = "",
+    ):
+        return query_matches(
+            conn,
+            page=page,
+            per_page=per_page,
+            search=search,
+            game_mode=game_mode,
+            result=result,
+            date_from=date_from,
+            date_to=date_to,
+        )
 
     @app.get("/api/matches/{match_id}/players")
     async def match_players_route(match_id: int, conn=Depends(get_conn)):

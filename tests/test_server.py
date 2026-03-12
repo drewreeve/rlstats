@@ -1,6 +1,9 @@
 import sqlite3
 
+from fastapi.testclient import TestClient
+
 from server import (
+    create_app,
     query_avg_goal_contribution,
     query_avg_score,
     query_match_players,
@@ -14,7 +17,7 @@ from server import (
     query_weekday,
     query_win_loss_daily,
 )
-from tests.fixtures import cached_db
+from tests.fixtures import cached_db, file_db
 
 
 def _db_with_replay():
@@ -32,9 +35,14 @@ def _db_with_all_replays():
 # -- query_matches --
 
 
+def _matches(conn, **kwargs):
+    defaults = dict(page=1, per_page=25, search="", game_mode="", result="", date_from="", date_to="")
+    return query_matches(conn, **{**defaults, **kwargs})
+
+
 def test_query_matches_returns_all():
     conn = _db_with_all_replays()
-    data = query_matches(conn, {})
+    data = _matches(conn)
 
     assert data["total"] == 3
     assert len(data["matches"]) == 3
@@ -43,7 +51,7 @@ def test_query_matches_returns_all():
 
 def test_query_matches_filter_by_result():
     conn = _db_with_all_replays()
-    data = query_matches(conn, {"result": ["win"]})
+    data = _matches(conn, result="win")
 
     assert data["total"] == 2
     assert all(m["result"] == "win" for m in data["matches"])
@@ -51,7 +59,7 @@ def test_query_matches_filter_by_result():
 
 def test_query_matches_filter_by_game_mode():
     conn = _db_with_all_replays()
-    data = query_matches(conn, {"game_mode": ["3v3"]})
+    data = _matches(conn, game_mode="3v3")
 
     assert data["total"] == 3
     assert all(m["game_mode"] == "3v3" for m in data["matches"])
@@ -59,26 +67,26 @@ def test_query_matches_filter_by_game_mode():
 
 def test_query_matches_pagination():
     conn = _db_with_all_replays()
-    data = query_matches(conn, {"per_page": ["2"], "page": ["1"]})
+    data = _matches(conn, per_page=2, page=1)
 
     assert data["total"] == 3
     assert len(data["matches"]) == 2
     assert data["per_page"] == 2
 
-    page2 = query_matches(conn, {"per_page": ["2"], "page": ["2"]})
+    page2 = _matches(conn, per_page=2, page=2)
     assert len(page2["matches"]) == 1
 
 
-def test_query_matches_per_page_capped():
-    conn = _db_with_all_replays()
-    data = query_matches(conn, {"per_page": ["999"]})
+def test_query_matches_per_page_capped(tmp_path):
+    client = TestClient(create_app(file_db(tmp_path)), base_url="https://testserver")
+    response = client.get("/api/matches?per_page=999")
 
-    assert data["per_page"] == 100
+    assert response.status_code == 422
 
 
 def test_query_matches_search_by_mvp_name():
     conn = _db_with_all_replays()
-    data = query_matches(conn, {"search": ["Drew"]})
+    data = _matches(conn, search="Drew")
 
     assert data["total"] == 1
     assert data["matches"][0]["mvp"] == "Drew"
