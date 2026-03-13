@@ -1,4 +1,5 @@
 import sqlite3
+from collections import Counter
 
 import pytest
 
@@ -46,6 +47,103 @@ def _zero_score_db():
 
 def _as_tuples(rows, columns):
     return [tuple(row[column] for column in columns) for row in rows]
+
+
+# -- match_metadata --
+
+
+def test_match_metadata_returns_match():
+    conn = _match_db()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    row = queries.match_metadata(conn, match_id=match_id)
+
+    assert row["game_mode"] == "3v3"
+    assert row["result"] == "win"
+    assert row["team_score"] == 5
+    assert row["opponent_score"] == 4
+    assert row["team"] == 1
+    assert row["duration_seconds"] == pytest.approx(304.0368)
+
+
+def test_match_metadata_nonexistent():
+    conn = _match_db()
+    assert queries.match_metadata(conn, match_id=9999) is None
+
+
+# -- match_players --
+
+
+def test_match_players_all_returned():
+    conn = _match_db()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    rows = list(queries.match_players(conn, match_id=match_id))
+
+    assert len(rows) == 6
+    names = {r["name"] for r in rows}
+    assert {"Drew", "Jeff", "Steve"}.issubset(names)
+
+
+def test_match_players_ordered_by_score_desc():
+    conn = _match_db()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    rows = list(queries.match_players(conn, match_id=match_id))
+
+    scores = [r["score"] for r in rows]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_match_players_values():
+    conn = _match_db()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    rows = list(queries.match_players(conn, match_id=match_id))
+    by_name = {r["name"]: r for r in rows}
+
+    drew = by_name["Drew"]
+    assert drew["team"] == 1
+    assert drew["goals"] == 2
+    assert drew["assists"] == 0
+    assert drew["shots"] == 3
+    assert drew["shooting_pct"] == 66.7
+
+    jeff = by_name["Jeff"]
+    assert jeff["goals"] == 2
+    assert jeff["assists"] == 2
+    assert jeff["shooting_pct"] == 100.0
+
+
+def test_match_players_nonexistent():
+    conn = _match_db()
+    assert list(queries.match_players(conn, match_id=9999)) == []
+
+
+# -- match_events --
+
+
+def test_match_events_counts():
+    conn = _match_db()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    events = list(queries.match_events(conn, match_id=match_id))
+
+    assert len(events) == 31
+    by_type = Counter(e["event_type"] for e in events)
+    assert by_type == {"shot": 14, "goal": 9, "save": 3, "demo": 5}
+
+
+def test_match_events_ordered_by_time():
+    conn = _match_db()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    events = list(queries.match_events(conn, match_id=match_id))
+
+    times = [e["game_seconds"] for e in events]
+    assert times == sorted(times)
+
+
+def test_match_events_nonexistent():
+    conn = _match_db()
+    assert list(queries.match_events(conn, match_id=9999)) == []
+
+
+# -- shooting_pct --
 
 
 @pytest.mark.parametrize(
