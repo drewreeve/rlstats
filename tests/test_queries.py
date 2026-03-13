@@ -26,6 +26,24 @@ def _mvp_losses_modes_db():
     return conn
 
 
+def _3v3_db():
+    conn = cached_db("zero_score.json", "match.json", "forefeit.json")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _match_db():
+    conn = cached_db("match.json")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _zero_score_db():
+    conn = cached_db("zero_score.json")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def _as_tuples(rows, columns):
     return [tuple(row[column] for column in columns) for row in rows]
 
@@ -183,3 +201,91 @@ def test_win_loss_daily_values_3v3():
         ("2026-02-05", 0, 1, 0.0),
         ("2026-02-08", 1, 0, 1.0),
     ]
+
+
+# -- score_differential --
+
+
+def test_score_differential_values_3v3():
+    conn = _3v3_db()
+    rows = queries.score_differential(conn, game_mode="3v3")
+    diffs = {r["differential"]: r["match_count"] for r in rows}
+    assert diffs[-2] == 1  # 0-2 loss
+    assert diffs[1] == 1   # 5-4 win
+    assert diffs[4] == 1   # 4-0 win
+
+
+def test_score_differential_sorted_by_differential():
+    conn = _3v3_db()
+    rows = queries.score_differential(conn, game_mode="3v3")
+    differentials = [r["differential"] for r in rows]
+    assert differentials == sorted(differentials)
+
+
+# -- streaks --
+
+
+@pytest.mark.parametrize(
+    "mode,expected_win,expected_loss",
+    [
+        ("3v3", 1, 1),
+        ("2v2", 1, 0),
+        ("hoops", 1, 0),
+    ],
+)
+def test_streaks_values_by_mode(mode, expected_win, expected_loss):
+    conn = _all_modes_db()
+    rows = list(queries.streaks(conn, game_mode=mode))
+    if rows:
+        assert rows[0]["longest_win_streak"] == expected_win
+        assert rows[0]["longest_loss_streak"] == expected_loss
+    else:
+        assert expected_win == 0
+        assert expected_loss == 0
+
+
+def test_streaks_no_matches():
+    conn = _3v3_db()
+    rows = list(queries.streaks(conn, game_mode="2v2"))
+    if rows:
+        assert (rows[0]["longest_win_streak"] or 0) == 0
+        assert (rows[0]["longest_loss_streak"] or 0) == 0
+
+
+# -- avg_goal_contribution --
+
+
+def test_avg_goal_contribution_shape():
+    conn = _match_db()
+    rows = queries.avg_goal_contribution(conn, game_mode="3v3")
+    data = [dict(r) for r in rows]
+
+    assert len(data) == 3
+    assert {d["player"] for d in data} == {"Drew", "Jeff", "Steve"}
+    by_player = {d["player"]: d for d in data}
+    for player in ("Drew", "Jeff", "Steve"):
+        c = by_player[player]["avg_goal_contribution"]
+        assert c is not None
+        assert 0 < c <= 1
+    assert by_player["Jeff"]["avg_goal_contribution"] > by_player["Drew"]["avg_goal_contribution"]
+
+
+def test_avg_goal_contribution_zero_team_score_excluded():
+    conn = _zero_score_db()
+    rows = queries.avg_goal_contribution(conn, game_mode="3v3")
+    assert all(r["avg_goal_contribution"] is None for r in rows)
+
+
+def test_avg_goal_contribution_values():
+    conn = _3v3_db()
+    rows = queries.avg_goal_contribution(conn, game_mode="3v3")
+    by_player = {r["player"]: r for r in rows}
+    assert by_player["Drew"]["avg_goal_contribution"] == 0.575
+    assert by_player["Steve"]["avg_goal_contribution"] == 0.2
+    assert by_player["Jeff"]["avg_goal_contribution"] == 0.9
+
+
+def test_avg_goal_contribution_no_matches_for_mode():
+    conn = _3v3_db()
+    rows = list(queries.avg_goal_contribution(conn, game_mode="2v2"))
+    assert rows == []
