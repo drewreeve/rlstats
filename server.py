@@ -126,70 +126,17 @@ def query_match_detail(conn, match_id):
     }
 
 
-def query_shooting_pct(conn, mode):
-    return [dict(r) for r in queries.shooting_pct(conn, game_mode=mode)]
-
-
-def query_win_loss_daily(conn, mode):
-    return [dict(r) for r in queries.win_loss_daily(conn, game_mode=mode)]
-
-
-def query_player_stats(conn, mode):
-    return [dict(r) for r in queries.player_stats(conn, game_mode=mode)]
-
-
-def query_mvp_wins(conn, mode):
-    return [dict(r) for r in queries.mvp_wins(conn, game_mode=mode)]
-
-
-def query_mvp_losses(conn, mode):
-    return [dict(r) for r in queries.mvp_losses(conn, game_mode=mode)]
-
-
-def query_weekday(conn, mode):
-    return [dict(r) for r in queries.weekday(conn, game_mode=mode)]
-
-
-def query_avg_score(conn, mode):
-    return [dict(r) for r in queries.avg_score(conn, game_mode=mode)]
-
-
-def query_score_differential(conn, mode):
-    rows = queries.score_differential(conn, game_mode=mode)
-    return [dict(r) for r in rows]
-
-
-def query_streaks(conn, mode):
-    rows = list(queries.streaks(conn, game_mode=mode))
-    if rows:
-        row = rows[0]
-        return {
-            "longest_win_streak": row["longest_win_streak"] or 0,
-            "longest_loss_streak": row["longest_loss_streak"] or 0,
-        }
-    return {"longest_win_streak": 0, "longest_loss_streak": 0}
-
-
-def query_avg_goal_contribution(conn, mode):
-    return [dict(r) for r in queries.avg_goal_contribution(conn, game_mode=mode)]
-
-
-def query_score_range(conn, mode):
-    return [dict(r) for r in queries.score_range(conn, game_mode=mode)]
-
-
-API_ROUTES = {
-    "/api/stats/shooting": query_shooting_pct,
-    "/api/stats/timeline": query_win_loss_daily,
-    "/api/stats/players": query_player_stats,
-    "/api/stats/mvp-wins": query_mvp_wins,
-    "/api/stats/mvp-losses": query_mvp_losses,
-    "/api/stats/weekday": query_weekday,
-    "/api/stats/avg-score": query_avg_score,
-    "/api/stats/score-differential": query_score_differential,
-    "/api/stats/streaks": query_streaks,
-    "/api/stats/goal-contributions": query_avg_goal_contribution,
-    "/api/stats/score-range": query_score_range,
+STAT_ROUTES = {
+    "/api/stats/shooting":           queries.shooting_pct,
+    "/api/stats/timeline":           queries.win_loss_daily,
+    "/api/stats/players":            queries.player_stats,
+    "/api/stats/mvp-wins":           queries.mvp_wins,
+    "/api/stats/mvp-losses":         queries.mvp_losses,
+    "/api/stats/weekday":            queries.weekday,
+    "/api/stats/avg-score":          queries.avg_score,
+    "/api/stats/score-differential": queries.score_differential,
+    "/api/stats/goal-contributions": queries.avg_goal_contribution,
+    "/api/stats/score-range":        queries.score_range,
 }
 
 
@@ -384,17 +331,27 @@ def create_app(db_path, replay_dir=None, processor=None):
 
     # -- Stats routes --
 
-    for path, handler_fn in API_ROUTES.items():
+    def game_mode(mode: str = "3v3") -> str:
+        return mode if mode in ALLOWED_MODES else "3v3"
 
-        def make_view(fn):
-            async def view(mode: str = "3v3", conn=Depends(get_conn)):
-                if mode not in ALLOWED_MODES:
-                    mode = "3v3"
-                return fn(conn, mode)
+    def make_stat_handler(fn):
+        async def view(mode=Depends(game_mode), conn=Depends(get_conn)):
+            return [dict(r) for r in fn(conn, game_mode=mode)]
 
-            return view
+        return view
 
-        app.get(path, name=path)(make_view(handler_fn))
+    for path, handler_fn in STAT_ROUTES.items():
+        app.get(path, name=path)(make_stat_handler(handler_fn))
+
+    @app.get("/api/stats/streaks")
+    async def streaks(mode=Depends(game_mode), conn=Depends(get_conn)):
+        row = next(iter(queries.streaks(conn, game_mode=mode)), None)
+        if row:
+            return {
+                "longest_win_streak": row["longest_win_streak"] or 0,
+                "longest_loss_streak": row["longest_loss_streak"] or 0,
+            }
+        return {"longest_win_streak": 0, "longest_loss_streak": 0}
 
     # -- Exception handlers --
 

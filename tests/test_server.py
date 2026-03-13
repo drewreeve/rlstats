@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from server import (
-    API_ROUTES,
+    STAT_ROUTES,
     create_app,
     query_match_players,
     query_matches,
@@ -131,7 +131,7 @@ def test_query_match_players_nonexistent_match():
 # -- HTTP routing smoke tests --
 
 
-@pytest.mark.parametrize("path", list(API_ROUTES.keys()))
+@pytest.mark.parametrize("path", [*STAT_ROUTES.keys(), "/api/stats/streaks"])
 def test_stat_route_returns_200(match_client, path):
     response = match_client.get(path)
 
