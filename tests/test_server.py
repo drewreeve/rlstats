@@ -1,8 +1,11 @@
 import sqlite3
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from server import (
+    API_ROUTES,
     create_app,
     query_match_players,
     query_matches,
@@ -20,6 +23,16 @@ def _db_with_all_replays():
     conn = cached_db("zero_score.json", "match.json", "forefeit.json")
     conn.row_factory = sqlite3.Row
     return conn
+
+
+@pytest.fixture
+def match_client(tmp_path):
+    db_path = file_db(tmp_path)
+    source = cached_db("match.json")
+    conn = sqlite3.connect(db_path)
+    source.backup(conn)
+    conn.close()
+    return TestClient(create_app(db_path), base_url="https://testserver")
 
 
 # -- query_matches --
@@ -113,3 +126,60 @@ def test_query_match_players_nonexistent_match():
     data = query_match_players(conn, 9999)
 
     assert data == []
+
+
+# -- HTTP routing smoke tests --
+
+
+@pytest.mark.parametrize("path", list(API_ROUTES.keys()))
+def test_stat_route_returns_200(match_client, path):
+    response = match_client.get(path)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, (list, dict))
+
+
+# -- match detail endpoint --
+
+
+def test_match_detail_returns_team_split(match_client):
+    response = match_client.get("/api/matches/1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "match" in data
+    assert "team_players" in data
+    assert "opponent_players" in data
+    assert "events" in data
+
+    assert data["match"]["result"] == "win"
+    assert data["match"]["team_score"] == 5
+    assert data["match"]["opponent_score"] == 4
+
+    team_names = {p["name"] for p in data["team_players"]}
+    assert {"Drew", "Jeff", "Steve"} == team_names
+
+    opponent_names = {p["name"] for p in data["opponent_players"]}
+    assert len(opponent_names) == 3
+    assert "Drew" not in opponent_names
+
+
+def test_match_detail_404_nonexistent(match_client):
+    response = match_client.get("/api/matches/9999")
+
+    assert response.status_code == 404
+
+
+def test_match_detail_events(match_client):
+    response = match_client.get("/api/matches/1")
+    data = response.json()
+
+    events = data["events"]
+    event_types = {e["event_type"] for e in events}
+    assert "goal" in event_types
+    assert "shot" in event_types
+    assert "save" in event_types
+
+    goals = [e for e in events if e["event_type"] == "goal"]
+    assert len(goals) == 9  # 5 team + 4 opponent
