@@ -419,8 +419,8 @@ def _make_movement_handler(
     identity_pads: dict[tuple[str, str], dict[str, int]] = {}
     last_pickup_state: dict[int, int] = {}
 
-    finalized_boost: list[tuple[tuple[str, str], float]] = []
-    finalized_speeds: list[tuple[tuple[str, str], list[tuple[float, float]]]] = []
+    identity_boost_consumed: dict[tuple[str, str], float] = {}
+    identity_speeds: dict[tuple[str, str], list[tuple[float, float]]] = {}
 
     def on_deleted_actor(ctx: FrameContext, aid: int):
         comp_boost.pop(aid, None)
@@ -431,12 +431,12 @@ def _make_movement_handler(
             if car_id is not None:
                 identity = ctx.resolve_car_identity(car_id)
                 if identity:
-                    finalized_boost.append((identity, consumed))
+                    identity_boost_consumed[identity] = identity_boost_consumed.get(identity, 0.0) + consumed
         samples = car_speed_samples.pop(aid, None)
         if samples:
             identity = ctx.resolve_car_identity(aid)
             if identity:
-                finalized_speeds.append((identity, samples))
+                identity_speeds.setdefault(identity, []).extend(samples)
 
     def on_update(ctx: FrameContext, actor: dict):
         oid = actor.get("object_id")
@@ -499,41 +499,20 @@ def _make_movement_handler(
                     pads["stolen_small_pads"] += 1
 
     def finalize(ctx: FrameContext):
-        # Build car -> identity from car_to_pri + pri_identity
-        car_identity: dict[int, tuple[str, str]] = {}
-        for car_id, pri_actor in ctx.car_to_pri.items():
-            if pri_actor >= 0:
-                identity = ctx.pri_identity.get(pri_actor)
-                if identity:
-                    car_identity[car_id] = identity
-
-        # Aggregate boost consumed per identity
-        identity_boost_consumed: dict[tuple[str, str], float] = {}
-        for identity, consumed in finalized_boost:
-            identity_boost_consumed[identity] = (
-                identity_boost_consumed.get(identity, 0.0) + consumed
-            )
+        # Deleted-actor data already accumulated; handle remaining live actors
         for comp_id, consumed in comp_boost_consumed.items():
             car_id = ctx.component_to_car.get(comp_id)
             if car_id is not None:
-                identity = car_identity.get(car_id)
+                identity = ctx.resolve_car_identity(car_id)
                 if identity:
                     identity_boost_consumed[identity] = (
                         identity_boost_consumed.get(identity, 0.0) + consumed
                     )
 
-        # Aggregate speed samples per identity
-        identity_speeds: dict[tuple[str, str], list[tuple[float, float]]] = {}
-        for identity, samples in finalized_speeds:
-            if identity not in identity_speeds:
-                identity_speeds[identity] = []
-            identity_speeds[identity].extend(samples)
         for car_id, samples in car_speed_samples.items():
-            identity = car_identity.get(car_id)
+            identity = ctx.resolve_car_identity(car_id)
             if identity:
-                if identity not in identity_speeds:
-                    identity_speeds[identity] = []
-                identity_speeds[identity].extend(samples)
+                identity_speeds.setdefault(identity, []).extend(samples)
 
         # Build results
         all_identities = (
