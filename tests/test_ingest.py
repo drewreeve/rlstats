@@ -1,6 +1,6 @@
 import pytest
 from ingest import ingest_match, get_or_create_player, TRACKED_PLAYERS
-from frame_analysis import _extract_demolitions, _extract_match_events, _extract_boost_stats, _extract_player_movement_stats
+from frame_analysis import analyze_frames
 from tests.fixtures import in_memory_db, load_replay, cached_db
 
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
@@ -197,22 +197,22 @@ def test_possession_none_without_network_data():
 
 def test_extract_demolitions():
     replay = load_replay("match.json")
-    demos = _extract_demolitions(replay)
+    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
 
     # Should return a dict with (platform, platform_id) keys
-    assert isinstance(demos, dict)
-    assert len(demos) > 0
+    assert isinstance(fa.demolitions, dict)
+    assert len(fa.demolitions) > 0
 
     # Known players from match.json with demos
     # Jeff (Steam:76561197964215253) = 1 demo
     # Drew (Steam:76561197969365901) = 1 demo
-    assert demos[("steam", "76561197964215253")] == 1  # Jeff
-    assert demos[("steam", "76561197969365901")] == 1  # Drew
+    assert fa.demolitions[("steam", "76561197964215253")] == 1  # Jeff
+    assert fa.demolitions[("steam", "76561197969365901")] == 1  # Drew
 
 
 def test_extract_demolitions_without_network_data():
-    demos = _extract_demolitions({"properties": {}})
-    assert demos == {}
+    fa = analyze_frames({"properties": {}}, 0, set(), 300, "3v3")
+    assert fa.demolitions == {}
 
 
 def test_demolitions_stored_in_match_players():
@@ -272,7 +272,8 @@ def test_ball_thirds_none_without_network_data():
 def test_extract_match_events():
     replay = load_replay("match.json")
     # tracked_team is 0 for match.json (Drew/Steve/Jeff are team 0)
-    events = _extract_match_events(replay, 0, set(TRACKED_PLAYERS.keys()))
+    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
+    events = fa.match_events
 
     assert isinstance(events, list)
     assert len(events) > 0
@@ -295,8 +296,8 @@ def test_extract_match_events():
 
 
 def test_extract_match_events_without_network_data():
-    events = _extract_match_events({"properties": {}}, 0, set(TRACKED_PLAYERS.keys()))
-    assert events == []
+    fa = analyze_frames({"properties": {}}, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
+    assert fa.match_events == []
 
 
 def test_match_events_stored_in_db():
@@ -328,7 +329,8 @@ def test_match_events_have_valid_players():
 
 def test_overtime_goals_positioned_after_regulation():
     replay = load_replay("overtime.json")
-    events = _extract_match_events(replay, 0, set(TRACKED_PLAYERS.keys()))
+    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
+    events = fa.match_events
 
     goals = [e for e in events if e[0] == "goal"]
     assert len(goals) == 3
@@ -425,7 +427,8 @@ def test_boost_stats_dedupes_repeated_pickup_state():
         },
     }
 
-    assert _extract_boost_stats(replay, tracked_team=0, game_mode="3v3") == (
+    fa = analyze_frames(replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3")
+    assert (fa.team_boost_collected, fa.opponent_boost_collected, fa.team_boost_stolen, fa.opponent_boost_stolen) == (
         24,
         0,
         24,
@@ -481,7 +484,8 @@ def test_player_movement_stats_none_without_network_data():
 def test_extract_player_movement_stats():
     replay = load_replay("match.json")
     duration = replay["properties"].get("TotalSecondsPlayed")
-    stats = _extract_player_movement_stats(replay, duration)
+    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), duration, "3v3")
+    stats = fa.movement_stats
 
     assert isinstance(stats, dict)
     assert len(stats) > 0
@@ -606,7 +610,8 @@ def test_actor_id_recycling_separates_boost_consumption():
         "objects": objects,
         "network_frames": {"frames": frames},
     }
-    stats = _extract_player_movement_stats(replay, duration=300)
+    fa = analyze_frames(replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3")
+    stats = fa.movement_stats
 
     player_a = stats.get(("steam", "AAA"))
     player_b = stats.get(("steam", "BBB"))
@@ -623,7 +628,8 @@ def test_actor_id_recycling_separates_boost_consumption():
 def test_extract_player_pad_stats():
     replay = load_replay("match.json")
     duration = replay["properties"].get("TotalSecondsPlayed")
-    stats = _extract_player_movement_stats(replay, duration, game_mode="standard")
+    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), duration, "standard")
+    stats = fa.movement_stats
 
     assert len(stats) > 0
 

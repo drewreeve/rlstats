@@ -8,14 +8,7 @@ from typing import Any
 import orjson
 
 from db import apply_migrations
-from frame_analysis import (
-    _calculate_ball_thirds,
-    _calculate_possession,
-    _extract_boost_stats,
-    _extract_demolitions,
-    _extract_match_events,
-    _extract_player_movement_stats,
-)
+from frame_analysis import analyze_frames
 
 TRACKED_PLAYERS = {
     ("steam", "76561197969365901"): "Drew",
@@ -312,14 +305,7 @@ def analyze_replay(replay: dict) -> dict | None:
     if result is None:
         return None
 
-    team_poss, opp_poss = _calculate_possession(replay, team)
-    def_thirds, neu_thirds, off_thirds = _calculate_ball_thirds(replay, team)
-    team_boost, opp_boost, team_stolen, opp_stolen = _extract_boost_stats(
-        replay, team, game_mode
-    )
-    demolitions = _extract_demolitions(replay)
-    movement_stats = _extract_player_movement_stats(replay, duration, game_mode)
-    match_events = _extract_match_events(replay, team, set(TRACKED_PLAYERS.keys()))
+    fa = analyze_frames(replay, team, set(TRACKED_PLAYERS.keys()), duration, game_mode)
 
     return {
         "replay_hash": replay_hash,
@@ -333,20 +319,20 @@ def analyze_replay(replay: dict) -> dict | None:
         "result": result,
         "map_name": map_name,
         "game_mode": game_mode,
-        "team_possession_seconds": team_poss,
-        "opponent_possession_seconds": opp_poss,
-        "defensive_third_seconds": def_thirds,
-        "neutral_third_seconds": neu_thirds,
-        "offensive_third_seconds": off_thirds,
-        "team_boost_collected": team_boost,
-        "opponent_boost_collected": opp_boost,
-        "team_boost_stolen": team_stolen,
-        "opponent_boost_stolen": opp_stolen,
+        "team_possession_seconds": fa.team_possession_seconds,
+        "opponent_possession_seconds": fa.opponent_possession_seconds,
+        "defensive_third_seconds": fa.defensive_third_seconds,
+        "neutral_third_seconds": fa.neutral_third_seconds,
+        "offensive_third_seconds": fa.offensive_third_seconds,
+        "team_boost_collected": fa.team_boost_collected,
+        "opponent_boost_collected": fa.opponent_boost_collected,
+        "team_boost_stolen": fa.team_boost_stolen,
+        "opponent_boost_stolen": fa.opponent_boost_stolen,
         "tracked_players": tracked_players,
         "all_players": props.get("PlayerStats", []),
-        "demolitions": demolitions,
-        "movement_stats": movement_stats,
-        "match_events": match_events,
+        "demolitions": fa.demolitions,
+        "movement_stats": fa.movement_stats,
+        "match_events": fa.match_events,
     }
 
 
@@ -380,7 +366,11 @@ def write_match(conn: sqlite3.Connection, analysis: dict):
 
     all_players = analysis["all_players"]
     _upsert_match_players(
-        conn, match_id, all_players, analysis["demolitions"], analysis["movement_stats"]
+        conn,
+        match_id,
+        all_players,
+        analysis["demolitions"],
+        analysis["movement_stats"],
     )
 
     # Build identity -> player_id map (players were just upserted above)
