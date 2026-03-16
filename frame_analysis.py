@@ -92,7 +92,6 @@ class Handler:
 
     update_obj_ids: set[int] = field(default_factory=set)
     on_update: Any = None  # (ctx, actor) -> None
-    on_new_actor: Any = None  # (ctx, new_actor) -> None
     on_deleted_actor: Any = None  # (ctx, actor_id) -> None
     finalize: Any = None  # (ctx) -> result
 
@@ -201,7 +200,7 @@ def _make_possession_handler(
         if team_num is not None:
             touches.append((ctx.frame_time, team_num))
 
-    def finalize(ctx: FrameContext, last_frame_time: float):
+    def finalize(ctx: FrameContext):
         if not touches:
             return None, None
 
@@ -242,7 +241,7 @@ def _make_ball_thirds_handler(
         if loc and "y" in loc:
             samples.append((ctx.frame_time, loc["y"]))
 
-    def finalize(ctx: FrameContext, last_frame_time: float):
+    def finalize(ctx: FrameContext):
         if len(samples) < 2:
             return None, None, None
 
@@ -289,7 +288,7 @@ def _make_demolitions_handler(
         aid = actor["actor_id"]
         actor_demos[aid] = max(actor_demos.get(aid, 0), val)
 
-    def finalize(ctx: FrameContext, last_frame_time: float):
+    def finalize(ctx: FrameContext):
         result: dict[tuple[str, str], int] = {}
         for aid, count in actor_demos.items():
             identity = ctx.pri_identity.get(aid)
@@ -334,7 +333,7 @@ def _make_boost_stats_handler(
         if is_stolen:
             stolen[team] += boost_value
 
-    def finalize(ctx: FrameContext, last_frame_time: float):
+    def finalize(ctx: FrameContext):
         if collected[0] == 0 and collected[1] == 0:
             return None, None, None, None
 
@@ -384,7 +383,7 @@ def _make_movement_handler(
         last_pickup_state.pop(aid, None)
         consumed = comp_boost_consumed.pop(aid, None)
         if consumed:
-            car_id = ctx.component_to_car.pop(aid, None)
+            car_id = ctx.component_to_car.get(aid)
             if car_id is not None:
                 identity = ctx.resolve_car_identity(car_id)
                 if identity:
@@ -455,7 +454,7 @@ def _make_movement_handler(
                 if is_stolen:
                     pads["stolen_small_pads"] += 1
 
-    def finalize(ctx: FrameContext, last_frame_time: float):
+    def finalize(ctx: FrameContext):
         # Build car -> identity from car_to_pri + pri_identity
         car_identity: dict[int, tuple[str, str]] = {}
         for car_id, pri_actor in ctx.car_to_pri.items():
@@ -608,7 +607,7 @@ def _make_match_events_handler(
                     raw_events.append((event_type, ctx.frame_time, aid))
             actor_counters[aid][event_type] = val
 
-    def finalize(ctx: FrameContext, last_frame_time: float):
+    def finalize(ctx: FrameContext):
         if not clock_updates or not raw_events:
             return []
 
@@ -749,8 +748,6 @@ def analyze_frames(
                     update_dispatch[oid] = []
                 update_dispatch[oid].append(h.on_update)
 
-    # Handlers with on_new_actor / on_deleted_actor callbacks
-    new_actor_handlers = [h for h in handlers if h.on_new_actor]
     deleted_actor_handlers = [h for h in handlers if h.on_deleted_actor]
 
     ctx = FrameContext()
@@ -768,16 +765,22 @@ def analyze_frames(
                 ctx.ball_actors.add(aid)
             elif oid == boost_comp_archetype:
                 ctx.boost_comp_actors.add(aid)
-            for h_cb in new_actor_handlers:
-                h_cb.on_new_actor(ctx, new_actor)
 
-        # 2. Process deleted_actors -> notify handlers first, then clean shared state
-        for aid in frame.get("deleted_actors", []):
+        # 2. Process deleted_actors -> notify ALL handlers for ALL actors first,
+        #    then clean shared state for all. This ensures that if a car and its
+        #    boost component are deleted in the same frame, the boost component's
+        #    handler can still resolve identity via the car mapping.
+        deleted_actors = frame.get("deleted_actors", [])
+        for aid in deleted_actors:
             for h in deleted_actor_handlers:
                 h.on_deleted_actor(ctx, aid)
+        for aid in deleted_actors:
             ctx.car_actors.discard(aid)
             ctx.ball_actors.discard(aid)
             ctx.boost_comp_actors.discard(aid)
+            ctx.component_to_car.pop(aid, None)
+            ctx.car_to_pri.pop(aid, None)
+            ctx.pri_identity.pop(aid, None)
             ctx.actor_team.pop(aid, None)
             ctx.actor_position.pop(aid, None)
 
@@ -829,24 +832,24 @@ def analyze_frames(
 
     # Finalize all handlers
     poss_result = (
-        possession_h.finalize(ctx, ctx.frame_time) if possession_h else (None, None)
+        possession_h.finalize(ctx) if possession_h else (None, None)
     )
     thirds_result = (
-        ball_thirds_h.finalize(ctx, ctx.frame_time)
+        ball_thirds_h.finalize(ctx)
         if ball_thirds_h
         else (None, None, None)
     )
-    demo_result = demolitions_h.finalize(ctx, ctx.frame_time) if demolitions_h else {}
+    demo_result = demolitions_h.finalize(ctx) if demolitions_h else {}
     boost_result = (
-        boost_stats_h.finalize(ctx, ctx.frame_time)
+        boost_stats_h.finalize(ctx)
         if boost_stats_h
         else (None, None, None, None)
     )
     movement_result = (
-        movement_h.finalize(ctx, ctx.frame_time) if movement_h else {}
+        movement_h.finalize(ctx) if movement_h else {}
     )
     events_result = (
-        match_events_h.finalize(ctx, ctx.frame_time) if match_events_h else []
+        match_events_h.finalize(ctx) if match_events_h else []
     )
 
     return FrameAnalysis(

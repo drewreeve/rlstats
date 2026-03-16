@@ -625,6 +625,74 @@ def test_actor_id_recycling_separates_boost_consumption():
     assert b_bpm > a_bpm, f"Player B ({b_bpm}) should have higher boost/min than A ({a_bpm})"
 
 
+def test_boost_attributed_when_car_and_boost_comp_deleted_same_frame():
+    """When a car and its boost component are both in deleted_actors for the same frame,
+    with the car listed first, boost consumed before deletion must still be attributed."""
+    objects = [
+        "Archetypes.Car.Car_Default",         # 0 - car archetype
+        "Archetypes.Ball.Ball_Default",        # 1 - ball archetype
+        "Archetypes.CarComponents.CarComponent_Boost",  # 2 - boost comp archetype
+        "TAGame.RBActor_TA:ReplicatedRBState", # 3 - rigid body
+        "TAGame.CarComponent_Boost_TA:ReplicatedBoost", # 4 - boost amount
+        "TAGame.CarComponent_TA:Vehicle",      # 5 - component->car link
+        "Engine.Pawn:PlayerReplicationInfo",   # 6 - car->PRI link
+        "Engine.PlayerReplicationInfo:UniqueId", # 7 - PRI->identity
+        "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",  # 8 - countdown
+        "TAGame.VehiclePickup_TA:NewReplicatedPickupData",     # 9 - boost pads (required by movement handler)
+    ]
+    frames = [
+        # Frame 0: Create car 1, link to PRI 3, set identity, start play (countdown=0)
+        {"time": 0.0, "delta": 0.033,
+         "new_actors": [
+             {"actor_id": 1, "object_id": 0},   # car (car archetype → added to car_actors)
+         ],
+         "updated_actors": [
+             {"actor_id": 1, "object_id": 6,
+              "attribute": {"ActiveActor": {"actor": 3}}},   # car 1 -> PRI actor 3
+             {"actor_id": 3, "object_id": 7,
+              "attribute": {"UniqueId": {"remote_id": {"Steam": "AAA"}}}},  # PRI 3 -> identity
+             {"actor_id": 200, "object_id": 8,
+              "attribute": {"Int": 0}},  # countdown = 0 → is_playing = True
+         ],
+         "deleted_actors": []},
+        # Frame 1: Create boost component 10, link to car 1
+        {"time": 0.033, "delta": 0.033,
+         "new_actors": [{"actor_id": 10, "object_id": 2}],
+         "updated_actors": [
+             {"actor_id": 10, "object_id": 5,
+              "attribute": {"ActiveActor": {"actor": 1}}},   # boost comp -> car 1
+             {"actor_id": 10, "object_id": 4,
+              "attribute": {"ReplicatedBoost": {"boost_amount": 85}}},  # initial boost
+         ],
+         "deleted_actors": []},
+        # Frame 2: Player uses boost (85 -> 50 = 35 consumed)
+        {"time": 0.066, "delta": 0.033,
+         "new_actors": [],
+         "updated_actors": [
+             {"actor_id": 10, "object_id": 4,
+              "attribute": {"ReplicatedBoost": {"boost_amount": 50}}},
+         ],
+         "deleted_actors": []},
+        # Frame 3: Car and boost component deleted in same frame, car listed first
+        {"time": 0.1, "delta": 0.033,
+         "new_actors": [], "updated_actors": [],
+         "deleted_actors": [1, 10]},
+    ]
+
+    replay = {
+        "objects": objects,
+        "network_frames": {"frames": frames},
+    }
+    fa = analyze_frames(replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3")
+    stats = fa.movement_stats
+
+    player_a = stats.get(("steam", "AAA"))
+    assert player_a is not None, "Player A missing from stats"
+    assert player_a["boost_per_minute"] > 0, (
+        "boost should be attributed even when car and boost comp deleted in same frame"
+    )
+
+
 def test_extract_player_pad_stats():
     replay = load_replay("match.json")
     duration = replay["properties"].get("TotalSecondsPlayed")
