@@ -231,6 +231,40 @@ def test_demolitions_stored_in_match_players():
     assert "Jeff" in names
 
 
+def test_extract_demos_received():
+    replay = load_replay("match.json")
+    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
+
+    assert isinstance(fa.demos_received, dict)
+    assert len(fa.demos_received) > 0
+
+    # Each tracked player received 1 player-inflicted demo
+    assert fa.demos_received[("steam", "76561197964215253")] == 1  # Jeff
+    assert fa.demos_received[("steam", "76561197969365901")] == 1  # Drew
+    assert fa.demos_received[("steam", "76561198008422893")] == 1  # Steve
+
+
+def test_extract_demos_received_without_network_data():
+    fa = analyze_frames({"properties": {}}, 0, set(), 300, "3v3")
+    assert fa.demos_received == {}
+
+
+def test_demos_received_stored_in_match_players():
+    conn = ingest_fixture("match.json")
+    rows = conn.execute("""
+        SELECT p.name, mp.demos_received
+        FROM match_players mp
+        JOIN players p ON p.id = mp.player_id
+        WHERE mp.demos_received > 0
+        ORDER BY p.name
+    """).fetchall()
+
+    names = [r[0] for r in rows]
+    assert "Drew" in names
+    assert "Jeff" in names
+    assert "Steve" in names
+
+
 def test_ball_thirds_tracking():
     conn = ingest_fixture("match.json")
     row = conn.execute(

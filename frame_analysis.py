@@ -54,6 +54,7 @@ class FrameAnalysis(NamedTuple):
     team_boost_stolen: int | None
     opponent_boost_stolen: int | None
     movement_stats: dict[tuple[str, str], dict[str, float | int]]
+    demos_received: dict[tuple[str, str], int]
     match_events: list[tuple[str, float, str, str, int]]
 
 
@@ -303,6 +304,51 @@ def _make_demolitions_handler(
     )
 
 
+def _make_demos_received_handler(
+    obj_ids: dict[str, int | None],
+) -> Handler | None:
+    demolish_obj_id = obj_ids.get("TAGame.Car_TA:ReplicatedDemolishExtended")
+    if demolish_obj_id is None:
+        return None
+
+    demos_received: dict[tuple[str, str], int] = {}
+    demolish_last_active: dict[int, bool] = {}
+
+    def on_deleted_actor(ctx: FrameContext, aid: int):
+        demolish_last_active.pop(aid, None)
+
+    def on_update(ctx: FrameContext, actor: dict):
+        demolish = actor.get("attribute", {}).get("DemolishExtended", {})
+        victim = demolish.get("victim", {})
+        currently_active = bool(victim.get("active"))
+        was_active = demolish_last_active.get(actor["actor_id"], False)
+        demolish_last_active[actor["actor_id"]] = currently_active
+        if not currently_active or was_active:
+            return
+        if demolish.get("self_demolish"):
+            return
+        attacker = demolish.get("attacker", {})
+        if not attacker.get("active"):
+            return
+        vid = victim["actor"]
+        if vid in ctx.car_actors:
+            victim_identity = ctx.resolve_car_identity(vid)
+            if victim_identity:
+                demos_received[victim_identity] = (
+                    demos_received.get(victim_identity, 0) + 1
+                )
+
+    def finalize(ctx: FrameContext):
+        return demos_received
+
+    return Handler(
+        update_obj_ids={demolish_obj_id},
+        on_update=on_update,
+        on_deleted_actor=on_deleted_actor,
+        finalize=finalize,
+    )
+
+
 def _make_boost_stats_handler(
     obj_ids: dict[str, int | None],
     tracked_team: int | None,
@@ -375,8 +421,6 @@ def _make_movement_handler(
 
     finalized_boost: list[tuple[tuple[str, str], float]] = []
     finalized_speeds: list[tuple[tuple[str, str], list[tuple[float, float]]]] = []
-
-    update_ids = {rb_obj_id, boost_obj_id, pickup_obj_id}
 
     def on_deleted_actor(ctx: FrameContext, aid: int):
         comp_boost.pop(aid, None)
@@ -541,7 +585,7 @@ def _make_movement_handler(
         return result
 
     return Handler(
-        update_obj_ids=update_ids,
+        update_obj_ids={rb_obj_id, boost_obj_id, pickup_obj_id},
         on_update=on_update,
         on_deleted_actor=on_deleted_actor,
         finalize=finalize,
@@ -692,6 +736,7 @@ def analyze_frames(
         team_boost_stolen=None,
         opponent_boost_stolen=None,
         movement_stats={},
+        demos_received={},
         match_events=[],
     )
 
@@ -722,6 +767,7 @@ def analyze_frames(
     demolitions_h = _make_demolitions_handler(obj_ids)
     boost_stats_h = _make_boost_stats_handler(obj_ids, tracked_team, big_pads)
     movement_h = _make_movement_handler(obj_ids, duration, big_pads)
+    demos_received_h = _make_demos_received_handler(obj_ids)
     match_events_h = _make_match_events_handler(
         obj_ids, tracked_team, tracked_identities
     )
@@ -734,6 +780,7 @@ def analyze_frames(
             demolitions_h,
             boost_stats_h,
             movement_h,
+            demos_received_h,
             match_events_h,
         ]
         if h is not None
@@ -845,9 +892,8 @@ def analyze_frames(
         if boost_stats_h
         else (None, None, None, None)
     )
-    movement_result = (
-        movement_h.finalize(ctx) if movement_h else {}
-    )
+    movement_result = movement_h.finalize(ctx) if movement_h else {}
+    demos_recv_result = demos_received_h.finalize(ctx) if demos_received_h else {}
     events_result = (
         match_events_h.finalize(ctx) if match_events_h else []
     )
@@ -864,5 +910,6 @@ def analyze_frames(
         team_boost_stolen=boost_result[2],
         opponent_boost_stolen=boost_result[3],
         movement_stats=movement_result,
+        demos_received=demos_recv_result,
         match_events=events_result,
     )

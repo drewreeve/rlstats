@@ -1,0 +1,1 @@
+ALTER TABLE match_players ADD COLUMN demos_received INTEGER NOT NULL DEFAULT 0;

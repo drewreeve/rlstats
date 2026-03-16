@@ -218,6 +218,7 @@ def _upsert_match_players(
     match_id: int,
     all_players: list[dict[str, Any]],
     demolitions: dict[tuple[str, str], int],
+    demos_received: dict[tuple[str, str], int],
     movement_stats: dict[tuple[str, str], dict[str, float]],
 ):
     for player in all_players:
@@ -234,16 +235,17 @@ def _upsert_match_players(
             name = tracked_name
         player_id = get_or_create_player(conn, platform, platform_id, name)
         demos = demolitions.get(identity, 0)
+        demos_recv = demos_received.get(identity, 0)
         mv = movement_stats.get(identity, {})
 
         conn.execute(
             """
             INSERT INTO match_players (
                 match_id, player_id, team,
-                goals, assists, saves, shots, score, demos,
+                goals, assists, saves, shots, score, demos, demos_received,
                 boost_per_minute, avg_speed, time_supersonic_pct,
                 small_pads, large_pads, stolen_small_pads, stolen_large_pads
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id, player_id) DO UPDATE SET
                 team = excluded.team,
                 goals = excluded.goals,
@@ -252,6 +254,7 @@ def _upsert_match_players(
                 shots = excluded.shots,
                 score = excluded.score,
                 demos = excluded.demos,
+                demos_received = excluded.demos_received,
                 boost_per_minute = excluded.boost_per_minute,
                 avg_speed = excluded.avg_speed,
                 time_supersonic_pct = excluded.time_supersonic_pct,
@@ -270,6 +273,7 @@ def _upsert_match_players(
                 player.get("Shots", 0),
                 player.get("Score", 0),
                 demos,
+                demos_recv,
                 mv.get("boost_per_minute"),
                 mv.get("avg_speed"),
                 mv.get("time_supersonic_pct"),
@@ -331,6 +335,7 @@ def analyze_replay(replay: dict) -> dict | None:
         "tracked_players": tracked_players,
         "all_players": props.get("PlayerStats", []),
         "demolitions": fa.demolitions,
+        "demos_received": fa.demos_received,
         "movement_stats": fa.movement_stats,
         "match_events": fa.match_events,
     }
@@ -370,6 +375,7 @@ def write_match(conn: sqlite3.Connection, analysis: dict):
         match_id,
         all_players,
         analysis["demolitions"],
+        analysis["demos_received"],
         analysis["movement_stats"],
     )
 
