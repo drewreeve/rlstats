@@ -727,6 +727,61 @@ def test_boost_attributed_when_car_and_boost_comp_deleted_same_frame():
     )
 
 
+def test_demos_received_when_demolish_and_deletion_same_frame():
+    """ReplicatedDemolishExtended update and victim car deletion in the same frame must
+    still count as a demo, even though deleted_actors is processed before updated_actors."""
+    objects = [
+        "Archetypes.Car.Car_Default",                          # 0 - car archetype
+        "Engine.Pawn:PlayerReplicationInfo",                   # 1 - car->PRI link
+        "Engine.PlayerReplicationInfo:UniqueId",               # 2 - PRI->identity
+        "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",  # 3 - countdown
+        "TAGame.Car_TA:ReplicatedDemolishExtended",            # 4 - demo notification
+    ]
+    frames = [
+        # Frame 0: Create victim car 1 + attacker car 2, wire identities, start play
+        {"time": 0.0, "delta": 0.033,
+         "new_actors": [
+             {"actor_id": 1, "object_id": 0},   # victim car
+             {"actor_id": 2, "object_id": 0},   # attacker car
+         ],
+         "updated_actors": [
+             {"actor_id": 1, "object_id": 1,
+              "attribute": {"ActiveActor": {"actor": 10}}},   # victim car -> PRI 10
+             {"actor_id": 10, "object_id": 2,
+              "attribute": {"UniqueId": {"remote_id": {"Steam": "VICTIM"}}}},
+             {"actor_id": 2, "object_id": 1,
+              "attribute": {"ActiveActor": {"actor": 20}}},   # attacker car -> PRI 20
+             {"actor_id": 20, "object_id": 2,
+              "attribute": {"UniqueId": {"remote_id": {"Steam": "ATTACKER"}}}},
+             {"actor_id": 200, "object_id": 3,
+              "attribute": {"Int": 0}},   # countdown=0 → is_playing=True
+         ],
+         "deleted_actors": []},
+        # Frame 1: demolish update on attacker car 2 AND victim car 1 deleted in same frame
+        {"time": 0.033, "delta": 0.033,
+         "new_actors": [],
+         "updated_actors": [
+             {"actor_id": 2, "object_id": 4,
+              "attribute": {"DemolishExtended": {
+                  "self_demolish": False,
+                  "victim": {"active": True, "actor": 1},
+                  "attacker": {"active": True, "actor": 2},
+              }}},
+         ],
+         "deleted_actors": [1]},
+    ]
+
+    replay = {
+        "objects": objects,
+        "network_frames": {"frames": frames},
+    }
+    fa = analyze_frames(replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3")
+
+    assert fa.demos_received.get(("steam", "VICTIM")) == 1, (
+        "demo should be counted even when victim car is deleted in the same frame as the demolish notification"
+    )
+
+
 def test_extract_player_pad_stats():
     replay = load_replay("match.json")
     duration = replay["properties"].get("TotalSecondsPlayed")

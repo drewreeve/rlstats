@@ -313,7 +313,6 @@ def _make_demos_received_handler(
 
     demos_received: dict[tuple[str, str], int] = {}
     demolish_last_active: dict[int, bool] = {}
-
     def on_deleted_actor(ctx: FrameContext, aid: int):
         demolish_last_active.pop(aid, None)
 
@@ -331,12 +330,11 @@ def _make_demos_received_handler(
         if not attacker.get("active"):
             return
         vid = victim["actor"]
-        if vid in ctx.car_actors:
-            victim_identity = ctx.resolve_car_identity(vid)
-            if victim_identity:
-                demos_received[victim_identity] = (
-                    demos_received.get(victim_identity, 0) + 1
-                )
+        victim_identity = ctx.resolve_car_identity(vid) if vid in ctx.car_actors else None
+        if victim_identity:
+            demos_received[victim_identity] = (
+                demos_received.get(victim_identity, 0) + 1
+            )
 
     def finalize(ctx: FrameContext):
         return demos_received
@@ -792,25 +790,10 @@ def analyze_frames(
             elif oid == boost_comp_archetype:
                 ctx.boost_comp_actors.add(aid)
 
-        # 2. Process deleted_actors -> notify ALL handlers for ALL actors first,
-        #    then clean shared state for all. This ensures that if a car and its
-        #    boost component are deleted in the same frame, the boost component's
-        #    handler can still resolve identity via the car mapping.
-        deleted_actors = frame.get("deleted_actors", [])
-        for aid in deleted_actors:
-            for h in deleted_actor_handlers:
-                h.on_deleted_actor(ctx, aid)
-        for aid in deleted_actors:
-            ctx.car_actors.discard(aid)
-            ctx.ball_actors.discard(aid)
-            ctx.boost_comp_actors.discard(aid)
-            ctx.component_to_car.pop(aid, None)
-            ctx.car_to_pri.pop(aid, None)
-            ctx.pri_identity.pop(aid, None)
-            ctx.actor_team.pop(aid, None)
-            ctx.actor_position.pop(aid, None)
-
-        # 3. Process updated_actors -> shared state first, then handler dispatch
+        # 2. Process updated_actors -> shared state first, then handler dispatch
+        #    Updates run before deletions so that handlers processing demolish
+        #    notifications can still resolve victim identity via car_actors
+        #    even when the victim's car is deleted in the same frame.
         for actor in frame.get("updated_actors", []):
             oid = actor.get("object_id")
             aid = actor["actor_id"]
@@ -855,6 +838,24 @@ def analyze_frames(
             if callbacks:
                 for cb in callbacks:
                     cb(ctx, actor)
+
+        # 3. Process deleted_actors -> notify ALL handlers for ALL actors first,
+        #    then clean shared state for all. This ensures that if a car and its
+        #    boost component are deleted in the same frame, the boost component's
+        #    handler can still resolve identity via the car mapping.
+        deleted_actors = frame.get("deleted_actors", [])
+        for aid in deleted_actors:
+            for h in deleted_actor_handlers:
+                h.on_deleted_actor(ctx, aid)
+        for aid in deleted_actors:
+            ctx.car_actors.discard(aid)
+            ctx.ball_actors.discard(aid)
+            ctx.boost_comp_actors.discard(aid)
+            ctx.component_to_car.pop(aid, None)
+            ctx.car_to_pri.pop(aid, None)
+            ctx.pri_identity.pop(aid, None)
+            ctx.actor_team.pop(aid, None)
+            ctx.actor_position.pop(aid, None)
 
     # Finalize all handlers
     poss_result = (
