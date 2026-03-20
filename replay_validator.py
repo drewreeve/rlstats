@@ -4,7 +4,7 @@ import re
 _SECURE_RE = re.compile(r"[^\w.-]")
 
 MIN_FILE_SIZE = 256 * 1024
-MAX_CONTENT_LENGTH = 3 * 1024 * 1024
+MAX_CONTENT_LENGTH = 5 * 1024 * 1024
 
 
 def secure_filename(filename: str) -> str:
@@ -26,7 +26,7 @@ def _validate_filename(filename: str) -> tuple[str, str | None]:
 
 def _validate_size(size: int) -> tuple[str | None, int]:
     if size > MAX_CONTENT_LENGTH:
-        return "File too large (maximum 3MB)", 413
+        return "File too large (maximum 5MB)", 413
     if size < MIN_FILE_SIZE:
         return f"File too small (minimum {MIN_FILE_SIZE // 1024}KB)", 400
     return None, 200

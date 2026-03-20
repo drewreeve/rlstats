@@ -18,7 +18,7 @@
     var fileList = document.getElementById("file-list");
 
     var MIN_SIZE = 256 * 1024;
-    var MAX_SIZE = 3 * 1024 * 1024;
+    var MAX_SIZE = 5 * 1024 * 1024;
     var csrfToken = "";
 
     function showAuth() {
