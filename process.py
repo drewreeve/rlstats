@@ -1,4 +1,5 @@
 import logging
+import os
 import sqlite3
 import subprocess
 
@@ -152,7 +153,8 @@ def process_unprocessed(db_path: Path, replay_dir: Path, *, force: bool = False)
 
     logger.info("Processing %d replay(s)...", len(replay_paths))
 
-    with ProcessPoolExecutor(max_workers=4) as pool:
+    workers = max(1, (os.cpu_count() or 2) // 2)
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(_parse_and_analyze, replay_paths))
 
     conn = _open_write_conn(db_path)
