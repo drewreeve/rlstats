@@ -133,18 +133,24 @@ def _parse_and_analyze(replay_path):
     return analyze_replay(replay)
 
 
-def process_unprocessed(db_path: Path, replay_dir: Path):
-    """Parse and ingest any .replay files that haven't been processed yet."""
-    unprocessed = [
-        p
-        for p in replay_dir.glob("*.replay")
-        if not p.with_suffix(p.suffix + ".ingested").exists()
-    ]
-    if not unprocessed:
+def process_unprocessed(db_path: Path, replay_dir: Path, *, force: bool = False):
+    """Parse and ingest .replay files.
+
+    By default only processes files without an .ingested sentinel.
+    With force=True, reprocesses all .replay files.
+    """
+    if force:
+        replay_paths = sorted(replay_dir.glob("*.replay"))
+    else:
+        replay_paths = sorted(
+            p
+            for p in replay_dir.glob("*.replay")
+            if not p.with_suffix(p.suffix + ".ingested").exists()
+        )
+    if not replay_paths:
         return
 
-    replay_paths = sorted(unprocessed)
-    logger.info("Processing %d unprocessed replay(s) at startup...", len(replay_paths))
+    logger.info("Processing %d replay(s)...", len(replay_paths))
 
     with ProcessPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(_parse_and_analyze, replay_paths))
@@ -161,3 +167,27 @@ def process_unprocessed(db_path: Path, replay_dir: Path):
             replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
     finally:
         conn.close()
+
+
+if __name__ == "__main__":
+    import argparse
+
+    from db import apply_migrations
+
+    logging.basicConfig(level=logging.INFO)
+
+    parser = argparse.ArgumentParser(description="Process .replay files into the database")
+    parser.add_argument(
+        "--force", action="store_true", help="Reprocess all replays, not just new ones"
+    )
+    args = parser.parse_args()
+
+    db_path = Path("db/rl_stats.sqlite")
+    replay_dir = Path("replays")
+
+    db_path.parent.mkdir(exist_ok=True)
+    conn = _open_write_conn(db_path)
+    apply_migrations(conn)
+    conn.close()
+
+    process_unprocessed(db_path, replay_dir, force=args.force)
