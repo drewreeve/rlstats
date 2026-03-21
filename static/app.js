@@ -507,6 +507,49 @@ function renderGoalContribution() {
   );
 }
 
+async function renderOffensivePairings() {
+  const data = await fetchJSON(
+    `/api/stats/offensive-pairings?mode=${currentMode}`,
+  );
+  const canvas = document.getElementById("chart-offensive-pairings");
+  if (!data.length) {
+    charts.offensivePairings = new Chart(canvas, {
+      type: "bar",
+      data: { labels: ["No data"], datasets: [] },
+    });
+    return;
+  }
+  charts.offensivePairings = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: data.map((d) => d.pairing),
+      datasets: [
+        {
+          label: "Goals",
+          data: data.map((d) => d.goals),
+          backgroundColor: data.map((d) =>
+            gradient(canvas, PLAYER_COLORS[d.assister] || STAT_COLORS.goals, 0.85, 0.15),
+          ),
+          borderColor: data.map((d) =>
+            rgba(PLAYER_COLORS[d.assister] || STAT_COLORS.goals, 0.8),
+          ),
+          borderWidth: 1,
+          borderRadius: 2,
+          borderSkipped: false,
+        },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, ticks: { stepSize: 1 } },
+        y: { grid: { display: false } },
+      },
+    },
+  });
+}
+
 /* ── Visibility & Render ────────────────────────── */
 
 function updateCardVisibility() {
@@ -553,6 +596,7 @@ async function renderAll() {
   }
   renderScoreRange();
   renderGoalContribution();
+  renderOffensivePairings();
 }
 
 /* ── Raw Table ─────────────────────────────────── */

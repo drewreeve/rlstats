@@ -137,6 +137,7 @@ STAT_ROUTES = {
     "/api/stats/score-differential": queries.score_differential,
     "/api/stats/goal-contributions": queries.avg_goal_contribution,
     "/api/stats/score-range":        queries.score_range,
+    "/api/stats/offensive-pairings": queries.offensive_pairings,
 }
 
 

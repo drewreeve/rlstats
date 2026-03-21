@@ -81,3 +81,17 @@ JOIN matches m ON m.id = mp.match_id
 WHERE m.game_mode = :game_mode AND p.is_tracked = 1
 GROUP BY p.id, p.name
 ORDER BY p.name;
+
+-- name: offensive_pairings(game_mode)
+-- Goal-assist pairings between tracked players for a given game mode.
+SELECT
+    p_assister.name || ' → ' || p_scorer.name AS pairing,
+    p_assister.name AS assister,
+    COUNT(*) AS goals
+FROM offensive_pairings op
+JOIN players p_scorer ON op.scorer_player_id = p_scorer.id
+JOIN players p_assister ON op.assister_player_id = p_assister.id
+JOIN matches m ON m.id = op.match_id
+WHERE m.game_mode = :game_mode
+GROUP BY p_scorer.id, p_assister.id
+ORDER BY goals DESC;

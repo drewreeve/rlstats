@@ -143,6 +143,25 @@ def test_match_events_nonexistent():
     assert list(queries.match_events(conn, match_id=9999)) == []
 
 
+# -- offensive_pairings --
+
+
+def test_offensive_pairings_query():
+    conn = _all_modes_db()
+    rows = list(queries.offensive_pairings(conn, game_mode="3v3"))
+    assert len(rows) > 0
+    for row in rows:
+        assert "→" in row["pairing"]
+        assert row["goals"] > 0
+        assert row["assister"] in ("Drew", "Steve", "Jeff")
+
+
+def test_offensive_pairings_empty_for_missing_mode():
+    conn = _match_db()
+    rows = list(queries.offensive_pairings(conn, game_mode="2v2"))
+    assert rows == []
+
+
 # -- shooting_pct --
 
 
