@@ -544,7 +544,7 @@ async function renderOffensivePairings() {
       plugins: { legend: { display: false } },
       scales: {
         x: { beginAtZero: true, ticks: { stepSize: 1 } },
-        y: { grid: { display: false } },
+        y: { grid: { display: false }, ticks: { autoSkip: false } },
       },
     },
   });
