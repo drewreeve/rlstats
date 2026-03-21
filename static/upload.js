@@ -17,7 +17,6 @@
     var fileInput = document.getElementById("file-input");
     var fileList = document.getElementById("file-list");
 
-    var MIN_SIZE = 256 * 1024;
     var MAX_SIZE = 5 * 1024 * 1024;
     var csrfToken = "";
 
@@ -111,10 +110,6 @@
         // Client-side validation
         if (!file.name.endsWith(".replay")) {
             setEntryStatus(entry, "error", "NOT A .REPLAY FILE");
-            return;
-        }
-        if (file.size < MIN_SIZE) {
-            setEntryStatus(entry, "error", "TOO SMALL (" + formatSize(file.size) + ")");
             return;
         }
         if (file.size > MAX_SIZE) {

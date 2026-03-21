@@ -1,7 +1,7 @@
-from replay_validator import MAX_CONTENT_LENGTH, MIN_FILE_SIZE, secure_filename
+from replay_validator import MAX_CONTENT_LENGTH, secure_filename
 from replay_validator import validate as validate_replay
 
-VALID_SIZE = 300 * 1024  # 300KB — within bounds
+VALID_SIZE = 1024  # 1KB
 
 
 class TestSecureFilename:
@@ -54,15 +54,6 @@ class TestValidate:
         _, error, status_code = validate_replay("match.replay", oversized)
         assert error is not None
         assert status_code == 413
-
-    def test_too_small(self):
-        _, error, status_code = validate_replay("match.replay", 100)
-        assert error is not None
-        assert status_code == 400
-
-    def test_exact_min_size_accepted(self):
-        _, error, _ = validate_replay("match.replay", MIN_FILE_SIZE)
-        assert error is None
 
     def test_exact_max_size_accepted(self):
         _, error, _ = validate_replay("match.replay", MAX_CONTENT_LENGTH)

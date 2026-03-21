@@ -171,21 +171,6 @@ def test_upload_wrong_extension(tmp_path):
         os.environ.pop("UPLOAD_PASSWORD", None)
 
 
-def test_upload_too_small(tmp_path):
-    client, token, _ = _authed_client(tmp_path)
-    try:
-        from io import BytesIO
-
-        resp = client.post(
-            "/api/upload",
-            files={"file": ("small.replay", BytesIO(b"\x00" * 100), "application/octet-stream")},
-            headers={"X-CSRF-Token": token},
-        )
-        assert resp.status_code == 400
-        assert "small" in resp.json()["error"].lower()
-    finally:
-        os.environ.pop("UPLOAD_PASSWORD", None)
-
 
 def test_upload_duplicate(tmp_path):
     client, token, _ = _authed_client(tmp_path)
