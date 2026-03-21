@@ -3,7 +3,6 @@ import logging
 import os
 import secrets
 import sqlite3
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile
@@ -12,8 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from db import apply_migrations, queries
-from ingest import analyze_replay, write_match
-from process import UploadProcessor, parse_replay
+from process import UploadProcessor, process_unprocessed
 from replay_validator import secure_filename, validate as validate_replay
 
 logger = logging.getLogger(__name__)
@@ -367,14 +365,6 @@ def create_app(db_path, replay_dir=None, processor=None):
     return app
 
 
-def _parse_and_analyze(replay_path):
-    """Worker for parallel startup: parse + analyze a replay without DB access."""
-    replay, error = parse_replay(replay_path)
-    if replay is None:
-        return None
-    return analyze_replay(replay)
-
-
 def main():
     import os
 
@@ -385,31 +375,11 @@ def main():
 
     DB_PATH.parent.mkdir(exist_ok=True)
 
-    # Use a temporary connection for startup tasks only
     conn = _get_conn(DB_PATH)
     apply_migrations(conn)
-
-    # Parse and ingest any unprocessed replay files
-    unprocessed = [
-        p
-        for p in REPLAY_DIR.glob("*.replay")
-        if not p.with_suffix(p.suffix + ".ingested").exists()
-    ]
-    if unprocessed:
-        replay_paths = sorted(unprocessed)
-        print(f"Processing {len(replay_paths)} unprocessed replay(s) at startup...")
-        with ProcessPoolExecutor(max_workers=4) as pool:
-            results = list(pool.map(_parse_and_analyze, replay_paths))
-        ingested = []
-        for path, analysis in zip(replay_paths, results):
-            if analysis is not None:
-                write_match(conn, analysis)
-                ingested.append(path)
-        conn.commit()
-        for replay_path in ingested:
-            replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
-
     conn.close()
+
+    process_unprocessed(DB_PATH, REPLAY_DIR)
 
     processor = UploadProcessor(DB_PATH)
     app = create_app(DB_PATH, processor=processor)

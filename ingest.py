@@ -2,12 +2,8 @@
 # rrrocket JSON -> SQLite
 
 import sqlite3
-from pathlib import Path
 from typing import Any
 
-import orjson
-
-from db import apply_migrations
 from frame_analysis import analyze_frames
 
 TRACKED_PLAYERS = {
@@ -26,8 +22,6 @@ PLATFORM_MAP = {
     "OnlinePlatform_Dingo": "xbox",
 }
 
-DB_PATH = Path("db/rl_stats.sqlite")
-PARSED_REPLAY_DIR = Path("replays")
 PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
 
 
@@ -450,22 +444,3 @@ def ingest_match(conn: sqlite3.Connection, replay: dict):
     if analysis is None:
         return
     write_match(conn, analysis)
-
-
-def ingest_all():
-    DB_PATH.parent.mkdir(exist_ok=True)
-
-    conn = sqlite3.connect(DB_PATH)
-    apply_migrations(conn)
-
-    for path in sorted(PARSED_REPLAY_DIR.glob("*.json")):
-        with open(path, "rb") as f:
-            replay = orjson.loads(f.read())
-        ingest_match(conn, replay)
-
-    conn.commit()
-    conn.close()
-
-
-if __name__ == "__main__":
-    ingest_all()

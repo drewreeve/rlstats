@@ -6,11 +6,20 @@ import orjson
 import threading
 from pathlib import Path
 
-from ingest import ingest_match
+from concurrent.futures import ProcessPoolExecutor
+
+from ingest import analyze_replay, ingest_match, write_match
 
 logger = logging.getLogger(__name__)
 
 _batch_lock = threading.Lock()
+
+
+def _open_write_conn(db_path) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def parse_replay(replay_path: Path) -> tuple[dict | None, str | None]:
@@ -109,10 +118,46 @@ class UploadProcessor:
             self._timer = None
         if files:
             logger.info("Processing %d uploaded replay(s)", len(files))
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON")
+            conn = _open_write_conn(self.db_path)
             try:
                 process_batch(files, conn)
             finally:
                 conn.close()
+
+
+def _parse_and_analyze(replay_path):
+    """Worker for parallel processing: parse + analyze a replay without DB access."""
+    replay, error = parse_replay(replay_path)
+    if replay is None:
+        return None
+    return analyze_replay(replay)
+
+
+def process_unprocessed(db_path: Path, replay_dir: Path):
+    """Parse and ingest any .replay files that haven't been processed yet."""
+    unprocessed = [
+        p
+        for p in replay_dir.glob("*.replay")
+        if not p.with_suffix(p.suffix + ".ingested").exists()
+    ]
+    if not unprocessed:
+        return
+
+    replay_paths = sorted(unprocessed)
+    logger.info("Processing %d unprocessed replay(s) at startup...", len(replay_paths))
+
+    with ProcessPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(_parse_and_analyze, replay_paths))
+
+    conn = _open_write_conn(db_path)
+    try:
+        ingested = []
+        for path, analysis in zip(replay_paths, results):
+            if analysis is not None:
+                write_match(conn, analysis)
+                ingested.append(path)
+        conn.commit()
+        for replay_path in ingested:
+            replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
+    finally:
+        conn.close()
