@@ -177,6 +177,7 @@ def _resolve_obj_ids(objects: list[str]) -> dict[str, int | None]:
         "TAGame.PRI_TA:MatchGoals",
         "TAGame.PRI_TA:MatchShots",
         "TAGame.PRI_TA:MatchSaves",
+        "TAGame.PRI_TA:MatchAssists",
     }
     index = {name: i for i, name in enumerate(objects) if name in names}
     return {name: index.get(name) for name in names}
@@ -587,6 +588,7 @@ def _make_match_events_handler(
         "TAGame.PRI_TA:MatchShots": "shot",
         "TAGame.PRI_TA:MatchSaves": "save",
         "TAGame.PRI_TA:MatchDemolishes": "demo",
+        "TAGame.PRI_TA:MatchAssists": "assist",
     }
     counter_obj_ids: dict[int, str] = {}
     for obj_name, event_type in counter_names.items():

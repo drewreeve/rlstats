@@ -314,7 +314,7 @@ def test_extract_match_events():
 
     # Each event is (event_type, game_seconds, platform, platform_id, team)
     for ev in events:
-        assert ev[0] in ("goal", "shot", "save", "demo")
+        assert ev[0] in ("goal", "shot", "save", "demo", "assist")
         assert isinstance(ev[1], (int, float))
         assert ev[1] >= 0
         assert ev[4] in (0, 1)
@@ -375,6 +375,55 @@ def test_overtime_goals_positioned_after_regulation():
 
     # The overtime goal must be past regulation (>300 game_seconds)
     assert goal_times[-1] > 300
+
+
+def test_assist_events_in_frame_analysis():
+    replay = load_replay("match.json")
+    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
+    assists = [e for e in fa.match_events if e[0] == "assist"]
+    assert len(assists) == 6
+
+
+def test_offensive_pairings_stored():
+    conn = ingest_fixture("match.json")
+    rows = conn.execute("""
+        SELECT p_scorer.name, p_assister.name, op.game_seconds
+        FROM offensive_pairings op
+        JOIN players p_scorer ON op.scorer_player_id = p_scorer.id
+        JOIN players p_assister ON op.assister_player_id = p_assister.id
+        ORDER BY op.game_seconds
+    """).fetchall()
+    assert len(rows) > 0
+    for scorer, assister, _ in rows:
+        assert scorer in ("Drew", "Steve", "Jeff")
+        assert assister in ("Drew", "Steve", "Jeff")
+        assert scorer != assister
+
+
+def test_offensive_pairings_only_tracked_players():
+    conn = ingest_fixture("match.json")
+    rows = conn.execute("""
+        SELECT scorer_player_id, assister_player_id FROM offensive_pairings
+    """).fetchall()
+    tracked_ids = set(
+        conn.execute(
+            "SELECT id FROM players WHERE is_tracked = 1"
+        ).fetchall()
+    )
+    tracked_ids = {r[0] for r in tracked_ids}
+    for scorer_id, assister_id in rows:
+        assert scorer_id in tracked_ids
+        assert assister_id in tracked_ids
+
+
+def test_offensive_pairings_idempotent():
+    conn = in_memory_db()
+    replay = load_replay("match.json")
+    ingest_match(conn, replay)
+    count1 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
+    ingest_match(conn, replay)
+    count2 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
+    assert count1 == count2
 
 
 def test_boost_stats_tracking():

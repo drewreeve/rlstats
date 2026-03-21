@@ -124,9 +124,9 @@ def test_match_events_counts():
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
     events = list(queries.match_events(conn, match_id=match_id))
 
-    assert len(events) == 31
+    assert len(events) == 37
     by_type = Counter(e["event_type"] for e in events)
-    assert by_type == {"shot": 14, "goal": 9, "save": 3, "demo": 5}
+    assert by_type == {"shot": 14, "goal": 9, "save": 3, "demo": 5, "assist": 6}
 
 
 def test_match_events_ordered_by_time():
