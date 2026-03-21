@@ -28,6 +28,7 @@ PLATFORM_MAP = {
 
 DB_PATH = Path("db/rl_stats.sqlite")
 PARSED_REPLAY_DIR = Path("replays")
+PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
 
 
 def _extract_platform_id(player: dict[str, Any]) -> tuple[str, str] | None:
@@ -391,7 +392,10 @@ def write_match(conn: sqlite3.Connection, analysis: dict):
             if row:
                 player_id_map[identity] = row[0]
 
-    # Clear old events before re-inserting
+    # Insert match events and collect goal/assist lists for pairing correlation
+    goal_events: list[tuple[float, int, int]] = []
+    assist_events: list[tuple[float, int, int]] = []
+
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
     for event_type, game_seconds, platform, platform_id, ev_team in analysis[
         "match_events"
@@ -403,6 +407,10 @@ def write_match(conn: sqlite3.Connection, analysis: dict):
             "INSERT INTO match_events (match_id, event_type, game_seconds, player_id, team) VALUES (?, ?, ?, ?, ?)",
             (match_id, event_type, game_seconds, player_id, ev_team),
         )
+        if event_type == "goal":
+            goal_events.append((game_seconds, player_id, ev_team))
+        elif event_type == "assist":
+            assist_events.append((game_seconds, player_id, ev_team))
 
     # Correlate goal+assist events into offensive pairings
     tracked_player_ids = {
@@ -411,42 +419,30 @@ def write_match(conn: sqlite3.Connection, analysis: dict):
         if identity in player_id_map
     }
 
-    goal_events = [
-        (game_seconds, player_id_map[(platform, platform_id)], ev_team)
-        for event_type, game_seconds, platform, platform_id, ev_team in analysis["match_events"]
-        if event_type == "goal" and (platform, platform_id) in player_id_map
-    ]
-    assist_events = [
-        (game_seconds, player_id_map[(platform, platform_id)], ev_team)
-        for event_type, game_seconds, platform, platform_id, ev_team in analysis["match_events"]
-        if event_type == "assist" and (platform, platform_id) in player_id_map
-    ]
-
     conn.execute("DELETE FROM offensive_pairings WHERE match_id = ?", (match_id,))
 
-    PAIRING_WINDOW = 1.0
+    used_assists: set[int] = set()
     for g_time, g_player_id, g_team in goal_events:
-        best_assist = None
-        best_delta = PAIRING_WINDOW + 1
-        for assist in assist_events:
-            a_time, a_player_id, a_team = assist
-            if a_team != g_team or a_player_id == g_player_id:
+        best_idx = None
+        best_delta = float("inf")
+        for i, (a_time, a_player_id, a_team) in enumerate(assist_events):
+            if i in used_assists or a_team != g_team or a_player_id == g_player_id:
                 continue
             delta = abs(g_time - a_time)
             if delta <= PAIRING_WINDOW and delta < best_delta:
                 best_delta = delta
-                best_assist = assist
+                best_idx = i
 
-        if best_assist is None:
+        if best_idx is None:
             continue
 
-        _, a_player_id, _ = best_assist
+        _, a_player_id, _ = assist_events[best_idx]
+        used_assists.add(best_idx)
         if g_player_id in tracked_player_ids and a_player_id in tracked_player_ids:
             conn.execute(
                 "INSERT INTO offensive_pairings (match_id, game_seconds, scorer_player_id, assister_player_id, team) VALUES (?, ?, ?, ?, ?)",
                 (match_id, g_time, g_player_id, a_player_id, g_team),
             )
-        assist_events.remove(best_assist)
 
 
 def ingest_match(conn: sqlite3.Connection, replay: dict):
