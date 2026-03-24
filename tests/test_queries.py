@@ -1,5 +1,7 @@
 import sqlite3
 from collections import Counter
+from collections.abc import Sequence
+from typing import Any
 
 import pytest
 
@@ -45,7 +47,7 @@ def _zero_score_db():
     return conn
 
 
-def _as_tuples(rows, columns):
+def _as_tuples(rows: Any, columns: Sequence[str]) -> list[tuple[Any, ...]]:
     return [tuple(row[column] for column in columns) for row in rows]
 
 
@@ -62,7 +64,7 @@ def test_match_metadata_returns_match():
     assert row["team_score"] == 5
     assert row["opponent_score"] == 4
     assert row["team"] == 1
-    assert row["duration_seconds"] == pytest.approx(304.0368)
+    assert row["duration_seconds"] == pytest.approx(304.0368)  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_match_metadata_nonexistent():
@@ -183,7 +185,7 @@ def test_offensive_pairings_empty_for_missing_mode():
         ]),
     ],
 )
-def test_shooting_pct_values_by_mode(mode, expected):
+def test_shooting_pct_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
     rows = queries.shooting_pct(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "goals", "shots", "shooting_pct"))
@@ -208,7 +210,7 @@ def test_shooting_pct_values_by_mode(mode, expected):
         ]),
     ],
 )
-def test_player_stats_values_by_mode(mode, expected):
+def test_player_stats_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
     rows = queries.player_stats(conn, game_mode=mode)
     actual = _as_tuples(
@@ -226,7 +228,7 @@ def test_player_stats_values_by_mode(mode, expected):
         ("hoops", [("Jeff", 1, 1, 1.0)]),
     ],
 )
-def test_mvp_wins_values_by_mode(mode, expected):
+def test_mvp_wins_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
     rows = queries.mvp_wins(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "mvp_matches", "mvp_wins", "win_rate"))
@@ -241,7 +243,7 @@ def test_mvp_wins_values_by_mode(mode, expected):
         ("hoops", [("Jeff", 1)]),
     ],
 )
-def test_mvp_losses_values_by_mode(mode, expected):
+def test_mvp_losses_values_by_mode(mode: str, expected: Any):
     conn = _mvp_losses_modes_db()
     rows = queries.mvp_losses(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "loss_mvps"))
@@ -266,7 +268,7 @@ def test_mvp_losses_values_by_mode(mode, expected):
         ]),
     ],
 )
-def test_avg_score_values_by_mode(mode, expected):
+def test_avg_score_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
     rows = queries.avg_score(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "matches", "total_score", "avg_score"))
@@ -302,7 +304,7 @@ def test_weekday_values_3v3():
         ]),
     ],
 )
-def test_score_range_values_by_mode(mode, expected):
+def test_score_range_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
     rows = queries.score_range(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "min", "max"))
@@ -350,7 +352,7 @@ def test_score_differential_sorted_by_differential():
         ("hoops", 1, 0),
     ],
 )
-def test_streaks_values_by_mode(mode, expected_win, expected_loss):
+def test_streaks_values_by_mode(mode: str, expected_win: int, expected_loss: int):
     conn = _all_modes_db()
     rows = list(queries.streaks(conn, game_mode=mode))
     if rows:

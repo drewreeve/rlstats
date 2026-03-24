@@ -2,9 +2,10 @@
 # Extracts statistics from rrrocket network frame data
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 
 NETWORK_PLATFORM_MAP = {
@@ -63,18 +64,18 @@ class FrameContext:
     """Shared state maintained by the orchestrator loop."""
 
     # Actor archetype sets
-    car_actors: set[int] = field(default_factory=set)
-    ball_actors: set[int] = field(default_factory=set)
-    boost_comp_actors: set[int] = field(default_factory=set)
+    car_actors: set[int] = field(default_factory=set[int])
+    ball_actors: set[int] = field(default_factory=set[int])
+    boost_comp_actors: set[int] = field(default_factory=set[int])
 
     # Identity resolution chain
-    car_to_pri: dict[int, int] = field(default_factory=dict)
-    pri_identity: dict[int, tuple[str, str]] = field(default_factory=dict)
-    component_to_car: dict[int, int] = field(default_factory=dict)
+    car_to_pri: dict[int, int] = field(default_factory=dict[int, int])
+    pri_identity: dict[int, tuple[str, str]] = field(default_factory=dict[int, tuple[str, str]])
+    component_to_car: dict[int, int] = field(default_factory=dict[int, int])
 
     # Per-actor state
-    actor_team: dict[int, int] = field(default_factory=dict)
-    actor_position: dict[int, tuple[float, float]] = field(default_factory=dict)
+    actor_team: dict[int, int] = field(default_factory=dict[int, int])
+    actor_position: dict[int, tuple[float, float]] = field(default_factory=dict[int, tuple[float, float]])
 
     # Game state
     is_playing: bool = False
@@ -91,7 +92,7 @@ class FrameContext:
 class Handler:
     """Lightweight handler registration."""
 
-    update_obj_ids: set[int] = field(default_factory=set)
+    update_obj_ids: set[int] = field(default_factory=set[int])
     on_update: Any = None  # (ctx, actor) -> None
     on_deleted_actor: Any = None  # (ctx, actor_id) -> None
     finalize: Any = None  # (ctx) -> result
@@ -101,16 +102,16 @@ def _resolve_network_identity(
     uid: dict[str, Any],
 ) -> tuple[str, str] | None:
     """Resolve a UniqueId attribute from network frames to (platform, platform_id)."""
-    remote = uid.get("remote_id", {})
+    remote: Any = uid.get("remote_id", {})
     if not remote:
         return None
     platform_key = next(iter(remote))
     platform = NETWORK_PLATFORM_MAP.get(platform_key)
     if not platform:
         return None
-    value = remote[platform_key]
+    value: Any = remote[platform_key]
     if isinstance(value, dict):
-        platform_id = value.get("online_id")
+        platform_id: Any = cast(dict[str, Any], value).get("online_id")
     else:
         platform_id = value
     if not platform_id:
@@ -119,11 +120,11 @@ def _resolve_network_identity(
 
 
 def _parse_pickup(
-    actor: dict,
+    actor: dict[str, Any],
     last_pickup_state: dict[int, int],
     actor_team: dict[int, int],
     actor_position: dict[int, tuple[float, float]],
-    big_pads: list[tuple[float, float]],
+    big_pads: Sequence[tuple[float, float]],
 ) -> tuple[int, int, bool, bool] | None:
     """Parse a NewReplicatedPickupData actor update.
 
@@ -197,7 +198,7 @@ def _make_possession_handler(
 
     touches: list[tuple[float, int]] = []
 
-    def on_update(ctx: FrameContext, actor: dict):
+    def on_update(ctx: FrameContext, actor: dict[str, Any]):
         team_num = actor.get("attribute", {}).get("Byte")
         if team_num is not None:
             touches.append((ctx.frame_time, team_num))
@@ -236,7 +237,7 @@ def _make_ball_thirds_handler(
 
     samples: list[tuple[float, float]] = []
 
-    def on_update(ctx: FrameContext, actor: dict):
+    def on_update(ctx: FrameContext, actor: dict[str, Any]):
         if actor["actor_id"] not in ctx.ball_actors:
             return
         loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
@@ -285,7 +286,7 @@ def _make_demolitions_handler(
 
     actor_demos: dict[int, int] = {}
 
-    def on_update(ctx: FrameContext, actor: dict):
+    def on_update(ctx: FrameContext, actor: dict[str, Any]):
         val = actor.get("attribute", {}).get("Int", 0)
         aid = actor["actor_id"]
         actor_demos[aid] = max(actor_demos.get(aid, 0), val)
@@ -317,7 +318,7 @@ def _make_demos_received_handler(
     def on_deleted_actor(ctx: FrameContext, aid: int):
         demolish_last_active.pop(aid, None)
 
-    def on_update(ctx: FrameContext, actor: dict):
+    def on_update(ctx: FrameContext, actor: dict[str, Any]):
         demolish = actor.get("attribute", {}).get("DemolishExtended", {})
         victim = demolish.get("victim", {})
         currently_active = bool(victim.get("active"))
@@ -351,7 +352,7 @@ def _make_demos_received_handler(
 def _make_boost_stats_handler(
     obj_ids: dict[str, int | None],
     tracked_team: int | None,
-    big_pads: list[tuple[float, float]],
+    big_pads: Sequence[tuple[float, float]],
 ) -> Handler | None:
     if tracked_team is None:
         return None
@@ -366,7 +367,7 @@ def _make_boost_stats_handler(
     def on_deleted_actor(ctx: FrameContext, aid: int):
         last_pickup_state.pop(aid, None)
 
-    def on_update(ctx: FrameContext, actor: dict):
+    def on_update(ctx: FrameContext, actor: dict[str, Any]):
         result = _parse_pickup(
             actor, last_pickup_state, ctx.actor_team, ctx.actor_position, big_pads
         )
@@ -399,7 +400,7 @@ def _make_boost_stats_handler(
 def _make_movement_handler(
     obj_ids: dict[str, int | None],
     duration: int | None,
-    big_pads: list[tuple[float, float]],
+    big_pads: Sequence[tuple[float, float]],
 ) -> Handler | None:
     if not duration or duration <= 0:
         return None
@@ -437,7 +438,7 @@ def _make_movement_handler(
             if identity:
                 identity_speeds.setdefault(identity, []).extend(samples)
 
-    def on_update(ctx: FrameContext, actor: dict):
+    def on_update(ctx: FrameContext, actor: dict[str, Any]):
         oid = actor.get("object_id")
         aid = actor["actor_id"]
 
@@ -475,7 +476,7 @@ def _make_movement_handler(
             )
             if result is None:
                 return
-            instigator, team, is_big, is_stolen = result
+            instigator, _, is_big, is_stolen = result
             identity = ctx.resolve_car_identity(instigator)
             if identity is None:
                 return
@@ -607,7 +608,7 @@ def _make_match_events_handler(
     update_ids: set[int] = {sr_obj_id, team_obj_id}
     update_ids.update(counter_obj_ids.keys())
 
-    def on_update(ctx: FrameContext, actor: dict):
+    def on_update(ctx: FrameContext, actor: dict[str, Any]):
         obj_id = actor.get("object_id")
         aid = actor["actor_id"]
 
@@ -630,7 +631,7 @@ def _make_match_events_handler(
                     raw_events.append((event_type, ctx.frame_time, aid))
             actor_counters[aid][event_type] = val
 
-    def finalize(ctx: FrameContext):
+    def finalize(ctx: FrameContext) -> list[tuple[str, float, str, str, int]]:
         if not clock_updates or not raw_events:
             return []
 
@@ -692,7 +693,7 @@ def _make_match_events_handler(
 
 
 def analyze_frames(
-    replay: dict,
+    replay: dict[str, Any],
     tracked_team: int | None,
     tracked_identities: set[tuple[str, str]],
     duration: int | None,
@@ -766,7 +767,7 @@ def analyze_frames(
     ]
 
     # Build dispatch table: object_id -> list of handler on_update functions
-    update_dispatch: dict[int, list] = {}
+    update_dispatch: dict[int, list[Any]] = {}
     for h in handlers:
         if h.on_update:
             for oid in h.update_obj_ids:
@@ -868,15 +869,15 @@ def analyze_frames(
         if ball_thirds_h
         else (None, None, None)
     )
-    demo_result = demolitions_h.finalize(ctx) if demolitions_h else {}
+    demo_result: Any = demolitions_h.finalize(ctx) if demolitions_h else {}
     boost_result = (
         boost_stats_h.finalize(ctx)
         if boost_stats_h
         else (None, None, None, None)
     )
-    movement_result = movement_h.finalize(ctx) if movement_h else {}
-    demos_recv_result = demos_received_h.finalize(ctx) if demos_received_h else {}
-    events_result = (
+    movement_result: Any = movement_h.finalize(ctx) if movement_h else {}
+    demos_recv_result: Any = demos_received_h.finalize(ctx) if demos_received_h else {}
+    events_result: Any = (
         match_events_h.finalize(ctx) if match_events_h else []
     )
 

@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 from ingest import ingest_match, get_or_create_player, TRACKED_PLAYERS
 from frame_analysis import analyze_frames
@@ -6,7 +8,7 @@ from tests.fixtures import in_memory_db, load_replay, cached_db
 ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
 
 
-def ingest_fixture(fixture):
+def ingest_fixture(fixture: str) -> sqlite3.Connection:
     return cached_db(fixture)
 
 
@@ -27,7 +29,7 @@ def ingest_all_fixtures():
         ("hoops.json", "win", 5, 2),
     ],
 )
-def test_match_result_and_scores(fixture, expected_result, expected_team, expected_opp):
+def test_match_result_and_scores(fixture: str, expected_result: str, expected_team: int, expected_opp: int):
     conn = ingest_fixture(fixture)
     row = conn.execute(
         "SELECT result, team_score, opponent_score FROM matches"
@@ -49,7 +51,7 @@ def test_match_result_and_scores(fixture, expected_result, expected_team, expect
         ("hoops.json", "Jeff"),
     ],
 )
-def test_team_mvp(fixture, expected_mvp):
+def test_team_mvp(fixture: str, expected_mvp: str):
     conn = ingest_fixture(fixture)
     mvp_name = conn.execute("""
         SELECT p.name
@@ -119,7 +121,7 @@ def test_team_mvp(fixture, expected_mvp):
         ),
     ],
 )
-def test_player_stats_per_match(fixture, expected_stats):
+def test_player_stats_per_match(fixture: str, expected_stats: list[tuple[str, int, int, int, int, int]]):
     conn = ingest_fixture(fixture)
     rows = conn.execute("""
         SELECT p.name, mp.goals, mp.assists, mp.saves, mp.shots, mp.score
@@ -530,7 +532,7 @@ def test_player_movement_stats_tracking():
     """).fetchall()
 
     assert len(rows) == 6
-    for name, bpm, avg_spd, supersonic, small_pads, large_pads in rows:
+    for name, bpm, avg_spd, supersonic, _, _ in rows:
         assert bpm is not None, f"{name} boost_per_minute is null"
         assert avg_spd is not None, f"{name} avg_speed is null"
         assert supersonic is not None, f"{name} time_supersonic_pct is null"
@@ -579,7 +581,7 @@ def test_extract_player_movement_stats():
     assert drew_key in stats
     assert jeff_key in stats
 
-    for identity, s in stats.items():
+    for _, s in stats.items():
         assert "boost_per_minute" in s
         assert "avg_speed" in s
         assert "time_supersonic_pct" in s
@@ -839,7 +841,7 @@ def test_extract_player_pad_stats():
 
     assert len(stats) > 0
 
-    for identity, s in stats.items():
+    for _, s in stats.items():
         small = s["small_pads"]
         large = s["large_pads"]
         stolen_small = s["stolen_small_pads"]

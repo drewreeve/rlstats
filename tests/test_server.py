@@ -1,4 +1,6 @@
 import sqlite3
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -13,20 +15,20 @@ from server import (
 from tests.fixtures import cached_db, file_db
 
 
-def _db_with_replay():
+def _db_with_replay() -> sqlite3.Connection:
     conn = cached_db("zero_score.json")
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def _db_with_all_replays():
+def _db_with_all_replays() -> sqlite3.Connection:
     conn = cached_db("zero_score.json", "match.json", "forefeit.json")
     conn.row_factory = sqlite3.Row
     return conn
 
 
 @pytest.fixture
-def match_client(tmp_path):
+def match_client(tmp_path: Path) -> TestClient:
     db_path = file_db(tmp_path)
     source = cached_db("match.json")
     conn = sqlite3.connect(db_path)
@@ -38,8 +40,8 @@ def match_client(tmp_path):
 # -- query_matches --
 
 
-def _matches(conn, **kwargs):
-    defaults = dict(page=1, per_page=25, search="", game_mode="", result="", date_from="", date_to="")
+def _matches(conn: sqlite3.Connection, **kwargs: Any) -> dict[str, Any]:
+    defaults: dict[str, Any] = dict(page=1, per_page=25, search="", game_mode="", result="", date_from="", date_to="")
     return query_matches(conn, **{**defaults, **kwargs})
 
 
@@ -80,7 +82,7 @@ def test_query_matches_pagination():
     assert len(page2["matches"]) == 1
 
 
-def test_query_matches_per_page_capped(tmp_path):
+def test_query_matches_per_page_capped(tmp_path: Path):
     client = TestClient(create_app(file_db(tmp_path)), base_url="https://testserver")
     response = client.get("/api/matches?per_page=999")
 
@@ -132,7 +134,7 @@ def test_query_match_players_nonexistent_match():
 
 
 @pytest.mark.parametrize("path", [*STAT_ROUTES.keys(), "/api/stats/streaks"])
-def test_stat_route_returns_200(match_client, path):
+def test_stat_route_returns_200(match_client: TestClient, path: str) -> None:
     response = match_client.get(path)
 
     assert response.status_code == 200
@@ -143,11 +145,11 @@ def test_stat_route_returns_200(match_client, path):
 # -- match detail endpoint --
 
 
-def test_match_detail_returns_team_split(match_client):
+def test_match_detail_returns_team_split(match_client: TestClient) -> None:
     response = match_client.get("/api/matches/1")
 
     assert response.status_code == 200
-    data = response.json()
+    data: Any = response.json()
     assert "match" in data
     assert "team_players" in data
     assert "opponent_players" in data
@@ -165,15 +167,15 @@ def test_match_detail_returns_team_split(match_client):
     assert "Drew" not in opponent_names
 
 
-def test_match_detail_404_nonexistent(match_client):
+def test_match_detail_404_nonexistent(match_client: TestClient) -> None:
     response = match_client.get("/api/matches/9999")
 
     assert response.status_code == 404
 
 
-def test_match_detail_events(match_client):
+def test_match_detail_events(match_client: TestClient) -> None:
     response = match_client.get("/api/matches/1")
-    data = response.json()
+    data: Any = response.json()
 
     events = data["events"]
     event_types = {e["event_type"] for e in events}

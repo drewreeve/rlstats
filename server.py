@@ -3,10 +3,12 @@ import logging
 import os
 import secrets
 import sqlite3
+from collections.abc import Awaitable, Callable, Generator
 from pathlib import Path
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -22,11 +24,11 @@ REPLAY_DIR = Path("replays")
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
 
-def query_matches(conn, *, page, per_page, search, game_mode, result, date_from, date_to):
+def query_matches(conn: sqlite3.Connection, *, page: int, per_page: int, search: str, game_mode: str, result: str, date_from: str, date_to: str) -> dict[str, Any]:
     offset = (page - 1) * per_page
 
-    where = []
-    bindings = {}
+    where: list[str] = []
+    bindings: dict[str, Any] = {}
     if game_mode:
         where.append("m.game_mode = :game_mode")
         bindings["game_mode"] = game_mode
@@ -71,12 +73,12 @@ def query_matches(conn, *, page, per_page, search, game_mode, result, date_from,
     return {"matches": matches, "total": total, "page": page, "per_page": per_page}
 
 
-def query_match_players(conn, match_id):
+def query_match_players(conn: sqlite3.Connection, match_id: int) -> list[dict[str, Any]]:
     rows = queries.match_players(conn, match_id=match_id)
     return [dict(r) for r in rows]
 
 
-def query_match_detail(conn, match_id):
+def query_match_detail(conn: sqlite3.Connection, match_id: int) -> dict[str, Any] | None:
     match = queries.match_metadata(conn, match_id=match_id)
     if not match:
         return None
@@ -139,7 +141,7 @@ STAT_ROUTES = {
 }
 
 
-def _get_conn(db_path):
+def _get_conn(db_path: str | Path) -> sqlite3.Connection:
     """Open a read connection to the database."""
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -147,20 +149,20 @@ def _get_conn(db_path):
     return conn
 
 
-def create_app(db_path, replay_dir=None, processor=None):
+def create_app(db_path: str | Path, replay_dir: Path | None = None, processor: UploadProcessor | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
 
     upload_dir = replay_dir or REPLAY_DIR
 
-    def get_conn():
+    def get_conn() -> Generator[sqlite3.Connection, None, None]:
         conn = _get_conn(db_path)
         try:
             yield conn
         finally:
             conn.close()
 
-    @app.middleware("http")
-    async def security_headers(request: Request, call_next):
+    @app.middleware("http")  # pyright: ignore[reportUnusedFunction]
+    async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -180,8 +182,8 @@ def create_app(db_path, replay_dir=None, processor=None):
         )
         return response
 
-    @app.middleware("http")
-    async def csrf_check(request: Request, call_next):
+    @app.middleware("http")  # pyright: ignore[reportUnusedFunction]
+    async def csrf_check(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         if request.method == "POST":
             token = request.headers.get("X-CSRF-Token", "")
             expected = request.session.get("csrf_token", "")
@@ -206,7 +208,7 @@ def create_app(db_path, replay_dir=None, processor=None):
     index_path = str(STATIC_DIR / "index.html")
     for html_path in ["/", "/2v2", "/hoops", "/history"]:
 
-        def _make_index(p=html_path):
+        def _make_index(p: str = html_path):
             async def _index():
                 return FileResponse(index_path)
 
@@ -297,7 +299,7 @@ def create_app(db_path, replay_dir=None, processor=None):
 
     @app.get("/api/matches")
     async def matches(
-        conn=Depends(get_conn),
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
         page: int = Query(1, ge=1),
         per_page: int = Query(25, ge=1, le=100),
         search: str = "",
@@ -318,11 +320,11 @@ def create_app(db_path, replay_dir=None, processor=None):
         )
 
     @app.get("/api/matches/{match_id}/players")
-    async def match_players_route(match_id: int, conn=Depends(get_conn)):
+    async def match_players_route(match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]):
         return query_match_players(conn, match_id)
 
     @app.get("/api/matches/{match_id}")
-    async def match_detail(match_id: int, conn=Depends(get_conn)):
+    async def match_detail(match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]):
         data = query_match_detail(conn, match_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Not found")
@@ -333,9 +335,10 @@ def create_app(db_path, replay_dir=None, processor=None):
     def game_mode(mode: str = "3v3") -> str:
         return mode if mode in ALLOWED_MODES else "3v3"
 
-    def make_stat_handler(fn):
-        async def view(mode=Depends(game_mode), conn=Depends(get_conn)):
-            return [dict(r) for r in fn(conn, game_mode=mode)]
+    def make_stat_handler(fn: Any) -> Any:
+        async def view(mode: Annotated[str, Depends(game_mode)], conn: Annotated[sqlite3.Connection, Depends(get_conn)]) -> list[dict[str, Any]]:
+            rows: Any = fn(conn, game_mode=mode)
+            return [dict(r) for r in rows]
 
         return view
 
@@ -343,7 +346,7 @@ def create_app(db_path, replay_dir=None, processor=None):
         app.get(path, name=path)(make_stat_handler(handler_fn))
 
     @app.get("/api/stats/streaks")
-    async def streaks(mode=Depends(game_mode), conn=Depends(get_conn)):
+    async def streaks(mode: Annotated[str, Depends(game_mode)], conn: Annotated[sqlite3.Connection, Depends(get_conn)]):
         row = next(iter(queries.streaks(conn, game_mode=mode)), None)
         if row:
             return {

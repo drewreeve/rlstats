@@ -1,25 +1,28 @@
 import json
+import sqlite3
 import subprocess
 import threading
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from process import UploadProcessor, parse_replay, process_batch, process_replay
 from tests.fixtures import file_db, in_memory_db, load_replay
 
 
-def _make_conn():
+def _make_conn() -> sqlite3.Connection:
     conn = in_memory_db()
     conn.row_factory = None  # use tuples for simplicity
     return conn
 
 
-def test_parse_replay_success(tmp_path):
+def test_parse_replay_success(tmp_path: Path):
     """parse_replay returns parsed dict on success."""
     replay_data = load_replay("match.json")
     replay_path = tmp_path / "test.replay"
     replay_path.write_bytes(b"\x00" * 1024)
 
-    def fake_rrrocket(args, **kwargs):
+    def fake_rrrocket(args: Any, **kwargs: Any):
         stdout = json.dumps(replay_data).encode()
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
@@ -32,7 +35,7 @@ def test_parse_replay_success(tmp_path):
     assert not (tmp_path / "test.replay.json").exists()
 
 
-def test_parse_replay_failure(tmp_path):
+def test_parse_replay_failure(tmp_path: Path):
     """parse_replay removes .replay on rrrocket failure."""
     replay_path = tmp_path / "corrupt.replay"
     replay_path.write_bytes(b"\x00" * 1024)
@@ -43,11 +46,12 @@ def test_parse_replay_failure(tmp_path):
         result, error = parse_replay(replay_path)
 
     assert result is None
+    assert error is not None
     assert "rrrocket failed" in error
     assert not replay_path.exists()
 
 
-def test_process_replay_success(tmp_path):
+def test_process_replay_success(tmp_path: Path):
     """process_replay parses and ingests a replay without writing a marker."""
     conn = _make_conn()
     replay_data = load_replay("match.json")
@@ -55,7 +59,7 @@ def test_process_replay_success(tmp_path):
     replay_path = tmp_path / "test.replay"
     replay_path.write_bytes(b"\x00" * 1024)
 
-    def fake_rrrocket(args, **kwargs):
+    def fake_rrrocket(args: Any, **kwargs: Any):
         stdout = json.dumps(replay_data).encode()
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
@@ -71,13 +75,13 @@ def test_process_replay_success(tmp_path):
     assert not (tmp_path / "test.replay.ingested").exists()
 
 
-def test_process_replay_ingest_failure(tmp_path):
+def test_process_replay_ingest_failure(tmp_path: Path):
     """When ingest fails, .replay is removed and no marker is written."""
     conn = _make_conn()
     replay_path = tmp_path / "bad.replay"
     replay_path.write_bytes(b"\x00" * 1024)
 
-    def fake_rrrocket(args, **kwargs):
+    def fake_rrrocket(args: Any, **kwargs: Any):
         stdout = b'{"properties": {}}'
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
@@ -89,17 +93,18 @@ def test_process_replay_ingest_failure(tmp_path):
         success, error = process_replay(replay_path, conn)
 
     assert success is False
+    assert error is not None
     assert "Ingest failed" in error
     assert not replay_path.exists()
     assert not (tmp_path / "bad.replay.ingested").exists()
 
 
-def test_process_batch_commits(tmp_path):
+def test_process_batch_commits(tmp_path: Path):
     """process_batch processes multiple files and commits once."""
     conn = _make_conn()
     replay_data = load_replay("match.json")
 
-    files = []
+    files: list[Path] = []
     for i in range(3):
         p = tmp_path / f"match{i}.replay"
         p.write_bytes(b"\x00" * 1024)
@@ -107,7 +112,7 @@ def test_process_batch_commits(tmp_path):
 
     call_count = 0
 
-    def fake_rrrocket(args, **kwargs):
+    def fake_rrrocket(args: Any, **kwargs: Any):
         nonlocal call_count
         # Give each match a unique GUID so they don't collide
         data = json.loads(json.dumps(replay_data))
@@ -126,12 +131,12 @@ def test_process_batch_commits(tmp_path):
         assert (p.with_suffix(p.suffix + ".ingested")).exists()
 
 
-def test_upload_processor_debounce(tmp_path):
+def test_upload_processor_debounce(tmp_path: Path):
     """Multiple enqueues within the delay result in a single batch."""
     db_path = file_db(tmp_path)
-    batch_calls = []
+    batch_calls: list[list[Path]] = []
 
-    def fake_batch(f, c):
+    def fake_batch(f: list[Path], c: sqlite3.Connection) -> dict[str, tuple[bool, None]]:
         batch_calls.append(list(f))
         return {p.name: (True, None) for p in f}
 
@@ -143,13 +148,13 @@ def test_upload_processor_debounce(tmp_path):
 
         # Wait for the debounce timer to fire
         done = threading.Event()
-        original_flush = proc._flush
+        original_flush = proc.flush
 
-        def patched_flush():
+        def patched_flush() -> None:
             original_flush()
             done.set()
 
-        proc._flush = patched_flush
+        proc.flush = patched_flush  # type: ignore[method-assign]
         # Re-enqueue to trigger our patched flush
         proc.enqueue(tmp_path / "match5.replay")
         done.wait(timeout=2.0)

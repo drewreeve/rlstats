@@ -2,10 +2,11 @@ import logging
 import os
 import sqlite3
 import subprocess
-
-import orjson
 import threading
 from pathlib import Path
+from typing import Any
+
+import orjson
 
 from concurrent.futures import ProcessPoolExecutor
 
@@ -16,14 +17,14 @@ logger = logging.getLogger(__name__)
 _batch_lock = threading.Lock()
 
 
-def _open_write_conn(db_path) -> sqlite3.Connection:
+def _open_write_conn(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
-def parse_replay(replay_path: Path) -> tuple[dict | None, str | None]:
+def parse_replay(replay_path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """Run rrrocket on a .replay file and return the parsed JSON.
 
     Returns (parsed_dict, None) on success. On failure, removes the corrupt
@@ -82,7 +83,7 @@ def process_batch(files: list[Path], conn: sqlite3.Connection) -> dict[str, tupl
 
     Returns a dict mapping filename to (success, error_message) for each file.
     """
-    results = {}
+    results: dict[str, tuple[bool, str | None]] = {}
     with _batch_lock:
         for replay_path in files:
             results[replay_path.name] = process_replay(replay_path, conn)
@@ -96,7 +97,7 @@ def process_batch(files: list[Path], conn: sqlite3.Connection) -> dict[str, tupl
 class UploadProcessor:
     """Debounced batch processor for uploaded replay files."""
 
-    def __init__(self, db_path, delay=2.0):
+    def __init__(self, db_path: str | Path, delay: float = 2.0):
         self.db_path = db_path
         self.delay = delay
         self._queue: list[Path] = []
@@ -108,11 +109,11 @@ class UploadProcessor:
             self._queue.append(path)
             if self._timer is not None:
                 self._timer.cancel()
-            self._timer = threading.Timer(self.delay, self._flush)
+            self._timer = threading.Timer(self.delay, self.flush)
             self._timer.daemon = True
             self._timer.start()
 
-    def _flush(self):
+    def flush(self) -> None:
         with self._lock:
             files = list(self._queue)
             self._queue.clear()
@@ -126,9 +127,9 @@ class UploadProcessor:
                 conn.close()
 
 
-def _parse_and_analyze(replay_path):
+def _parse_and_analyze(replay_path: Path) -> dict[str, Any] | None:
     """Worker for parallel processing: parse + analyze a replay without DB access."""
-    replay, error = parse_replay(replay_path)
+    replay, _ = parse_replay(replay_path)
     if replay is None:
         return None
     return analyze_replay(replay)
@@ -159,7 +160,7 @@ def process_unprocessed(db_path: Path, replay_dir: Path, *, force: bool = False)
 
     conn = _open_write_conn(db_path)
     try:
-        ingested = []
+        ingested: list[Path] = []
         for path, analysis in zip(replay_paths, results):
             if analysis is not None:
                 write_match(conn, analysis)

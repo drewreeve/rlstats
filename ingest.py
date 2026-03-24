@@ -280,7 +280,7 @@ def _upsert_match_players(
         )
 
 
-def analyze_replay(replay: dict) -> dict | None:
+def analyze_replay(replay: dict[str, Any]) -> dict[str, Any] | None:
     props = replay.get("properties", {})
 
     replay_hash = props.get("MatchGUID") or props.get("MatchGuid")
@@ -336,7 +336,7 @@ def analyze_replay(replay: dict) -> dict | None:
     }
 
 
-def write_match(conn: sqlite3.Connection, analysis: dict):
+def write_match(conn: sqlite3.Connection, analysis: dict[str, Any]):
     mvp_player_id = _resolve_mvp_player_id(conn, analysis["tracked_players"])
 
     match_id = _upsert_match(
@@ -439,7 +439,7 @@ def write_match(conn: sqlite3.Connection, analysis: dict):
             )
 
 
-def ingest_match(conn: sqlite3.Connection, replay: dict):
+def ingest_match(conn: sqlite3.Connection, replay: dict[str, Any]):
     analysis = analyze_replay(replay)
     if analysis is None:
         return

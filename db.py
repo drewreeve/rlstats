@@ -1,12 +1,13 @@
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import aiosql
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 SQL_DIR = Path(__file__).parent / "sql"
 
-queries = aiosql.from_path(SQL_DIR, "sqlite3")
+queries: Any = aiosql.from_path(SQL_DIR, "sqlite3")  # pyright: ignore[reportUnknownMemberType]
 
 
 def apply_migrations(conn: sqlite3.Connection):
