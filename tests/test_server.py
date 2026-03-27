@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from fastapi.testclient import TestClient
 
 from server import (
@@ -41,7 +40,15 @@ def match_client(tmp_path: Path) -> TestClient:
 
 
 def _matches(conn: sqlite3.Connection, **kwargs: Any) -> dict[str, Any]:
-    defaults: dict[str, Any] = dict(page=1, per_page=25, search="", game_mode="", result="", date_from="", date_to="")
+    defaults: dict[str, Any] = dict(
+        page=1,
+        per_page=25,
+        search="",
+        game_mode="",
+        result="",
+        date_from="",
+        date_to="",
+    )
     return query_matches(conn, **{**defaults, **kwargs})
 
 

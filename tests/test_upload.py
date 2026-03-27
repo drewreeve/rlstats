@@ -130,7 +130,13 @@ def test_upload_valid_file(tmp_path: Path):
 
         resp = client.post(
             "/api/upload",
-            files={"file": ("match.replay", BytesIO(_replay_content()), "application/octet-stream")},
+            files={
+                "file": (
+                    "match.replay",
+                    BytesIO(_replay_content()),
+                    "application/octet-stream",
+                )
+            },
             headers={"X-CSRF-Token": token},
         )
         assert resp.status_code == 201
@@ -150,7 +156,13 @@ def test_upload_unauthenticated(tmp_path: Path):
     token = _get_csrf_token(client)
     resp = client.post(
         "/api/upload",
-        files={"file": ("match.replay", BytesIO(_replay_content()), "application/octet-stream")},
+        files={
+            "file": (
+                "match.replay",
+                BytesIO(_replay_content()),
+                "application/octet-stream",
+            )
+        },
         headers={"X-CSRF-Token": token},
     )
     assert resp.status_code == 401
@@ -163,14 +175,19 @@ def test_upload_wrong_extension(tmp_path: Path):
 
         resp = client.post(
             "/api/upload",
-            files={"file": ("match.txt", BytesIO(_replay_content()), "application/octet-stream")},
+            files={
+                "file": (
+                    "match.txt",
+                    BytesIO(_replay_content()),
+                    "application/octet-stream",
+                )
+            },
             headers={"X-CSRF-Token": token},
         )
         assert resp.status_code == 400
         assert "replay" in resp.json()["error"].lower()
     finally:
         os.environ.pop("UPLOAD_PASSWORD", None)
-
 
 
 def test_upload_duplicate(tmp_path: Path):
@@ -181,14 +198,26 @@ def test_upload_duplicate(tmp_path: Path):
         # Upload once
         client.post(
             "/api/upload",
-            files={"file": ("dup.replay", BytesIO(_replay_content()), "application/octet-stream")},
+            files={
+                "file": (
+                    "dup.replay",
+                    BytesIO(_replay_content()),
+                    "application/octet-stream",
+                )
+            },
             headers={"X-CSRF-Token": token},
         )
 
         # Upload again
         resp = client.post(
             "/api/upload",
-            files={"file": ("dup.replay", BytesIO(_replay_content()), "application/octet-stream")},
+            files={
+                "file": (
+                    "dup.replay",
+                    BytesIO(_replay_content()),
+                    "application/octet-stream",
+                )
+            },
             headers={"X-CSRF-Token": token},
         )
         assert resp.status_code == 409
@@ -204,7 +233,13 @@ def test_upload_path_traversal_sanitized(tmp_path: Path):
 
         resp = client.post(
             "/api/upload",
-            files={"file": ("../../../etc/match.replay", BytesIO(_replay_content()), "application/octet-stream")},
+            files={
+                "file": (
+                    "../../../etc/match.replay",
+                    BytesIO(_replay_content()),
+                    "application/octet-stream",
+                )
+            },
             headers={"X-CSRF-Token": token},
         )
         # _secure_filename strips path traversal, file should be saved safely
@@ -253,7 +288,13 @@ def test_csrf_token_required_on_upload(tmp_path: Path):
         # POST without CSRF token should be rejected
         resp = client.post(
             "/api/upload",
-            files={"file": ("match.replay", BytesIO(_replay_content()), "application/octet-stream")},
+            files={
+                "file": (
+                    "match.replay",
+                    BytesIO(_replay_content()),
+                    "application/octet-stream",
+                )
+            },
         )
         assert resp.status_code == 403
         assert "csrf" in resp.json()["error"].lower()

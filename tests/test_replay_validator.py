@@ -43,9 +43,7 @@ class TestValidate:
 
     def test_path_traversal_sanitized_to_valid(self):
         # ../match.replay → match.replay, which is valid
-        safe_name, error, _ = validate_replay(
-            "../../../match.replay", VALID_SIZE
-        )
+        safe_name, error, _ = validate_replay("../../../match.replay", VALID_SIZE)
         assert error is None
         assert ".." not in safe_name
 

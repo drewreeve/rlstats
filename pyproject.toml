@@ -16,5 +16,19 @@ dependencies = [
 [dependency-groups]
 dev = [
     "httpx>=0.28",
+    "mypy>=1.15",
+    "pyright>=1.1",
     "pytest>=9.0.2",
+    "ruff>=0.11",
 ]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "I"]
+
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+warn_return_any = true

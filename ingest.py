@@ -47,12 +47,14 @@ def get_or_create_player(
     conn: sqlite3.Connection, platform: str, platform_id: str, name: str
 ) -> int:
     tracked = 1 if (platform, platform_id) in TRACKED_PLAYERS else 0
-    return conn.execute(
-        """INSERT INTO players (platform, platform_id, name, is_tracked) VALUES (?, ?, ?, ?)
+    return int(
+        conn.execute(
+            """INSERT INTO players (platform, platform_id, name, is_tracked) VALUES (?, ?, ?, ?)
            ON CONFLICT(platform, platform_id) DO UPDATE SET name = excluded.name
            RETURNING id""",
-        (platform, platform_id, name, tracked),
-    ).fetchone()[0]
+            (platform, platform_id, name, tracked),
+        ).fetchone()[0]
+    )
 
 
 def _normalize_played_at(raw_played_at: Any) -> str | None:
@@ -147,8 +149,9 @@ def _upsert_match(
     team_boost_stolen: int | None,
     opponent_boost_stolen: int | None,
 ) -> int:
-    return conn.execute(
-        """
+    return int(
+        conn.execute(
+            """
         INSERT INTO matches (
             replay_hash,
             played_at, duration_seconds, forfeit, team_size,
@@ -182,30 +185,31 @@ def _upsert_match(
             opponent_boost_stolen = excluded.opponent_boost_stolen
         RETURNING id
         """,
-        (
-            replay_hash,
-            played_at_sql,
-            duration,
-            forfeit,
-            team_size,
-            team,
-            team_score,
-            opponent_score,
-            result,
-            mvp_player_id,
-            map_name,
-            game_mode,
-            team_possession_seconds,
-            opponent_possession_seconds,
-            defensive_third_seconds,
-            neutral_third_seconds,
-            offensive_third_seconds,
-            team_boost_collected,
-            opponent_boost_collected,
-            team_boost_stolen,
-            opponent_boost_stolen,
-        ),
-    ).fetchone()[0]
+            (
+                replay_hash,
+                played_at_sql,
+                duration,
+                forfeit,
+                team_size,
+                team,
+                team_score,
+                opponent_score,
+                result,
+                mvp_player_id,
+                map_name,
+                game_mode,
+                team_possession_seconds,
+                opponent_possession_seconds,
+                defensive_third_seconds,
+                neutral_third_seconds,
+                offensive_third_seconds,
+                team_boost_collected,
+                opponent_boost_collected,
+                team_boost_stolen,
+                opponent_boost_stolen,
+            ),
+        ).fetchone()[0]
+    )
 
 
 def _upsert_match_players(

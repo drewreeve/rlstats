@@ -1,11 +1,18 @@
 import sqlite3
 
 import pytest
-from ingest import ingest_match, get_or_create_player, TRACKED_PLAYERS
-from frame_analysis import analyze_frames
-from tests.fixtures import in_memory_db, load_replay, cached_db
 
-ALL_FIXTURES = ["zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json"]
+from frame_analysis import analyze_frames
+from ingest import TRACKED_PLAYERS, get_or_create_player, ingest_match
+from tests.fixtures import cached_db, in_memory_db, load_replay
+
+ALL_FIXTURES = [
+    "zero_score.json",
+    "match.json",
+    "forefeit.json",
+    "team_size_2.json",
+    "hoops.json",
+]
 
 
 def ingest_fixture(fixture: str) -> sqlite3.Connection:
@@ -29,7 +36,9 @@ def ingest_all_fixtures():
         ("hoops.json", "win", 5, 2),
     ],
 )
-def test_match_result_and_scores(fixture: str, expected_result: str, expected_team: int, expected_opp: int):
+def test_match_result_and_scores(
+    fixture: str, expected_result: str, expected_team: int, expected_opp: int
+):
     conn = ingest_fixture(fixture)
     row = conn.execute(
         "SELECT result, team_score, opponent_score FROM matches"
@@ -121,7 +130,9 @@ def test_team_mvp(fixture: str, expected_mvp: str):
         ),
     ],
 )
-def test_player_stats_per_match(fixture: str, expected_stats: list[tuple[str, int, int, int, int, int]]):
+def test_player_stats_per_match(
+    fixture: str, expected_stats: list[tuple[str, int, int, int, int, int]]
+):
     conn = ingest_fixture(fixture)
     rows = conn.execute("""
         SELECT p.name, mp.goals, mp.assists, mp.saves, mp.shots, mp.score
@@ -408,9 +419,7 @@ def test_offensive_pairings_only_tracked_players():
         SELECT scorer_player_id, assister_player_id FROM offensive_pairings
     """).fetchall()
     tracked_ids = set(
-        conn.execute(
-            "SELECT id FROM players WHERE is_tracked = 1"
-        ).fetchall()
+        conn.execute("SELECT id FROM players WHERE is_tracked = 1").fetchall()
     )
     tracked_ids = {r[0] for r in tracked_ids}
     for scorer_id, assister_id in rows:
@@ -479,12 +488,16 @@ def test_boost_stats_dedupes_repeated_pickup_state():
                         {
                             "actor_id": 1,
                             "object_id": 1,
-                            "attribute": {"RigidBody": {"location": {"x": 0, "y": 100}}},
+                            "attribute": {
+                                "RigidBody": {"location": {"x": 0, "y": 100}}
+                            },
                         },
                         {
                             "actor_id": 10,
                             "object_id": 2,
-                            "attribute": {"PickupNew": {"picked_up": 1, "instigator": 1}},
+                            "attribute": {
+                                "PickupNew": {"picked_up": 1, "instigator": 1}
+                            },
                         },
                     ],
                 },
@@ -494,7 +507,9 @@ def test_boost_stats_dedupes_repeated_pickup_state():
                         {
                             "actor_id": 10,
                             "object_id": 2,
-                            "attribute": {"PickupNew": {"picked_up": 1, "instigator": 1}},
+                            "attribute": {
+                                "PickupNew": {"picked_up": 1, "instigator": 1}
+                            },
                         }
                     ],
                 },
@@ -504,7 +519,9 @@ def test_boost_stats_dedupes_repeated_pickup_state():
                         {
                             "actor_id": 10,
                             "object_id": 2,
-                            "attribute": {"PickupNew": {"picked_up": 3, "instigator": 1}},
+                            "attribute": {
+                                "PickupNew": {"picked_up": 3, "instigator": 1}
+                            },
                         }
                     ],
                 },
@@ -512,8 +529,15 @@ def test_boost_stats_dedupes_repeated_pickup_state():
         },
     }
 
-    fa = analyze_frames(replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3")
-    assert (fa.team_boost_collected, fa.opponent_boost_collected, fa.team_boost_stolen, fa.opponent_boost_stolen) == (
+    fa = analyze_frames(
+        replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
+    )
+    assert (
+        fa.team_boost_collected,
+        fa.opponent_boost_collected,
+        fa.team_boost_stolen,
+        fa.opponent_boost_stolen,
+    ) == (
         24,
         0,
         24,
@@ -548,10 +572,14 @@ def test_player_movement_stats_tracking():
     assert len(set(tracked_speeds)) > 1, "All tracked players have identical avg_speed"
 
     # At least one tracked player went supersonic in a real match
-    assert any(supersonic > 0 for _, _, _, supersonic, *_ in tracked), "No tracked player has supersonic time"
+    assert any(supersonic > 0 for _, _, _, supersonic, *_ in tracked), (
+        "No tracked player has supersonic time"
+    )
 
     # At least one tracked player collected boost pads
-    assert any(small + large > 0 for _, _, _, _, small, large in tracked), "No tracked player collected any boost pads"
+    assert any(small + large > 0 for _, _, _, _, small, large in tracked), (
+        "No tracked player collected any boost pads"
+    )
 
 
 def test_player_movement_stats_none_without_network_data():
@@ -601,101 +629,158 @@ def test_actor_id_recycling_separates_boost_consumption():
     # Player A (car 1) uses boost, then actor 10 is deleted and recycled for
     # Player B (car 2) who also uses boost.
     objects = [
-        "Archetypes.Car.Car_Default",         # 0 - car archetype
-        "Archetypes.Ball.Ball_Default",        # 1 - ball archetype
+        "Archetypes.Car.Car_Default",  # 0 - car archetype
+        "Archetypes.Ball.Ball_Default",  # 1 - ball archetype
         "Archetypes.CarComponents.CarComponent_Boost",  # 2 - boost comp archetype
-        "TAGame.RBActor_TA:ReplicatedRBState", # 3 - rigid body
-        "TAGame.CarComponent_Boost_TA:ReplicatedBoost", # 4 - boost amount
-        "TAGame.CarComponent_TA:Vehicle",      # 5 - component->car link
-        "Engine.Pawn:PlayerReplicationInfo",   # 6 - car->PRI link
-        "Engine.PlayerReplicationInfo:UniqueId", # 7 - PRI->identity
+        "TAGame.RBActor_TA:ReplicatedRBState",  # 3 - rigid body
+        "TAGame.CarComponent_Boost_TA:ReplicatedBoost",  # 4 - boost amount
+        "TAGame.CarComponent_TA:Vehicle",  # 5 - component->car link
+        "Engine.Pawn:PlayerReplicationInfo",  # 6 - car->PRI link
+        "Engine.PlayerReplicationInfo:UniqueId",  # 7 - PRI->identity
         "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam",  # 8
         "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",  # 9
         "TAGame.VehiclePickup_TA:NewReplicatedPickupData",  # 10
-        "TAGame.Car_TA:TeamPaint",             # 11
+        "TAGame.Car_TA:TeamPaint",  # 11
     ]
     frames = [
         # Frame 0: Countdown finishes -> play begins
-        {"time": 0.0, "delta": 0.033,
-         "new_actors": [],
-         "updated_actors": [
-             {"actor_id": 200, "object_id": 9,
-              "attribute": {"Int": 0}},
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.0,
+            "delta": 0.033,
+            "new_actors": [],
+            "updated_actors": [
+                {"actor_id": 200, "object_id": 9, "attribute": {"Int": 0}},
+            ],
+            "deleted_actors": [],
+        },
         # Frame 1: Create car 1 (player A) and car 2 (player B)
-        {"time": 0.01, "delta": 0.033,
-         "new_actors": [
-             {"actor_id": 1, "object_id": 0},  # car 1
-             {"actor_id": 2, "object_id": 0},  # car 2
-         ],
-         "updated_actors": [], "deleted_actors": []},
+        {
+            "time": 0.01,
+            "delta": 0.033,
+            "new_actors": [
+                {"actor_id": 1, "object_id": 0},  # car 1
+                {"actor_id": 2, "object_id": 0},  # car 2
+            ],
+            "updated_actors": [],
+            "deleted_actors": [],
+        },
         # Frame 1: Set up PRI and identity for both cars
-        {"time": 0.033, "delta": 0.033,
-         "new_actors": [],
-         "updated_actors": [
-             # car 1 -> PRI 101
-             {"actor_id": 1, "object_id": 6,
-              "attribute": {"ActiveActor": {"actor": 101}}},
-             # car 2 -> PRI 102
-             {"actor_id": 2, "object_id": 6,
-              "attribute": {"ActiveActor": {"actor": 102}}},
-             # PRI 101 = player A (steam AAA)
-             {"actor_id": 101, "object_id": 7,
-              "attribute": {"UniqueId": {"remote_id": {"Steam": "AAA"}}}},
-             # PRI 102 = player B (steam BBB)
-             {"actor_id": 102, "object_id": 7,
-              "attribute": {"UniqueId": {"remote_id": {"Steam": "BBB"}}}},
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.033,
+            "delta": 0.033,
+            "new_actors": [],
+            "updated_actors": [
+                # car 1 -> PRI 101
+                {
+                    "actor_id": 1,
+                    "object_id": 6,
+                    "attribute": {"ActiveActor": {"actor": 101}},
+                },
+                # car 2 -> PRI 102
+                {
+                    "actor_id": 2,
+                    "object_id": 6,
+                    "attribute": {"ActiveActor": {"actor": 102}},
+                },
+                # PRI 101 = player A (steam AAA)
+                {
+                    "actor_id": 101,
+                    "object_id": 7,
+                    "attribute": {"UniqueId": {"remote_id": {"Steam": "AAA"}}},
+                },
+                # PRI 102 = player B (steam BBB)
+                {
+                    "actor_id": 102,
+                    "object_id": 7,
+                    "attribute": {"UniqueId": {"remote_id": {"Steam": "BBB"}}},
+                },
+            ],
+            "deleted_actors": [],
+        },
         # Frame 2: Create boost component 10, link to car 1 (player A)
-        {"time": 0.066, "delta": 0.033,
-         "new_actors": [{"actor_id": 10, "object_id": 2}],
-         "updated_actors": [
-             {"actor_id": 10, "object_id": 5,
-              "attribute": {"ActiveActor": {"actor": 1}}},
-             # Initial boost = 85 (~33%)
-             {"actor_id": 10, "object_id": 4,
-              "attribute": {"ReplicatedBoost": {"boost_amount": 85}}},
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.066,
+            "delta": 0.033,
+            "new_actors": [{"actor_id": 10, "object_id": 2}],
+            "updated_actors": [
+                {
+                    "actor_id": 10,
+                    "object_id": 5,
+                    "attribute": {"ActiveActor": {"actor": 1}},
+                },
+                # Initial boost = 85 (~33%)
+                {
+                    "actor_id": 10,
+                    "object_id": 4,
+                    "attribute": {"ReplicatedBoost": {"boost_amount": 85}},
+                },
+            ],
+            "deleted_actors": [],
+        },
         # Frame 3: Player A uses some boost (85 -> 50 = 35 consumed)
-        {"time": 0.1, "delta": 0.033,
-         "new_actors": [],
-         "updated_actors": [
-             {"actor_id": 10, "object_id": 4,
-              "attribute": {"ReplicatedBoost": {"boost_amount": 50}}},
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.1,
+            "delta": 0.033,
+            "new_actors": [],
+            "updated_actors": [
+                {
+                    "actor_id": 10,
+                    "object_id": 4,
+                    "attribute": {"ReplicatedBoost": {"boost_amount": 50}},
+                },
+            ],
+            "deleted_actors": [],
+        },
         # Frame 4: Delete boost component 10 (goal scored, etc.)
-        {"time": 0.133, "delta": 0.033,
-         "new_actors": [], "updated_actors": [],
-         "deleted_actors": [10]},
+        {
+            "time": 0.133,
+            "delta": 0.033,
+            "new_actors": [],
+            "updated_actors": [],
+            "deleted_actors": [10],
+        },
         # Frame 5: Recycle actor ID 10 as boost component for car 2 (player B)
-        {"time": 0.166, "delta": 0.033,
-         "new_actors": [{"actor_id": 10, "object_id": 2}],
-         "updated_actors": [
-             {"actor_id": 10, "object_id": 5,
-              "attribute": {"ActiveActor": {"actor": 2}}},
-             {"actor_id": 10, "object_id": 4,
-              "attribute": {"ReplicatedBoost": {"boost_amount": 100}}},
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.166,
+            "delta": 0.033,
+            "new_actors": [{"actor_id": 10, "object_id": 2}],
+            "updated_actors": [
+                {
+                    "actor_id": 10,
+                    "object_id": 5,
+                    "attribute": {"ActiveActor": {"actor": 2}},
+                },
+                {
+                    "actor_id": 10,
+                    "object_id": 4,
+                    "attribute": {"ReplicatedBoost": {"boost_amount": 100}},
+                },
+            ],
+            "deleted_actors": [],
+        },
         # Frame 6: Player B uses boost (100 -> 20 = 80 consumed)
-        {"time": 0.2, "delta": 0.033,
-         "new_actors": [],
-         "updated_actors": [
-             {"actor_id": 10, "object_id": 4,
-              "attribute": {"ReplicatedBoost": {"boost_amount": 20}}},
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.2,
+            "delta": 0.033,
+            "new_actors": [],
+            "updated_actors": [
+                {
+                    "actor_id": 10,
+                    "object_id": 4,
+                    "attribute": {"ReplicatedBoost": {"boost_amount": 20}},
+                },
+            ],
+            "deleted_actors": [],
+        },
     ]
 
     replay = {
         "objects": objects,
         "network_frames": {"frames": frames},
     }
-    fa = analyze_frames(replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3")
+    fa = analyze_frames(
+        replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
+    )
     stats = fa.movement_stats
 
     player_a = stats.get(("steam", "AAA"))
@@ -707,68 +792,106 @@ def test_actor_id_recycling_separates_boost_consumption():
     # Without the recycling fix, Player B would get 35+80=115.
     a_bpm = player_a["boost_per_minute"]
     b_bpm = player_b["boost_per_minute"]
-    assert b_bpm > a_bpm, f"Player B ({b_bpm}) should have higher boost/min than A ({a_bpm})"
+    assert b_bpm > a_bpm, (
+        f"Player B ({b_bpm}) should have higher boost/min than A ({a_bpm})"
+    )
 
 
 def test_boost_attributed_when_car_and_boost_comp_deleted_same_frame():
     """When a car and its boost component are both in deleted_actors for the same frame,
     with the car listed first, boost consumed before deletion must still be attributed."""
     objects = [
-        "Archetypes.Car.Car_Default",         # 0 - car archetype
-        "Archetypes.Ball.Ball_Default",        # 1 - ball archetype
+        "Archetypes.Car.Car_Default",  # 0 - car archetype
+        "Archetypes.Ball.Ball_Default",  # 1 - ball archetype
         "Archetypes.CarComponents.CarComponent_Boost",  # 2 - boost comp archetype
-        "TAGame.RBActor_TA:ReplicatedRBState", # 3 - rigid body
-        "TAGame.CarComponent_Boost_TA:ReplicatedBoost", # 4 - boost amount
-        "TAGame.CarComponent_TA:Vehicle",      # 5 - component->car link
-        "Engine.Pawn:PlayerReplicationInfo",   # 6 - car->PRI link
-        "Engine.PlayerReplicationInfo:UniqueId", # 7 - PRI->identity
+        "TAGame.RBActor_TA:ReplicatedRBState",  # 3 - rigid body
+        "TAGame.CarComponent_Boost_TA:ReplicatedBoost",  # 4 - boost amount
+        "TAGame.CarComponent_TA:Vehicle",  # 5 - component->car link
+        "Engine.Pawn:PlayerReplicationInfo",  # 6 - car->PRI link
+        "Engine.PlayerReplicationInfo:UniqueId",  # 7 - PRI->identity
         "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",  # 8 - countdown
-        "TAGame.VehiclePickup_TA:NewReplicatedPickupData",     # 9 - boost pads (required by movement handler)
+        "TAGame.VehiclePickup_TA:NewReplicatedPickupData",  # 9 - boost pads (required by movement handler)
     ]
     frames = [
         # Frame 0: Create car 1, link to PRI 3, set identity, start play (countdown=0)
-        {"time": 0.0, "delta": 0.033,
-         "new_actors": [
-             {"actor_id": 1, "object_id": 0},   # car (car archetype → added to car_actors)
-         ],
-         "updated_actors": [
-             {"actor_id": 1, "object_id": 6,
-              "attribute": {"ActiveActor": {"actor": 3}}},   # car 1 -> PRI actor 3
-             {"actor_id": 3, "object_id": 7,
-              "attribute": {"UniqueId": {"remote_id": {"Steam": "AAA"}}}},  # PRI 3 -> identity
-             {"actor_id": 200, "object_id": 8,
-              "attribute": {"Int": 0}},  # countdown = 0 → is_playing = True
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.0,
+            "delta": 0.033,
+            "new_actors": [
+                {
+                    "actor_id": 1,
+                    "object_id": 0,
+                },  # car (car archetype → added to car_actors)
+            ],
+            "updated_actors": [
+                {
+                    "actor_id": 1,
+                    "object_id": 6,
+                    "attribute": {"ActiveActor": {"actor": 3}},
+                },  # car 1 -> PRI actor 3
+                {
+                    "actor_id": 3,
+                    "object_id": 7,
+                    "attribute": {"UniqueId": {"remote_id": {"Steam": "AAA"}}},
+                },  # PRI 3 -> identity
+                {
+                    "actor_id": 200,
+                    "object_id": 8,
+                    "attribute": {"Int": 0},
+                },  # countdown = 0 → is_playing = True
+            ],
+            "deleted_actors": [],
+        },
         # Frame 1: Create boost component 10, link to car 1
-        {"time": 0.033, "delta": 0.033,
-         "new_actors": [{"actor_id": 10, "object_id": 2}],
-         "updated_actors": [
-             {"actor_id": 10, "object_id": 5,
-              "attribute": {"ActiveActor": {"actor": 1}}},   # boost comp -> car 1
-             {"actor_id": 10, "object_id": 4,
-              "attribute": {"ReplicatedBoost": {"boost_amount": 85}}},  # initial boost
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.033,
+            "delta": 0.033,
+            "new_actors": [{"actor_id": 10, "object_id": 2}],
+            "updated_actors": [
+                {
+                    "actor_id": 10,
+                    "object_id": 5,
+                    "attribute": {"ActiveActor": {"actor": 1}},
+                },  # boost comp -> car 1
+                {
+                    "actor_id": 10,
+                    "object_id": 4,
+                    "attribute": {"ReplicatedBoost": {"boost_amount": 85}},
+                },  # initial boost
+            ],
+            "deleted_actors": [],
+        },
         # Frame 2: Player uses boost (85 -> 50 = 35 consumed)
-        {"time": 0.066, "delta": 0.033,
-         "new_actors": [],
-         "updated_actors": [
-             {"actor_id": 10, "object_id": 4,
-              "attribute": {"ReplicatedBoost": {"boost_amount": 50}}},
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.066,
+            "delta": 0.033,
+            "new_actors": [],
+            "updated_actors": [
+                {
+                    "actor_id": 10,
+                    "object_id": 4,
+                    "attribute": {"ReplicatedBoost": {"boost_amount": 50}},
+                },
+            ],
+            "deleted_actors": [],
+        },
         # Frame 3: Car and boost component deleted in same frame, car listed first
-        {"time": 0.1, "delta": 0.033,
-         "new_actors": [], "updated_actors": [],
-         "deleted_actors": [1, 10]},
+        {
+            "time": 0.1,
+            "delta": 0.033,
+            "new_actors": [],
+            "updated_actors": [],
+            "deleted_actors": [1, 10],
+        },
     ]
 
     replay = {
         "objects": objects,
         "network_frames": {"frames": frames},
     }
-    fa = analyze_frames(replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3")
+    fa = analyze_frames(
+        replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
+    )
     stats = fa.movement_stats
 
     player_a = stats.get(("steam", "AAA"))
@@ -782,51 +905,79 @@ def test_demos_received_when_demolish_and_deletion_same_frame():
     """ReplicatedDemolishExtended update and victim car deletion in the same frame must
     still count as a demo, even though deleted_actors is processed before updated_actors."""
     objects = [
-        "Archetypes.Car.Car_Default",                          # 0 - car archetype
-        "Engine.Pawn:PlayerReplicationInfo",                   # 1 - car->PRI link
-        "Engine.PlayerReplicationInfo:UniqueId",               # 2 - PRI->identity
+        "Archetypes.Car.Car_Default",  # 0 - car archetype
+        "Engine.Pawn:PlayerReplicationInfo",  # 1 - car->PRI link
+        "Engine.PlayerReplicationInfo:UniqueId",  # 2 - PRI->identity
         "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",  # 3 - countdown
-        "TAGame.Car_TA:ReplicatedDemolishExtended",            # 4 - demo notification
+        "TAGame.Car_TA:ReplicatedDemolishExtended",  # 4 - demo notification
     ]
     frames = [
         # Frame 0: Create victim car 1 + attacker car 2, wire identities, start play
-        {"time": 0.0, "delta": 0.033,
-         "new_actors": [
-             {"actor_id": 1, "object_id": 0},   # victim car
-             {"actor_id": 2, "object_id": 0},   # attacker car
-         ],
-         "updated_actors": [
-             {"actor_id": 1, "object_id": 1,
-              "attribute": {"ActiveActor": {"actor": 10}}},   # victim car -> PRI 10
-             {"actor_id": 10, "object_id": 2,
-              "attribute": {"UniqueId": {"remote_id": {"Steam": "VICTIM"}}}},
-             {"actor_id": 2, "object_id": 1,
-              "attribute": {"ActiveActor": {"actor": 20}}},   # attacker car -> PRI 20
-             {"actor_id": 20, "object_id": 2,
-              "attribute": {"UniqueId": {"remote_id": {"Steam": "ATTACKER"}}}},
-             {"actor_id": 200, "object_id": 3,
-              "attribute": {"Int": 0}},   # countdown=0 → is_playing=True
-         ],
-         "deleted_actors": []},
+        {
+            "time": 0.0,
+            "delta": 0.033,
+            "new_actors": [
+                {"actor_id": 1, "object_id": 0},  # victim car
+                {"actor_id": 2, "object_id": 0},  # attacker car
+            ],
+            "updated_actors": [
+                {
+                    "actor_id": 1,
+                    "object_id": 1,
+                    "attribute": {"ActiveActor": {"actor": 10}},
+                },  # victim car -> PRI 10
+                {
+                    "actor_id": 10,
+                    "object_id": 2,
+                    "attribute": {"UniqueId": {"remote_id": {"Steam": "VICTIM"}}},
+                },
+                {
+                    "actor_id": 2,
+                    "object_id": 1,
+                    "attribute": {"ActiveActor": {"actor": 20}},
+                },  # attacker car -> PRI 20
+                {
+                    "actor_id": 20,
+                    "object_id": 2,
+                    "attribute": {"UniqueId": {"remote_id": {"Steam": "ATTACKER"}}},
+                },
+                {
+                    "actor_id": 200,
+                    "object_id": 3,
+                    "attribute": {"Int": 0},
+                },  # countdown=0 → is_playing=True
+            ],
+            "deleted_actors": [],
+        },
         # Frame 1: demolish update on attacker car 2 AND victim car 1 deleted in same frame
-        {"time": 0.033, "delta": 0.033,
-         "new_actors": [],
-         "updated_actors": [
-             {"actor_id": 2, "object_id": 4,
-              "attribute": {"DemolishExtended": {
-                  "self_demolish": False,
-                  "victim": {"active": True, "actor": 1},
-                  "attacker": {"active": True, "actor": 2},
-              }}},
-         ],
-         "deleted_actors": [1]},
+        {
+            "time": 0.033,
+            "delta": 0.033,
+            "new_actors": [],
+            "updated_actors": [
+                {
+                    "actor_id": 2,
+                    "object_id": 4,
+                    "attribute": {
+                        "DemolishExtended": {
+                            "self_demolish": False,
+                            "victim": {"active": True, "actor": 1},
+                            "attacker": {"active": True, "actor": 2},
+                        }
+                    },
+                },
+            ],
+            "deleted_actors": [1],
+        },
     ]
 
     replay = {
         "objects": objects,
         "network_frames": {"frames": frames},
     }
-    fa = analyze_frames(replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3")
+    fa = analyze_frames(
+        replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
+    )
 
     assert fa.demos_received.get(("steam", "VICTIM")) == 1, (
         "demo should be counted even when victim car is deleted in the same frame as the demolish notification"

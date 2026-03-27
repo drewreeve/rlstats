@@ -16,7 +16,7 @@ def load_replay(name: str):
         return json.load(f)
 
 
-def in_memory_db():
+def in_memory_db() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     apply_migrations(conn)
     return conn

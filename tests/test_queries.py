@@ -10,7 +10,13 @@ from tests.fixtures import cached_db
 
 
 def _all_modes_db():
-    conn = cached_db("zero_score.json", "match.json", "forefeit.json", "team_size_2.json", "hoops.json")
+    conn = cached_db(
+        "zero_score.json",
+        "match.json",
+        "forefeit.json",
+        "team_size_2.json",
+        "hoops.json",
+    )
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -170,19 +176,28 @@ def test_offensive_pairings_empty_for_missing_mode():
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("3v3", [
-            ("Drew", 4, 9, 0.444),
-            ("Jeff", 4, 5, 0.8),
-            ("Steve", 1, 4, 0.25),
-        ]),
-        ("2v2", [
-            ("Drew", 0, 4, 0.0),
-            ("Steve", 1, 2, 0.5),
-        ]),
-        ("hoops", [
-            ("Drew", 2, 5, 0.4),
-            ("Jeff", 3, 5, 0.6),
-        ]),
+        (
+            "3v3",
+            [
+                ("Drew", 4, 9, 0.444),
+                ("Jeff", 4, 5, 0.8),
+                ("Steve", 1, 4, 0.25),
+            ],
+        ),
+        (
+            "2v2",
+            [
+                ("Drew", 0, 4, 0.0),
+                ("Steve", 1, 2, 0.5),
+            ],
+        ),
+        (
+            "hoops",
+            [
+                ("Drew", 2, 5, 0.4),
+                ("Jeff", 3, 5, 0.6),
+            ],
+        ),
     ],
 )
 def test_shooting_pct_values_by_mode(mode: str, expected: Any):
@@ -195,19 +210,28 @@ def test_shooting_pct_values_by_mode(mode: str, expected: Any):
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("3v3", [
-            ("Drew", 3, 4, 1, 0, 9),
-            ("Jeff", 3, 4, 4, 2, 5),
-            ("Steve", 3, 1, 1, 0, 4),
-        ]),
-        ("2v2", [
-            ("Drew", 1, 0, 1, 2, 4),
-            ("Steve", 1, 1, 0, 1, 2),
-        ]),
-        ("hoops", [
-            ("Drew", 1, 2, 1, 0, 5),
-            ("Jeff", 1, 3, 1, 1, 5),
-        ]),
+        (
+            "3v3",
+            [
+                ("Drew", 3, 4, 1, 0, 9),
+                ("Jeff", 3, 4, 4, 2, 5),
+                ("Steve", 3, 1, 1, 0, 4),
+            ],
+        ),
+        (
+            "2v2",
+            [
+                ("Drew", 1, 0, 1, 2, 4),
+                ("Steve", 1, 1, 0, 1, 2),
+            ],
+        ),
+        (
+            "hoops",
+            [
+                ("Drew", 1, 2, 1, 0, 5),
+                ("Jeff", 1, 3, 1, 1, 5),
+            ],
+        ),
     ],
 )
 def test_player_stats_values_by_mode(mode: str, expected: Any):
@@ -253,19 +277,28 @@ def test_mvp_losses_values_by_mode(mode: str, expected: Any):
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("3v3", [
-            ("Drew", 3, 990, 330.0),
-            ("Jeff", 3, 1138, 379.3),
-            ("Steve", 3, 376, 125.3),
-        ]),
-        ("2v2", [
-            ("Drew", 1, 425, 425.0),
-            ("Steve", 1, 327, 327.0),
-        ]),
-        ("hoops", [
-            ("Drew", 1, 511, 511.0),
-            ("Jeff", 1, 696, 696.0),
-        ]),
+        (
+            "3v3",
+            [
+                ("Drew", 3, 990, 330.0),
+                ("Jeff", 3, 1138, 379.3),
+                ("Steve", 3, 376, 125.3),
+            ],
+        ),
+        (
+            "2v2",
+            [
+                ("Drew", 1, 425, 425.0),
+                ("Steve", 1, 327, 327.0),
+            ],
+        ),
+        (
+            "hoops",
+            [
+                ("Drew", 1, 511, 511.0),
+                ("Jeff", 1, 696, 696.0),
+            ],
+        ),
     ],
 )
 def test_avg_score_values_by_mode(mode: str, expected: Any):
@@ -289,19 +322,28 @@ def test_weekday_values_3v3():
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("3v3", [
-            ("Drew", 182, 420),
-            ("Jeff", 340, 448),
-            ("Steve", 64, 208),
-        ]),
-        ("2v2", [
-            ("Drew", 425, 425),
-            ("Steve", 327, 327),
-        ]),
-        ("hoops", [
-            ("Drew", 511, 511),
-            ("Jeff", 696, 696),
-        ]),
+        (
+            "3v3",
+            [
+                ("Drew", 182, 420),
+                ("Jeff", 340, 448),
+                ("Steve", 64, 208),
+            ],
+        ),
+        (
+            "2v2",
+            [
+                ("Drew", 425, 425),
+                ("Steve", 327, 327),
+            ],
+        ),
+        (
+            "hoops",
+            [
+                ("Drew", 511, 511),
+                ("Jeff", 696, 696),
+            ],
+        ),
     ],
 )
 def test_score_range_values_by_mode(mode: str, expected: Any):
@@ -330,8 +372,8 @@ def test_score_differential_values_3v3():
     rows = queries.score_differential(conn, game_mode="3v3")
     diffs = {r["differential"]: r["match_count"] for r in rows}
     assert diffs[-2] == 1  # 0-2 loss
-    assert diffs[1] == 1   # 5-4 win
-    assert diffs[4] == 1   # 4-0 win
+    assert diffs[1] == 1  # 5-4 win
+    assert diffs[4] == 1  # 4-0 win
 
 
 def test_score_differential_sorted_by_differential():
@@ -386,7 +428,10 @@ def test_avg_goal_contribution_shape():
         c = by_player[player]["avg_goal_contribution"]
         assert c is not None
         assert 0 < c <= 1
-    assert by_player["Jeff"]["avg_goal_contribution"] > by_player["Drew"]["avg_goal_contribution"]
+    assert (
+        by_player["Jeff"]["avg_goal_contribution"]
+        > by_player["Drew"]["avg_goal_contribution"]
+    )
 
 
 def test_avg_goal_contribution_zero_team_score_excluded():

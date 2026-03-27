@@ -6,4 +6,5 @@ python.uv_venv_auto = "source"
 
 [tools]
 "github:nickbabcock/rrrocket" = "latest"
+pre-commit = "latest"
 uv = "latest"

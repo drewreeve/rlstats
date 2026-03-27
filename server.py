@@ -14,7 +14,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from db import apply_migrations, queries
 from process import UploadProcessor, process_unprocessed
-from replay_validator import secure_filename, validate as validate_replay
+from replay_validator import secure_filename
+from replay_validator import validate as validate_replay
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,17 @@ REPLAY_DIR = Path("replays")
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
 
-def query_matches(conn: sqlite3.Connection, *, page: int, per_page: int, search: str, game_mode: str, result: str, date_from: str, date_to: str) -> dict[str, Any]:
+def query_matches(
+    conn: sqlite3.Connection,
+    *,
+    page: int,
+    per_page: int,
+    search: str,
+    game_mode: str,
+    result: str,
+    date_from: str,
+    date_to: str,
+) -> dict[str, Any]:
     offset = (page - 1) * per_page
 
     where: list[str] = []
@@ -73,12 +84,16 @@ def query_matches(conn: sqlite3.Connection, *, page: int, per_page: int, search:
     return {"matches": matches, "total": total, "page": page, "per_page": per_page}
 
 
-def query_match_players(conn: sqlite3.Connection, match_id: int) -> list[dict[str, Any]]:
+def query_match_players(
+    conn: sqlite3.Connection, match_id: int
+) -> list[dict[str, Any]]:
     rows = queries.match_players(conn, match_id=match_id)
     return [dict(r) for r in rows]
 
 
-def query_match_detail(conn: sqlite3.Connection, match_id: int) -> dict[str, Any] | None:
+def query_match_detail(
+    conn: sqlite3.Connection, match_id: int
+) -> dict[str, Any] | None:
     match = queries.match_metadata(conn, match_id=match_id)
     if not match:
         return None
@@ -127,16 +142,16 @@ def query_match_detail(conn: sqlite3.Connection, match_id: int) -> dict[str, Any
 
 
 STAT_ROUTES = {
-    "/api/stats/shooting":           queries.shooting_pct,
-    "/api/stats/timeline":           queries.win_loss_daily,
-    "/api/stats/players":            queries.player_stats,
-    "/api/stats/mvp-wins":           queries.mvp_wins,
-    "/api/stats/mvp-losses":         queries.mvp_losses,
-    "/api/stats/weekday":            queries.weekday,
-    "/api/stats/avg-score":          queries.avg_score,
+    "/api/stats/shooting": queries.shooting_pct,
+    "/api/stats/timeline": queries.win_loss_daily,
+    "/api/stats/players": queries.player_stats,
+    "/api/stats/mvp-wins": queries.mvp_wins,
+    "/api/stats/mvp-losses": queries.mvp_losses,
+    "/api/stats/weekday": queries.weekday,
+    "/api/stats/avg-score": queries.avg_score,
     "/api/stats/score-differential": queries.score_differential,
     "/api/stats/goal-contributions": queries.avg_goal_contribution,
-    "/api/stats/score-range":        queries.score_range,
+    "/api/stats/score-range": queries.score_range,
     "/api/stats/offensive-pairings": queries.offensive_pairings,
 }
 
@@ -149,7 +164,11 @@ def _get_conn(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def create_app(db_path: str | Path, replay_dir: Path | None = None, processor: UploadProcessor | None = None) -> FastAPI:
+def create_app(
+    db_path: str | Path,
+    replay_dir: Path | None = None,
+    processor: UploadProcessor | None = None,
+) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
 
     upload_dir = replay_dir or REPLAY_DIR
@@ -162,7 +181,9 @@ def create_app(db_path: str | Path, replay_dir: Path | None = None, processor: U
             conn.close()
 
     @app.middleware("http")  # pyright: ignore[reportUnusedFunction]
-    async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    async def security_headers(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -183,7 +204,9 @@ def create_app(db_path: str | Path, replay_dir: Path | None = None, processor: U
         return response
 
     @app.middleware("http")  # pyright: ignore[reportUnusedFunction]
-    async def csrf_check(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    async def csrf_check(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         if request.method == "POST":
             token = request.headers.get("X-CSRF-Token", "")
             expected = request.session.get("csrf_token", "")
@@ -320,11 +343,15 @@ def create_app(db_path: str | Path, replay_dir: Path | None = None, processor: U
         )
 
     @app.get("/api/matches/{match_id}/players")
-    async def match_players_route(match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]):
+    async def match_players_route(
+        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
+    ):
         return query_match_players(conn, match_id)
 
     @app.get("/api/matches/{match_id}")
-    async def match_detail(match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]):
+    async def match_detail(
+        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
+    ):
         data = query_match_detail(conn, match_id)
         if data is None:
             raise HTTPException(status_code=404, detail="Not found")
@@ -336,7 +363,10 @@ def create_app(db_path: str | Path, replay_dir: Path | None = None, processor: U
         return mode if mode in ALLOWED_MODES else "3v3"
 
     def make_stat_handler(fn: Any) -> Any:
-        async def view(mode: Annotated[str, Depends(game_mode)], conn: Annotated[sqlite3.Connection, Depends(get_conn)]) -> list[dict[str, Any]]:
+        async def view(
+            mode: Annotated[str, Depends(game_mode)],
+            conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+        ) -> list[dict[str, Any]]:
             rows: Any = fn(conn, game_mode=mode)
             return [dict(r) for r in rows]
 
@@ -346,7 +376,10 @@ def create_app(db_path: str | Path, replay_dir: Path | None = None, processor: U
         app.get(path, name=path)(make_stat_handler(handler_fn))
 
     @app.get("/api/stats/streaks")
-    async def streaks(mode: Annotated[str, Depends(game_mode)], conn: Annotated[sqlite3.Connection, Depends(get_conn)]):
+    async def streaks(
+        mode: Annotated[str, Depends(game_mode)],
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    ):
         row = next(iter(queries.streaks(conn, game_mode=mode)), None)
         if row:
             return {

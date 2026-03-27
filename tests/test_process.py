@@ -136,7 +136,9 @@ def test_upload_processor_debounce(tmp_path: Path):
     db_path = file_db(tmp_path)
     batch_calls: list[list[Path]] = []
 
-    def fake_batch(f: list[Path], c: sqlite3.Connection) -> dict[str, tuple[bool, None]]:
+    def fake_batch(
+        f: list[Path], c: sqlite3.Connection
+    ) -> dict[str, tuple[bool, None]]:
         batch_calls.append(list(f))
         return {p.name: (True, None) for p in f}
 
@@ -163,5 +165,3 @@ def test_upload_processor_debounce(tmp_path: Path):
     # All files should be in total across calls
     all_files = [f for call in batch_calls for f in call]
     assert len(all_files) == 6
-
-

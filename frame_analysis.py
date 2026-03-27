@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 from typing import Any, NamedTuple, cast
 
-
 NETWORK_PLATFORM_MAP = {
     "Steam": "steam",
     "Epic": "epic",
@@ -70,12 +69,16 @@ class FrameContext:
 
     # Identity resolution chain
     car_to_pri: dict[int, int] = field(default_factory=dict[int, int])
-    pri_identity: dict[int, tuple[str, str]] = field(default_factory=dict[int, tuple[str, str]])
+    pri_identity: dict[int, tuple[str, str]] = field(
+        default_factory=dict[int, tuple[str, str]]
+    )
     component_to_car: dict[int, int] = field(default_factory=dict[int, int])
 
     # Per-actor state
     actor_team: dict[int, int] = field(default_factory=dict[int, int])
-    actor_position: dict[int, tuple[float, float]] = field(default_factory=dict[int, tuple[float, float]])
+    actor_position: dict[int, tuple[float, float]] = field(
+        default_factory=dict[int, tuple[float, float]]
+    )
 
     # Game state
     is_playing: bool = False
@@ -315,6 +318,7 @@ def _make_demos_received_handler(
 
     demos_received: dict[tuple[str, str], int] = {}
     demolish_last_active: dict[int, bool] = {}
+
     def on_deleted_actor(ctx: FrameContext, aid: int):
         demolish_last_active.pop(aid, None)
 
@@ -332,11 +336,11 @@ def _make_demos_received_handler(
         if not attacker.get("active"):
             return
         vid = victim["actor"]
-        victim_identity = ctx.resolve_car_identity(vid) if vid in ctx.car_actors else None
+        victim_identity = (
+            ctx.resolve_car_identity(vid) if vid in ctx.car_actors else None
+        )
         if victim_identity:
-            demos_received[victim_identity] = (
-                demos_received.get(victim_identity, 0) + 1
-            )
+            demos_received[victim_identity] = demos_received.get(victim_identity, 0) + 1
 
     def finalize(ctx: FrameContext):
         return demos_received
@@ -431,7 +435,9 @@ def _make_movement_handler(
             if car_id is not None:
                 identity = ctx.resolve_car_identity(car_id)
                 if identity:
-                    identity_boost_consumed[identity] = identity_boost_consumed.get(identity, 0.0) + consumed
+                    identity_boost_consumed[identity] = (
+                        identity_boost_consumed.get(identity, 0.0) + consumed
+                    )
         samples = car_speed_samples.pop(aid, None)
         if samples:
             identity = ctx.resolve_car_identity(aid)
@@ -657,8 +663,8 @@ def _make_match_events_handler(
             return best_gs
 
         tracked_team_actor = None
-        for aid, identity in ctx.pri_identity.items():
-            if identity in tracked_identities and aid in actor_team_actor:
+        for aid, player_identity in ctx.pri_identity.items():
+            if player_identity in tracked_identities and aid in actor_team_actor:
                 tracked_team_actor = actor_team_actor[aid]
                 break
 
@@ -861,25 +867,15 @@ def analyze_frames(
             ctx.actor_position.pop(aid, None)
 
     # Finalize all handlers
-    poss_result = (
-        possession_h.finalize(ctx) if possession_h else (None, None)
-    )
-    thirds_result = (
-        ball_thirds_h.finalize(ctx)
-        if ball_thirds_h
-        else (None, None, None)
-    )
+    poss_result = possession_h.finalize(ctx) if possession_h else (None, None)
+    thirds_result = ball_thirds_h.finalize(ctx) if ball_thirds_h else (None, None, None)
     demo_result: Any = demolitions_h.finalize(ctx) if demolitions_h else {}
     boost_result = (
-        boost_stats_h.finalize(ctx)
-        if boost_stats_h
-        else (None, None, None, None)
+        boost_stats_h.finalize(ctx) if boost_stats_h else (None, None, None, None)
     )
     movement_result: Any = movement_h.finalize(ctx) if movement_h else {}
     demos_recv_result: Any = demos_received_h.finalize(ctx) if demos_received_h else {}
-    events_result: Any = (
-        match_events_h.finalize(ctx) if match_events_h else []
-    )
+    events_result: Any = match_events_h.finalize(ctx) if match_events_h else []
 
     return FrameAnalysis(
         team_possession_seconds=poss_result[0],
