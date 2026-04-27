@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim
 
-ARG RRROCKET_VERSION=0.10.12
+ARG RRROCKET_VERSION=0.11.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
   && curl -fsSL "https://github.com/nickbabcock/rrrocket/releases/download/v${RRROCKET_VERSION}/rrrocket-${RRROCKET_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
