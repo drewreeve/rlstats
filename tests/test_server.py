@@ -140,13 +140,37 @@ def test_query_match_players_nonexistent_match():
 # -- HTTP routing smoke tests --
 
 
-@pytest.mark.parametrize("path", [*STAT_ROUTES.keys(), "/api/stats/streaks"])
+@pytest.mark.parametrize(
+    "path",
+    [*STAT_ROUTES.keys(), "/api/stats/streaks", "/api/stats/timeline"],
+)
 def test_stat_route_returns_200(match_client: TestClient, path: str) -> None:
     response = match_client.get(path)
 
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, (list, dict))
+
+
+@pytest.fixture
+def client_2v2(tmp_path: Path) -> TestClient:
+    db_path = file_db(tmp_path)
+    source = cached_db("team_size_2.json", "loss_2v2.json")
+    conn = sqlite3.connect(db_path)
+    source.backup(conn)
+    conn.close()
+    return TestClient(create_app(db_path), base_url="https://testserver")
+
+
+def test_timeline_2v2_returns_pairing_rows(client_2v2: TestClient) -> None:
+    response = client_2v2.get("/api/stats/timeline?mode=2v2")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert data
+    assert "pairing" in data[0]
+    assert "win_rate" in data[0]
 
 
 # -- match detail endpoint --

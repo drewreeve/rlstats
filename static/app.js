@@ -14,6 +14,12 @@ const STAT_COLORS = {
   losses: { r: 255, g: 60, b: 60 },
 };
 
+const PAIRING_COLORS = {
+  "Drew/Jeff":  { r: 0,   g: 229, b: 255 },
+  "Drew/Steve": { r: 255, g: 200, b: 0   },
+  "Jeff/Steve": { r: 168, g: 85,  b: 247 },
+};
+
 const SEASONS = [
   { label: "S22", date: "2026-03-11" },
   // add future seasons here
@@ -121,6 +127,52 @@ async function playerBarChart(
   });
 }
 
+const seasonMarkersPlugin = {
+  id: "seasonMarkers",
+  afterDraw(chart) {
+    const labels = chart.data.labels;
+    const xScale = chart.scales.x;
+    const { top, bottom } = chart.chartArea;
+    const ctx = chart.ctx;
+
+    SEASONS.forEach(({ label, date }) => {
+      const match = labels.find((l) => l >= date);
+      if (!match) return;
+
+      const x = xScale.getPixelForValue(match);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+      ctx.font = "10px 'DM Mono', monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(label, x + 4, top + 12);
+      ctx.restore();
+    });
+  },
+};
+
+function zoomOptions(resetBtnId) {
+  const showBtn = () => {
+    document.getElementById(resetBtnId).hidden = false;
+  };
+  return {
+    pan: { enabled: true, mode: "x", onPan: showBtn },
+    zoom: {
+      wheel: { enabled: true },
+      pinch: { enabled: true },
+      mode: "x",
+      onZoom: showBtn,
+    },
+    limits: { x: { minRange: 5 } },
+  };
+}
+
 async function renderWinRateDaily() {
   const data = await fetchJSON(`/api/stats/timeline?mode=${currentMode}`);
   const canvas = document.getElementById("chart-win-rate");
@@ -159,37 +211,7 @@ async function renderWinRateDaily() {
         },
       ],
     },
-    plugins: [
-      {
-        id: "seasonMarkers",
-        afterDraw(chart) {
-          const labels = chart.data.labels;
-          const xScale = chart.scales.x;
-          const { top, bottom } = chart.chartArea;
-          const ctx = chart.ctx;
-
-          SEASONS.forEach(({ label, date }) => {
-            const match = labels.find((l) => l >= date);
-            if (!match) return;
-
-            const x = xScale.getPixelForValue(match);
-            ctx.save();
-            ctx.beginPath();
-            ctx.moveTo(x, top);
-            ctx.lineTo(x, bottom);
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-            ctx.setLineDash([4, 4]);
-            ctx.lineWidth = 1;
-            ctx.stroke();
-            ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
-            ctx.font = "10px 'DM Mono', monospace";
-            ctx.textAlign = "left";
-            ctx.fillText(label, x + 4, top + 12);
-            ctx.restore();
-          });
-        },
-      },
-    ],
+    plugins: [seasonMarkersPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: true,
@@ -208,26 +230,7 @@ async function renderWinRateDaily() {
             label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%`,
           },
         },
-        zoom: {
-          pan: {
-            enabled: true,
-            mode: "x",
-            onPan: () => {
-              document.getElementById("reset-zoom").hidden = false;
-            },
-          },
-          zoom: {
-            wheel: { enabled: true },
-            pinch: { enabled: true },
-            mode: "x",
-            onZoom: () => {
-              document.getElementById("reset-zoom").hidden = false;
-            },
-          },
-          limits: {
-            x: { minRange: 5 },
-          },
-        },
+        zoom: zoomOptions("reset-zoom"),
       },
       scales: {
         y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
@@ -252,6 +255,85 @@ async function renderWinRateDaily() {
       },
     },
   });
+}
+
+async function renderWinRatePairings() {
+  const data = await fetchJSON("/api/stats/timeline?mode=2v2");
+  const canvas = document.getElementById("chart-win-rate-2v2");
+
+  const dateSet = [...new Set(data.map((d) => d.date))].sort();
+  const byPairing = {};
+  for (const row of data) {
+    (byPairing[row.pairing] ??= {})[row.date] = row;
+  }
+
+  const datasets = Object.entries(byPairing).map(([pairing, byDate]) => {
+    const color = PAIRING_COLORS[pairing] ?? { r: 200, g: 200, b: 200 };
+    return {
+      label: pairing,
+      data: dateSet.map((d) => (byDate[d] ? (byDate[d].win_rate ?? 0) * 100 : null)),
+      borderColor: rgba(color, 0.9),
+      backgroundColor: rgba(color, 0.08),
+      fill: false,
+      tension: 0.35,
+      spanGaps: false,
+      pointBackgroundColor: rgba(color, 1),
+      pointBorderColor: "#08080C",
+      pointBorderWidth: 2,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      borderWidth: 2,
+    };
+  });
+
+  charts.winRate2v2 = new Chart(canvas, {
+    type: "line",
+    data: { labels: dateSet, datasets },
+    plugins: [seasonMarkersPlugin],
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: window.innerWidth <= 768 ? 1.2 : 2,
+      plugins: {
+        legend: {
+          labels: {
+            boxWidth: 10,
+            boxHeight: 10,
+            padding: 16,
+            font: { family: "'DM Mono', monospace", size: 13 },
+          },
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) =>
+              `${ctx.dataset.label}: ${ctx.parsed.y !== null ? ctx.parsed.y.toFixed(1) + "%" : "—"}`,
+          },
+        },
+        zoom: zoomOptions("reset-zoom-2v2"),
+      },
+      scales: {
+        y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
+        x: {
+          grid: { display: false },
+          min: Math.max(0, dateSet.length - 15),
+          max: dateSet.length - 1,
+        },
+      },
+      onHover: (event, elements) => {
+        event.native.target.style.cursor = elements.length ? "pointer" : "";
+      },
+      onClick: (event, elements) => {
+        if (!elements.length) return;
+        const date = dateSet[elements[0].index];
+        if (!date) return;
+        document.getElementById("history-date-from").value = date;
+        document.getElementById("history-date-to").value = date;
+        history.pushState({ mode: "history" }, "", MODE_PATHS["history"]);
+        setMode("history");
+      },
+    },
+  });
+
 }
 
 async function renderPlayerStats() {
@@ -555,6 +637,7 @@ async function renderOffensivePairings() {
 function updateCardVisibility() {
   const is3v3 = currentMode === "3v3";
   document.getElementById("card-win-rate").style.display = is3v3 ? "" : "none";
+  document.getElementById("card-win-rate-2v2").style.display = currentMode === "2v2" ? "" : "none";
   document.getElementById("card-weekday").style.display = is3v3 ? "" : "none";
 }
 
@@ -585,6 +668,9 @@ async function renderAll() {
   });
   if (currentMode === "3v3") {
     renderWinRateDaily();
+  }
+  if (currentMode === "2v2") {
+    renderWinRatePairings();
   }
   renderPlayerStats();
   renderMvpWins();
@@ -727,6 +813,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (charts.winRate) {
       charts.winRate.resetZoom();
       document.getElementById("reset-zoom").hidden = true;
+    }
+  });
+
+  document.getElementById("reset-zoom-2v2").addEventListener("click", () => {
+    if (charts.winRate2v2) {
+      charts.winRate2v2.resetZoom();
+      document.getElementById("reset-zoom-2v2").hidden = true;
     }
   });
 

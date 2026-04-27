@@ -90,6 +90,77 @@ WHERE result IN ('win', 'loss')
 GROUP BY differential
 ORDER BY differential;
 
+-- name: win_loss_daily_2v2_pairings()
+-- Win/loss record by session date grouped by tracked-player pairing, 2v2 only.
+WITH match_pairings AS (
+    SELECT
+        m.id AS match_id,
+        m.played_at,
+        m.result,
+        MIN(p.name) AS player1,
+        MAX(p.name) AS player2
+    FROM matches m
+    JOIN match_players mp ON m.id = mp.match_id AND mp.team = m.team
+    JOIN players p ON mp.player_id = p.id AND p.is_tracked = 1
+    WHERE m.game_mode = '2v2'
+      AND m.played_at IS NOT NULL
+      AND m.result IN ('win', 'loss')
+    GROUP BY m.id
+    HAVING COUNT(DISTINCT p.id) = 2
+),
+ordered_matches AS (
+    SELECT
+        match_id,
+        played_at,
+        result,
+        player1 || '/' || player2 AS pairing,
+        LAG(played_at) OVER (PARTITION BY player1, player2 ORDER BY played_at) AS prev_played_at
+    FROM match_pairings
+),
+session_markers AS (
+    SELECT
+        match_id,
+        played_at,
+        result,
+        pairing,
+        CASE
+            WHEN prev_played_at IS NULL THEN 1
+            WHEN (julianday(played_at) - julianday(prev_played_at)) * 24 * 60 > 60 THEN 1
+            ELSE 0
+        END AS new_session
+    FROM ordered_matches
+),
+sessions AS (
+    SELECT
+        match_id,
+        played_at,
+        result,
+        pairing,
+        SUM(new_session) OVER (PARTITION BY pairing ORDER BY played_at) AS session_id
+    FROM session_markers
+),
+session_summary AS (
+    SELECT
+        pairing,
+        DATE(MIN(played_at)) AS session_date,
+        SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses
+    FROM sessions
+    GROUP BY pairing, session_id
+)
+SELECT
+    pairing,
+    session_date AS date,
+    SUM(wins) AS wins,
+    SUM(losses) AS losses,
+    ROUND(
+        CAST(SUM(wins) AS REAL) / NULLIF(SUM(wins) + SUM(losses), 0),
+        3
+    ) AS win_rate
+FROM session_summary
+GROUP BY pairing, session_date
+ORDER BY date, pairing;
+
 -- name: streaks(game_mode)
 -- Longest win and loss streaks for a given game mode.
 WITH ordered AS (

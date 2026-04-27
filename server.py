@@ -143,7 +143,6 @@ def query_match_detail(
 
 STAT_ROUTES = {
     "/api/stats/shooting": queries.shooting_pct,
-    "/api/stats/timeline": queries.win_loss_daily,
     "/api/stats/players": queries.player_stats,
     "/api/stats/mvp-wins": queries.mvp_wins,
     "/api/stats/mvp-losses": queries.mvp_losses,
@@ -374,6 +373,17 @@ def create_app(
 
     for path, handler_fn in STAT_ROUTES.items():
         app.get(path, name=path)(make_stat_handler(handler_fn))
+
+    @app.get("/api/stats/timeline")
+    async def timeline(
+        mode: Annotated[str, Depends(game_mode)],
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    ) -> list[dict[str, Any]]:
+        if mode == "2v2":
+            rows = queries.win_loss_daily_2v2_pairings(conn)
+        else:
+            rows = queries.win_loss_daily(conn, game_mode=mode)
+        return [dict(r) for r in rows]
 
     @app.get("/api/stats/streaks")
     async def streaks(
