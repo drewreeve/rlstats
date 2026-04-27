@@ -9,6 +9,16 @@ really wanted to you could. It's pretty simple really:
 * Flask frontend to show it all off with some charts courtesy of
   [Chart.js](https://www.chartjs.org/)
 
+## Commands
+
+```bash
+uv run pytest                        # Run all tests
+uv run pytest tests/test_ingest.py   # Run a specific test file
+uv run pytest -k test_match_result   # Run tests matching a pattern
+uv run python process.py             # Run rrrocket + ingest new replays into the database
+uv run python process.py --force     # Re-process all replays, including already-ingested ones
+```
+
 ## Environment Variables
 
 | Variable | Description | Default |
