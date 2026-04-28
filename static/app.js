@@ -257,9 +257,9 @@ async function renderWinRateDaily() {
   });
 }
 
-async function renderWinRatePairings() {
-  const data = await fetchJSON("/api/stats/timeline?mode=2v2");
-  const canvas = document.getElementById("chart-win-rate-2v2");
+async function renderWinRatePairings(mode, canvasId, chartKey, resetBtnId) {
+  const data = await fetchJSON(`/api/stats/timeline?mode=${mode}`);
+  const canvas = document.getElementById(canvasId);
 
   const dateSet = [...new Set(data.map((d) => d.date))].sort();
   const byPairing = {};
@@ -286,7 +286,7 @@ async function renderWinRatePairings() {
     };
   });
 
-  charts.winRate2v2 = new Chart(canvas, {
+  charts[chartKey] = new Chart(canvas, {
     type: "line",
     data: { labels: dateSet, datasets },
     plugins: [seasonMarkersPlugin],
@@ -309,7 +309,7 @@ async function renderWinRatePairings() {
               `${ctx.dataset.label}: ${ctx.parsed.y !== null ? ctx.parsed.y.toFixed(1) + "%" : "—"}`,
           },
         },
-        zoom: zoomOptions("reset-zoom-2v2"),
+        zoom: zoomOptions(resetBtnId),
       },
       scales: {
         y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
@@ -333,7 +333,6 @@ async function renderWinRatePairings() {
       },
     },
   });
-
 }
 
 async function renderPlayerStats() {
@@ -638,6 +637,7 @@ function updateCardVisibility() {
   const is3v3 = currentMode === "3v3";
   document.getElementById("card-win-rate").style.display = is3v3 ? "" : "none";
   document.getElementById("card-win-rate-2v2").style.display = currentMode === "2v2" ? "" : "none";
+  document.getElementById("card-win-rate-hoops").style.display = currentMode === "hoops" ? "" : "none";
   document.getElementById("card-weekday").style.display = is3v3 ? "" : "none";
 }
 
@@ -670,7 +670,10 @@ async function renderAll() {
     renderWinRateDaily();
   }
   if (currentMode === "2v2") {
-    renderWinRatePairings();
+    renderWinRatePairings("2v2", "chart-win-rate-2v2", "winRate2v2", "reset-zoom-2v2");
+  }
+  if (currentMode === "hoops") {
+    renderWinRatePairings("hoops", "chart-win-rate-hoops", "winRateHoops", "reset-zoom-hoops");
   }
   renderPlayerStats();
   renderMvpWins();
@@ -809,19 +812,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderAll();
 
-  document.getElementById("reset-zoom").addEventListener("click", () => {
-    if (charts.winRate) {
-      charts.winRate.resetZoom();
-      document.getElementById("reset-zoom").hidden = true;
-    }
-  });
-
-  document.getElementById("reset-zoom-2v2").addEventListener("click", () => {
-    if (charts.winRate2v2) {
-      charts.winRate2v2.resetZoom();
-      document.getElementById("reset-zoom-2v2").hidden = true;
-    }
-  });
+  for (const [btnId, chartKey] of [
+    ["reset-zoom", "winRate"],
+    ["reset-zoom-2v2", "winRate2v2"],
+    ["reset-zoom-hoops", "winRateHoops"],
+  ]) {
+    document.getElementById(btnId).addEventListener("click", () => {
+      if (charts[chartKey]) {
+        charts[chartKey].resetZoom();
+        document.getElementById(btnId).hidden = true;
+      }
+    });
+  }
 
   const navWrap = document.querySelector(".mode-nav-wrap");
   const nav = document.querySelector(".mode-nav");

@@ -152,18 +152,34 @@ def test_stat_route_returns_200(match_client: TestClient, path: str) -> None:
     assert isinstance(data, (list, dict))
 
 
-@pytest.fixture
-def client_2v2(tmp_path: Path) -> TestClient:
+def _pairing_client(tmp_path: Path, *replay_files: str) -> TestClient:
     db_path = file_db(tmp_path)
-    source = cached_db("team_size_2.json", "loss_2v2.json")
+    source = cached_db(*replay_files)
     conn = sqlite3.connect(db_path)
     source.backup(conn)
     conn.close()
     return TestClient(create_app(db_path), base_url="https://testserver")
 
 
-def test_timeline_2v2_returns_pairing_rows(client_2v2: TestClient) -> None:
-    response = client_2v2.get("/api/stats/timeline?mode=2v2")
+@pytest.fixture
+def client_2v2(tmp_path: Path) -> TestClient:
+    return _pairing_client(tmp_path, "team_size_2.json", "loss_2v2.json")
+
+
+@pytest.fixture
+def client_hoops(tmp_path: Path) -> TestClient:
+    return _pairing_client(tmp_path, "hoops.json", "loss_hoops.json")
+
+
+@pytest.mark.parametrize(
+    "mode, client_fixture",
+    [("2v2", "client_2v2"), ("hoops", "client_hoops")],
+)
+def test_timeline_returns_pairing_rows(
+    mode: str, client_fixture: str, request: pytest.FixtureRequest
+) -> None:
+    client: TestClient = request.getfixturevalue(client_fixture)
+    response = client.get(f"/api/stats/timeline?mode={mode}")
 
     assert response.status_code == 200
     data = response.json()

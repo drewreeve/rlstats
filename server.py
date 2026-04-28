@@ -379,8 +379,8 @@ def create_app(
         mode: Annotated[str, Depends(game_mode)],
         conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     ) -> list[dict[str, Any]]:
-        if mode == "2v2":
-            rows = queries.win_loss_daily_2v2_pairings(conn)
+        if mode in ("2v2", "hoops"):
+            rows = queries.win_loss_daily_pairings(conn, game_mode=mode)
         else:
             rows = queries.win_loss_daily(conn, game_mode=mode)
         return [dict(r) for r in rows]

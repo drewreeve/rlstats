@@ -90,8 +90,8 @@ WHERE result IN ('win', 'loss')
 GROUP BY differential
 ORDER BY differential;
 
--- name: win_loss_daily_2v2_pairings()
--- Win/loss record by session date grouped by tracked-player pairing, 2v2 only.
+-- name: win_loss_daily_pairings(game_mode)
+-- Win/loss record by session date grouped by tracked-player pairing, for any 2-player-per-team mode.
 WITH match_pairings AS (
     SELECT
         m.id AS match_id,
@@ -102,7 +102,7 @@ WITH match_pairings AS (
     FROM matches m
     JOIN match_players mp ON m.id = mp.match_id AND mp.team = m.team
     JOIN players p ON mp.player_id = p.id AND p.is_tracked = 1
-    WHERE m.game_mode = '2v2'
+    WHERE m.game_mode = :game_mode
       AND m.played_at IS NOT NULL
       AND m.result IN ('win', 'loss')
     GROUP BY m.id

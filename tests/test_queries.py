@@ -455,18 +455,22 @@ def test_avg_goal_contribution_no_matches_for_mode():
     assert rows == []
 
 
-# -- win_loss_daily_2v2_pairings --
+# -- win_loss_daily_pairings --
 
 
-def _2v2_db():
-    conn = cached_db("team_size_2.json", "loss_2v2.json")
+@pytest.mark.parametrize(
+    "game_mode, replay_files",
+    [
+        ("2v2", ("team_size_2.json", "loss_2v2.json")),
+        ("hoops", ("hoops.json", "loss_hoops.json")),
+    ],
+)
+def test_win_loss_daily_pairings_pairing_format(
+    game_mode: str, replay_files: tuple[str, ...]
+):
+    conn = cached_db(*replay_files)
     conn.row_factory = sqlite3.Row
-    return conn
-
-
-def test_win_loss_daily_2v2_pairings_pairing_format():
-    conn = _2v2_db()
-    rows = list(queries.win_loss_daily_2v2_pairings(conn))
+    rows = list(queries.win_loss_daily_pairings(conn, game_mode=game_mode))
 
     for row in rows:
         parts = row["pairing"].split("/")
@@ -475,9 +479,18 @@ def test_win_loss_daily_2v2_pairings_pairing_format():
         assert parts[0] < parts[1], "pairing names should be alphabetically ordered"
 
 
-def test_win_loss_daily_2v2_pairings_correct_record():
-    conn = _2v2_db()
-    rows = list(queries.win_loss_daily_2v2_pairings(conn))
+@pytest.mark.parametrize("game_mode", ["2v2", "hoops"])
+def test_win_loss_daily_pairings_empty_for_other_mode(game_mode: str):
+    conn = _3v3_db()
+    rows = list(queries.win_loss_daily_pairings(conn, game_mode=game_mode))
+
+    assert rows == []
+
+
+def test_win_loss_daily_pairings_correct_record_2v2():
+    conn = cached_db("team_size_2.json", "loss_2v2.json")
+    conn.row_factory = sqlite3.Row
+    rows = list(queries.win_loss_daily_pairings(conn, game_mode="2v2"))
 
     assert len(rows) == 1
     row = rows[0]
@@ -487,8 +500,13 @@ def test_win_loss_daily_2v2_pairings_correct_record():
     assert row["win_rate"] == 0.5
 
 
-def test_win_loss_daily_2v2_pairings_empty_without_2v2_data():
-    conn = _3v3_db()
-    rows = list(queries.win_loss_daily_2v2_pairings(conn))
+def test_win_loss_daily_pairings_correct_record_hoops():
+    conn = cached_db("hoops.json", "loss_hoops.json")
+    conn.row_factory = sqlite3.Row
+    rows = list(queries.win_loss_daily_pairings(conn, game_mode="hoops"))
 
-    assert rows == []
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["wins"] == 1
+    assert row["losses"] == 1
+    assert row["win_rate"] == 0.5
