@@ -8,3 +8,8 @@ python.uv_venv_auto = "source"
 "github:nickbabcock/rrrocket" = "0.11.1"
 pre-commit = "latest"
 uv = "latest"
+
+[tasks.fix-rrrocket]
+run = '''
+chmod +x "$(mise where github:nickbabcock/rrrocket)/rrrocket"
+'''
