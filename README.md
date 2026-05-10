@@ -9,6 +9,10 @@ really wanted to you could. It's pretty simple really:
 * Flask frontend to show it all off with some charts courtesy of
   [Chart.js](https://www.chartjs.org/)
 
+## Requirements
+
+Replay files must be from Rocket League patch 2.43 (September 2024) or later. Earlier replays are missing the `MatchStartEpoch` field and will be skipped during ingest.
+
 ## Commands
 
 ```bash

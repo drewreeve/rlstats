@@ -291,6 +291,7 @@ def analyze_replay(replay: dict[str, Any]) -> dict[str, Any] | None:
     if not replay_hash:
         return None
 
+    # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); replays from before that patch are not supported
     played_at_sql = _epoch_to_played_at(props.get("MatchStartEpoch"))
     if not played_at_sql:
         return None
