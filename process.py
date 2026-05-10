@@ -135,7 +135,13 @@ def _parse_and_analyze(replay_path: Path) -> dict[str, Any] | None:
     replay, _ = parse_replay(replay_path)
     if replay is None:
         return None
-    return analyze_replay(replay)
+    analysis = analyze_replay(replay)
+    if analysis is None:
+        logger.warning(
+            "Skipping %s: missing required fields (MatchGUID or MatchStartEpoch)",
+            replay_path.name,
+        )
+    return analysis
 
 
 def process_unprocessed(db_path: Path, replay_dir: Path, *, force: bool = False):

@@ -1,9 +1,15 @@
+import copy
 import sqlite3
 
 import pytest
 
 from frame_analysis import analyze_frames
-from ingest import TRACKED_PLAYERS, get_or_create_player, ingest_match
+from ingest import (
+    TRACKED_PLAYERS,
+    analyze_replay,
+    get_or_create_player,
+    ingest_match,
+)
 from tests.fixtures import cached_db, in_memory_db, load_replay
 
 ALL_FIXTURES = [
@@ -1018,3 +1024,18 @@ def test_player_name_updates_on_change():
     get_or_create_player(conn, "steam", "123", "NewName")
     row = conn.execute("SELECT name FROM players WHERE platform_id = '123'").fetchone()
     assert row[0] == "NewName"
+
+
+# -- played_at from MatchStartEpoch --
+
+
+def test_played_at_derived_from_match_start_epoch():
+    analysis = analyze_replay(load_replay("match.json"))
+    assert analysis is not None
+    assert analysis["played_at_sql"] == "2026-02-08 23:27:57"
+
+
+def test_analyze_replay_rejects_missing_epoch():
+    replay = copy.deepcopy(load_replay("match.json"))
+    del replay["properties"]["MatchStartEpoch"]
+    assert analyze_replay(replay) is None

@@ -1,6 +1,7 @@
 # Replay Ingestion Pipeline
 # rrrocket JSON -> SQLite
 
+import datetime
 import sqlite3
 from typing import Any
 
@@ -57,15 +58,14 @@ def get_or_create_player(
     )
 
 
-def _normalize_played_at(raw_played_at: Any) -> str | None:
-    if not raw_played_at:
+def _epoch_to_played_at(epoch: Any) -> str | None:
+    if not epoch:
         return None
     try:
-        # rrrocket format: YYYY-MM-DD HH-MM-SS
-        date_part, time_part = raw_played_at.split(" ")
-        h, m, s = time_part.split("-")
-        return f"{date_part} {h}:{m}:{s}"
-    except ValueError, AttributeError:
+        return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+    except ValueError, TypeError:
         return None
 
 
@@ -291,7 +291,9 @@ def analyze_replay(replay: dict[str, Any]) -> dict[str, Any] | None:
     if not replay_hash:
         return None
 
-    played_at_sql = _normalize_played_at(props.get("Date"))
+    played_at_sql = _epoch_to_played_at(props.get("MatchStartEpoch"))
+    if not played_at_sql:
+        return None
     duration = props.get("TotalSecondsPlayed")
     forfeit = 1 if props.get("bForfeit") else 0
     team_size = props.get("TeamSize")
