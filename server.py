@@ -25,7 +25,14 @@ DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
 REPLAY_DIR = Path("replays")
 
-_VERSIONED_ASSETS = ["app.js", "match.js", "style.css", "upload.js", "utils.js"]
+_VERSIONED_ASSETS = [
+    "app.js",
+    "match.js",
+    "player.js",
+    "style.css",
+    "upload.js",
+    "utils.js",
+]
 
 
 def _compute_version(static_dir: Path) -> str:
@@ -193,6 +200,7 @@ def create_app(
     version = _compute_version(STATIC_DIR)
     index_html = _versioned_html(STATIC_DIR / "index.html", version)
     match_html = _versioned_html(STATIC_DIR / "match.html", version)
+    player_html = _versioned_html(STATIC_DIR / "player.html", version)
     upload_html = _versioned_html(STATIC_DIR / "upload.html", version)
 
     def get_conn() -> Generator[sqlite3.Connection, None, None]:
@@ -419,6 +427,53 @@ def create_app(
                 "longest_loss_streak": row["longest_loss_streak"] or 0,
             }
         return {"longest_win_streak": 0, "longest_loss_streak": 0}
+
+    # -- Player routes --
+
+    _TRACKED_PLAYER_NAMES = {"Drew", "Steve", "Jeff"}
+
+    @app.get("/player/{player_name}")
+    async def player_page(player_name: str):
+        if player_name not in _TRACKED_PLAYER_NAMES:
+            raise HTTPException(status_code=404, detail="Player not found")
+        return HTMLResponse(player_html)
+
+    @app.get("/api/players/{player_name}")
+    async def player_career(
+        player_name: str,
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+        mode: Annotated[str, Depends(game_mode)],
+    ):
+        if player_name not in _TRACKED_PLAYER_NAMES:
+            raise HTTPException(status_code=404, detail="Player not found")
+        row = queries.player_career_stats(conn, player_name=player_name, game_mode=mode)
+        if row is None:
+            return {
+                "player": player_name,
+                "matches": 0,
+                "goals": 0,
+                "assists": 0,
+                "saves": 0,
+                "shots": 0,
+                "demos": 0,
+                "avg_score": None,
+                "shooting_pct": None,
+                "mvp_count": 0,
+                "wins": 0,
+                "losses": 0,
+            }
+        return dict(row)
+
+    @app.get("/api/players/{player_name}/time-series")
+    async def player_time_series_route(
+        player_name: str,
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+        mode: Annotated[str, Depends(game_mode)],
+    ):
+        if player_name not in _TRACKED_PLAYER_NAMES:
+            raise HTTPException(status_code=404, detail="Player not found")
+        rows = queries.player_time_series(conn, player_name=player_name, game_mode=mode)
+        return [dict(r) for r in rows]
 
     # -- Exception handlers --
 

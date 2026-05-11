@@ -232,3 +232,54 @@ def test_match_detail_events(match_client: TestClient) -> None:
 
     goals = [e for e in events if e["event_type"] == "goal"]
     assert len(goals) == 9  # 5 team + 4 opponent
+
+
+# -- player routes --
+
+
+def test_player_page_returns_200(match_client: TestClient) -> None:
+    response = match_client.get("/player/Drew")
+    assert response.status_code == 200
+
+
+def test_player_page_unknown_returns_404(match_client: TestClient) -> None:
+    response = match_client.get("/player/Unknown")
+    assert response.status_code == 404
+
+
+def test_player_career_returns_200(match_client: TestClient) -> None:
+    response = match_client.get("/api/players/Drew?mode=3v3")
+    assert response.status_code == 200
+    data: Any = response.json()
+    assert data["player"] == "Drew"
+    assert data["matches"] >= 0
+
+
+def test_player_career_unknown_returns_404(match_client: TestClient) -> None:
+    response = match_client.get("/api/players/Unknown")
+    assert response.status_code == 404
+
+
+def test_player_career_no_data_returns_zero_matches(match_client: TestClient) -> None:
+    response = match_client.get("/api/players/Drew?mode=2v2")
+    assert response.status_code == 200
+    data: Any = response.json()
+    assert data["matches"] == 0
+
+
+def test_player_time_series_returns_list(match_client: TestClient) -> None:
+    response = match_client.get("/api/players/Drew/time-series?mode=3v3")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+def test_player_time_series_unknown_returns_404(match_client: TestClient) -> None:
+    response = match_client.get("/api/players/Unknown/time-series")
+    assert response.status_code == 404
+
+
+def test_match_players_include_is_tracked(match_client: TestClient) -> None:
+    response = match_client.get("/api/matches/1")
+    data: Any = response.json()
+    for player in data["team_players"] + data["opponent_players"]:
+        assert "is_tracked" in player

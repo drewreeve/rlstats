@@ -34,6 +34,7 @@ ORDER BY e.game_seconds;
 -- All players in a match with computed shooting percentage.
 SELECT
     p.name,
+    p.is_tracked,
     mp.team,
     mp.score,
     mp.goals,

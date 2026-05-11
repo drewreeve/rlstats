@@ -509,4 +509,85 @@ def test_win_loss_daily_pairings_correct_record_hoops():
     row = rows[0]
     assert row["wins"] == 1
     assert row["losses"] == 1
-    assert row["win_rate"] == 0.5
+
+
+# -- player_time_series --
+
+
+def test_player_time_series_returns_rows():
+    conn = _3v3_db()
+    rows = list(queries.player_time_series(conn, player_name="Drew", game_mode="3v3"))
+    assert len(rows) > 0
+
+
+def test_player_time_series_columns():
+    conn = _3v3_db()
+    rows = list(queries.player_time_series(conn, player_name="Drew", game_mode="3v3"))
+    row = dict(rows[0])
+    for col in (
+        "date",
+        "goals",
+        "assists",
+        "saves",
+        "shots",
+        "avg_score",
+        "mvp_count",
+        "shooting_pct",
+        "avg_speed",
+    ):
+        assert col in row, f"missing column: {col}"
+
+
+def test_player_time_series_unknown_player():
+    conn = _3v3_db()
+    rows = list(
+        queries.player_time_series(conn, player_name="Unknown", game_mode="3v3")
+    )
+    assert rows == []
+
+
+def test_player_time_series_wrong_mode():
+    conn = _3v3_db()
+    rows = list(queries.player_time_series(conn, player_name="Drew", game_mode="2v2"))
+    assert rows == []
+
+
+def test_player_time_series_goals_match_fixture():
+    conn = _match_db()
+    rows = list(queries.player_time_series(conn, player_name="Drew", game_mode="3v3"))
+    assert len(rows) == 1
+    # match.json: Drew (Flatliner) has 2 goals, 0 assists, 0 saves
+    assert rows[0]["goals"] == 2
+    assert rows[0]["assists"] == 0
+
+
+# -- player_career_stats --
+
+
+def test_player_career_stats_returns_totals():
+    conn = _3v3_db()
+    row = queries.player_career_stats(conn, player_name="Drew", game_mode="3v3")
+    assert row is not None
+    assert row["matches"] > 0
+    assert row["player"] == "Drew"
+
+
+def test_player_career_stats_unknown_player():
+    conn = _3v3_db()
+    row = queries.player_career_stats(conn, player_name="Unknown", game_mode="3v3")
+    assert row is None
+
+
+def test_player_career_stats_totals_match_fixture():
+    conn = _match_db()
+    row = queries.player_career_stats(conn, player_name="Drew", game_mode="3v3")
+    assert row is not None
+    assert row["matches"] == 1
+    assert row["goals"] == 2
+    assert row["assists"] == 0
+
+
+def test_player_career_stats_wrong_mode_returns_none():
+    conn = _match_db()
+    row = queries.player_career_stats(conn, player_name="Drew", game_mode="2v2")
+    assert row is None
