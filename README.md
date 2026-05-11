@@ -11,7 +11,11 @@ really wanted to you could. It's pretty simple really:
 
 ## Requirements
 
-Replay files must be from Rocket League patch 2.43 (September 2024) or later. Earlier replays are missing the `MatchStartEpoch` field and will be skipped during ingest.
+Replay files must have a reliable match start time. This means either:
+- Rocket League patch 2.43 (September 2024) or later, which includes `MatchStartEpoch`, or
+- A pre-2.43 replay saved by BakkesMod, which injects `GameStartTime` into the replay
+
+Pre-2.43 replays saved manually from in-game have neither field and will be skipped during ingest.
 
 ## Commands
 

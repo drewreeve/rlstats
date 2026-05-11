@@ -138,7 +138,7 @@ def _parse_and_analyze(replay_path: Path) -> dict[str, Any] | None:
     analysis = analyze_replay(replay)
     if analysis is None:
         logger.warning(
-            "Skipping %s: missing required fields (MatchGUID or MatchStartEpoch)",
+            "Skipping %s: replay could not be analyzed",
             replay_path.name,
         )
     return analysis

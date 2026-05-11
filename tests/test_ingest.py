@@ -1,5 +1,6 @@
 import copy
 import sqlite3
+from typing import Any
 
 import pytest
 
@@ -1035,7 +1036,33 @@ def test_played_at_derived_from_match_start_epoch():
     assert analysis["played_at_sql"] == "2026-02-08 23:27:57"
 
 
-def test_analyze_replay_rejects_missing_epoch():
+def test_analyze_replay_rejects_when_no_date_source_available():
     replay = copy.deepcopy(load_replay("match.json"))
     del replay["properties"]["MatchStartEpoch"]
+    replay["debug_info"] = []
     assert analyze_replay(replay) is None
+
+
+def _replay_with_bakkesmod_time(game_start_time: str) -> dict[str, Any]:
+    replay: dict[str, Any] = copy.deepcopy(load_replay("match.json"))
+    del replay["properties"]["MatchStartEpoch"]
+    replay["debug_info"] = [
+        {"frame": 0, "user": "GameStartTime", "text": game_start_time}
+    ]
+    return replay
+
+
+def test_played_at_falls_back_to_bakkesmod_game_start_time():
+    analysis = analyze_replay(_replay_with_bakkesmod_time("2024-08-10T02:37:59-0400"))
+    assert analysis is not None
+    assert analysis["played_at_sql"] == "2024-08-10 06:37:59"
+
+
+def test_match_start_epoch_takes_precedence_over_bakkesmod():
+    replay = copy.deepcopy(load_replay("match.json"))
+    replay["debug_info"] = [
+        {"frame": 0, "user": "GameStartTime", "text": "2020-01-01T00:00:00+0000"}
+    ]
+    analysis = analyze_replay(replay)
+    assert analysis is not None
+    assert analysis["played_at_sql"] == "2026-02-08 23:27:57"

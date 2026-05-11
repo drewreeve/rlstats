@@ -58,15 +58,30 @@ def get_or_create_player(
     )
 
 
+_SQL_DT_FMT = "%Y-%m-%d %H:%M:%S"
+
+
 def _epoch_to_played_at(epoch: Any) -> str | None:
     if not epoch:
         return None
     try:
         return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC).strftime(
-            "%Y-%m-%d %H:%M:%S"
+            _SQL_DT_FMT
         )
     except ValueError, TypeError:
         return None
+
+
+def _bakkesmod_played_at(replay: dict[str, Any]) -> str | None:
+    debug_info: list[dict[str, str]] = replay.get("debug_info", []) or []
+    for entry in debug_info:
+        if entry.get("user") == "GameStartTime":
+            try:
+                dt = datetime.datetime.fromisoformat(entry["text"])
+                return dt.astimezone(datetime.UTC).strftime(_SQL_DT_FMT)
+            except ValueError, KeyError:
+                continue
+    return None
 
 
 def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
@@ -291,8 +306,11 @@ def analyze_replay(replay: dict[str, Any]) -> dict[str, Any] | None:
     if not replay_hash:
         return None
 
-    # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); replays from before that patch are not supported
-    played_at_sql = _epoch_to_played_at(props.get("MatchStartEpoch"))
+    # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43 replays fall back to
+    # BakkesMod's GameStartTime in debug_info (absent on replays saved manually from match history)
+    played_at_sql = _epoch_to_played_at(
+        props.get("MatchStartEpoch")
+    ) or _bakkesmod_played_at(replay)
     if not played_at_sql:
         return None
     duration = props.get("TotalSecondsPlayed")
@@ -449,5 +467,5 @@ def write_match(conn: sqlite3.Connection, analysis: dict[str, Any]):
 def ingest_match(conn: sqlite3.Connection, replay: dict[str, Any]):
     analysis = analyze_replay(replay)
     if analysis is None:
-        return
+        raise ValueError("Replay could not be analyzed")
     write_match(conn, analysis)
