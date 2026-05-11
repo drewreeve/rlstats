@@ -33,9 +33,12 @@ function fmtStat(val, decimals) {
 
 function playerRow(p, isMvp) {
   const mvpBadge = isMvp ? '<span class="match-mvp-badge">MVP</span>' : "";
+  const nameHtml = p.is_tracked
+    ? `<a href="/player/${esc(p.name)}" class="player-name-link">${esc(p.name)}</a>`
+    : esc(p.name);
   return `
     <tr>
-      <td class="player-name">${esc(p.name)}${mvpBadge}</td>
+      <td class="player-name">${nameHtml}${mvpBadge}</td>
       <td>${p.score ?? 0}</td>
       <td>${p.goals}</td>
       <td>${p.assists}</td>

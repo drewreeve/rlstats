@@ -105,6 +105,14 @@ async function playerBarChart(
       ],
     },
     options: {
+      onHover: (event, elements) => {
+        event.native.target.style.cursor = elements.length ? "pointer" : "";
+      },
+      onClick: (event, elements) => {
+        if (!elements.length) return;
+        const name = data[elements[0].index].player;
+        if (PLAYER_COLORS[name]) window.location.href = `/player/${name}`;
+      },
       plugins: {
         legend: { display: false },
         tooltip: tooltipExtra
