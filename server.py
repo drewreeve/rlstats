@@ -1,6 +1,8 @@
+import hashlib
 import hmac
 import logging
 import os
+import re
 import secrets
 import sqlite3
 from collections.abc import Awaitable, Callable, Generator
@@ -8,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -22,6 +24,22 @@ logger = logging.getLogger(__name__)
 DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
 REPLAY_DIR = Path("replays")
+
+_VERSIONED_ASSETS = ["app.js", "match.js", "style.css", "upload.js", "utils.js"]
+
+
+def _compute_version(static_dir: Path) -> str:
+    h = hashlib.sha256()
+    for name in _VERSIONED_ASSETS:
+        h.update((static_dir / name).read_bytes())
+    return h.hexdigest()[:12]
+
+
+def _versioned_html(path: Path, version: str) -> str:
+    content = path.read_text()
+    return re.sub(r'(/static/[^"]+\.(?:css|js))', rf"\1?v={version}", content)
+
+
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
 
@@ -172,6 +190,11 @@ def create_app(
 
     upload_dir = replay_dir or REPLAY_DIR
 
+    version = _compute_version(STATIC_DIR)
+    index_html = _versioned_html(STATIC_DIR / "index.html", version)
+    match_html = _versioned_html(STATIC_DIR / "match.html", version)
+    upload_html = _versioned_html(STATIC_DIR / "upload.html", version)
+
     def get_conn() -> Generator[sqlite3.Connection, None, None]:
         conn = _get_conn(db_path)
         try:
@@ -227,12 +250,11 @@ def create_app(
 
     # -- HTML page routes --
 
-    index_path = str(STATIC_DIR / "index.html")
     for html_path in ["/", "/2v2", "/hoops", "/history"]:
 
         def _make_index(p: str = html_path):
             async def _index():
-                return FileResponse(index_path)
+                return HTMLResponse(index_html)
 
             _index.__name__ = f"index_{p.strip('/')}" if p != "/" else "index_root"
             return _index
@@ -241,11 +263,11 @@ def create_app(
 
     @app.get("/upload")
     async def upload_page():
-        return FileResponse(str(STATIC_DIR / "upload.html"))
+        return HTMLResponse(upload_html)
 
     @app.get("/match/{match_id}")
     async def match_page(match_id: int):
-        return FileResponse(str(STATIC_DIR / "match.html"))
+        return HTMLResponse(match_html)
 
     # -- Auth routes --
 
