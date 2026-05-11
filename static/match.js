@@ -1,26 +1,9 @@
-function esc(str) {
-  const d = document.createElement("div");
-  d.textContent = str;
-  return d.innerHTML;
-}
-
 function formatDuration(seconds) {
   if (!seconds) return "";
   const total = Math.round(seconds);
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
 }
 
 function ringChart(pct, color, size) {
@@ -188,7 +171,7 @@ function matchTimeline(events, teamNum, durationSeconds) {
   // Time axis markers
   let ticksSvg = "";
   const timeY = h - pad.bottom + 18;
-  const interval = totalSeconds <= 300 ? 60 : 60;
+  const interval = 60;
   for (let t = interval; t <= totalSeconds; t += interval) {
     const x = xPos(t);
     const min = Math.floor(t / 60);
@@ -278,15 +261,6 @@ function matchTimeline(events, teamNum, durationSeconds) {
         </g>`;
     }
   }
-
-  // Legend
-  const legendY = h - 4;
-  const legendItems = [
-    { label: "Goal", shape: "circle", color: "var(--text-dim)", r: 5 },
-    { label: "Shot", shape: "circle", color: "var(--text-dim)", r: 3 },
-    { label: "Save", shape: "rect", color: "var(--text-dim)", r: 3 },
-    { label: "Demo", shape: "diamond", color: "var(--text-dim)", r: 3 },
-  ];
 
   return `
     <div class="match-timeline">
@@ -518,7 +492,7 @@ async function loadMatch() {
         ${forfeitTag}
       </div>
       <div class="match-meta">
-        ${formatDate(m.played_at)}
+        ${formatUTCDateTime(m.played_at, { weekday: true })}
         ${m.game_mode ? ' &middot; <span class="mode-tag">' + esc(m.game_mode.toUpperCase()) + "</span>" : ""}
         ${m.duration_seconds ? " &middot; " + formatDuration(m.duration_seconds) : ""}
       </div>

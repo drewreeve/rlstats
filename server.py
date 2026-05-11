@@ -54,7 +54,7 @@ def query_matches(
         where.append("m.played_at >= :date_from")
         bindings["date_from"] = date_from
     if date_to:
-        where.append("m.played_at < date(:date_to, '+1 day')")
+        where.append("m.played_at < :date_to")
         bindings["date_to"] = date_to
 
     where_clause = (" AND " + " AND ".join(where)) if where else ""

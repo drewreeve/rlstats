@@ -25,10 +25,9 @@ const SEASONS = [
   // add future seasons here
 ];
 
-function esc(str) {
-  const d = document.createElement("div");
-  d.textContent = str;
-  return d.innerHTML;
+function localDateToUTC(dateStr, offsetDays = 0) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d + offsetDays).toISOString().replace("T", " ").slice(0, 19);
 }
 
 function rgba({ r, g, b }, a) {
@@ -725,8 +724,8 @@ async function renderRawTable() {
   if (search) params.set("search", search);
   if (gameMode) params.set("game_mode", gameMode);
   if (result) params.set("result", result);
-  if (dateFrom) params.set("date_from", dateFrom);
-  if (dateTo) params.set("date_to", dateTo);
+  if (dateFrom) params.set("date_from", localDateToUTC(dateFrom));
+  if (dateTo) params.set("date_to", localDateToUTC(dateTo, 1));
 
   const data = await fetchJSON(`/api/matches?${params}`);
   const tbody = document.getElementById("history-table-body");
@@ -737,7 +736,7 @@ async function renderRawTable() {
     tr.className = "history-row";
     tr.dataset.matchId = m.id;
 
-    const date = m.played_at ? m.played_at.split("T")[0] : "—";
+    const date = formatUTCDateTime(m.played_at);
     const isWin = m.result === "win";
     const resultClass = isWin ? "badge-win" : "badge-loss";
     const resultText = isWin ? "W" : "L";
