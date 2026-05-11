@@ -145,6 +145,50 @@ function renderGAS(data) {
   });
 }
 
+function renderAvgScore(data) {
+  const canvas = document.getElementById("chart-avg-score");
+  if (!canvas) return;
+  const color = PLAYER_COLORS[playerName] || { r: 255, g: 107, b: 0 };
+  const labels = data.map((d) => d.date);
+  const defaultWindow = Math.max(0, labels.length - 15);
+
+  charts.avgScore = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Avg Score",
+          data: data.map((d) => d.avg_score),
+          borderColor: rgba(color, 0.9),
+          backgroundColor: gradient(canvas, color, 0.2, 0.01),
+          fill: true,
+          tension: 0.35,
+          pointBackgroundColor: rgba(color, 1),
+          pointBorderColor: "#08080C",
+          pointBorderWidth: 2,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      aspectRatio: window.innerWidth <= 768 ? 1.2 : 2,
+      plugins: {
+        legend: { display: false },
+        zoom: zoomOptions("reset-zoom-avg-score"),
+      },
+      scales: {
+        y: { beginAtZero: true },
+        x: { grid: { display: false }, min: defaultWindow },
+      },
+    },
+  });
+}
+
 async function renderAll() {
   destroyCharts();
 
@@ -159,6 +203,7 @@ async function renderAll() {
 
   renderCareerBar(career);
   renderGAS(timeSeries);
+  renderAvgScore(timeSeries);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -192,6 +237,15 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("reset-zoom-gas").hidden = true;
     }
   });
+
+  document
+    .getElementById("reset-zoom-avg-score")
+    .addEventListener("click", () => {
+      if (charts.avgScore) {
+        charts.avgScore.resetZoom();
+        document.getElementById("reset-zoom-avg-score").hidden = true;
+      }
+    });
 
   const navWrap = document.querySelector(".mode-nav-wrap");
   const nav = document.querySelector(".mode-nav");
