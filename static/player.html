@@ -4,10 +4,83 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Player Stats — RL Stats</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
 </head>
 <body>
-    <p>Player stats coming soon.</p>
+    <div class="noise"></div>
+
+    <header>
+        <div class="header-inner">
+            <div class="logo-block">
+                <div class="logo-accent"></div>
+                <h1>RL STATS</h1>
+                <span class="logo-sub">DREW / STEVE / JEFF</span>
+            </div>
+            <div class="mode-nav-wrap">
+                <nav class="mode-nav">
+                    <a href="/" class="mode-btn">
+                        <span class="mode-label">3v3</span>
+                        <span class="mode-indicator"></span>
+                    </a>
+                    <a href="/2v2" class="mode-btn">
+                        <span class="mode-label">2v2</span>
+                        <span class="mode-indicator"></span>
+                    </a>
+                    <a href="/hoops" class="mode-btn">
+                        <span class="mode-label">HOOPS</span>
+                        <span class="mode-indicator"></span>
+                    </a>
+                    <a href="/history" class="mode-btn">
+                        <span class="mode-label">HISTORY</span>
+                        <span class="mode-indicator"></span>
+                    </a>
+                    <a href="/upload" class="mode-btn">
+                        <span class="mode-label">UPLOAD</span>
+                        <span class="mode-indicator"></span>
+                    </a>
+                </nav>
+            </div>
+        </div>
+        <div class="header-stripe"></div>
+    </header>
+
+    <main class="player-detail">
+        <a href="/" class="match-back">&larr; Back to Dashboard</a>
+
+        <div class="player-page-header">
+            <div class="player-page-accent" id="player-page-accent"></div>
+            <h2 class="player-page-name" id="player-page-name">—</h2>
+        </div>
+
+        <div class="player-career-bar" id="player-career-bar"></div>
+
+        <div class="player-mode-nav">
+            <button class="player-mode-btn active" data-mode="3v3">3v3</button>
+            <button class="player-mode-btn" data-mode="2v2">2v2</button>
+            <button class="player-mode-btn" data-mode="hoops">HOOPS</button>
+        </div>
+
+        <div class="player-charts-grid">
+
+            <section class="card player-chart-full" style="--i:0">
+                <div class="card-header">
+                    <div class="card-tag">TIMELINE</div>
+                    <h2>Goals / Assists / Saves Per Session</h2>
+                    <button class="reset-zoom-btn" id="reset-zoom-gas" hidden>Reset zoom</button>
+                </div>
+                <div class="chart-wrap"><canvas id="chart-gas"></canvas></div>
+            </section>
+
+        </div>
+    </main>
+
     <script src="/static/utils.js"></script>
     <script src="/static/player.js"></script>
 </body>
