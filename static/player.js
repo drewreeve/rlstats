@@ -1,29 +1,5 @@
 /* ── Player Stats Page ──────────────────────────── */
 
-const PLAYER_COLORS = {
-  Drew: { r: 0, g: 229, b: 255 } /* cyan */,
-  Steve: { r: 255, g: 107, b: 0 } /* orange */,
-  Jeff: { r: 168, g: 85, b: 247 } /* violet */,
-};
-
-function rgba({ r, g, b }, a) {
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
-}
-
-function gradient(canvas, { r, g, b }, topAlpha, bottomAlpha) {
-  const ctx = canvas.getContext("2d");
-  const h = canvas.parentElement?.clientHeight || 300;
-  const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${topAlpha})`);
-  grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, ${bottomAlpha})`);
-  return grad;
-}
-
-Chart.defaults.color = "#5A5A6E";
-Chart.defaults.borderColor = "rgba(255,255,255,0.04)";
-Chart.defaults.font.family = "'DM Mono', monospace";
-Chart.defaults.font.size = 13;
-
 const ALLOWED_MODES = ["3v3", "2v2", "hoops"];
 const playerName = decodeURIComponent(window.location.pathname.split("/")[2] || "");
 let currentMode =
@@ -31,22 +7,6 @@ let currentMode =
 if (!ALLOWED_MODES.includes(currentMode)) currentMode = "3v3";
 
 const charts = {};
-
-function zoomOptions(resetBtnId) {
-  const showBtn = () => {
-    document.getElementById(resetBtnId).hidden = false;
-  };
-  return {
-    pan: { enabled: true, mode: "x", onPan: showBtn },
-    zoom: {
-      wheel: { enabled: true },
-      pinch: { enabled: true },
-      mode: "x",
-      onZoom: showBtn,
-    },
-    limits: { x: { minRange: 5 } },
-  };
-}
 
 function destroyCharts() {
   for (const key of Object.keys(charts)) {
@@ -145,21 +105,32 @@ function renderGAS(data) {
   });
 }
 
-function renderAvgScore(data) {
-  const canvas = document.getElementById("chart-avg-score");
+function renderAreaChart(
+  data,
+  { canvasId, chartKey, dataKey, label, resetBtnId, aspectRatio = 2, yScale = { beginAtZero: true }, tooltipLabel = null },
+) {
+  const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const color = PLAYER_COLORS[playerName] || { r: 255, g: 107, b: 0 };
   const labels = data.map((d) => d.date);
   const defaultWindow = Math.max(0, labels.length - 15);
 
-  charts.avgScore = new Chart(canvas, {
+  const plugins = {
+    legend: { display: false },
+    zoom: zoomOptions(resetBtnId),
+  };
+  if (tooltipLabel) {
+    plugins.tooltip = { callbacks: { label: tooltipLabel } };
+  }
+
+  charts[chartKey] = new Chart(canvas, {
     type: "line",
     data: {
       labels,
       datasets: [
         {
-          label: "Avg Score",
-          data: data.map((d) => d.avg_score),
+          label,
+          data: data.map((d) => d[dataKey]),
           borderColor: rgba(color, 0.9),
           backgroundColor: gradient(canvas, color, 0.2, 0.01),
           fill: true,
@@ -176,16 +147,23 @@ function renderAvgScore(data) {
     options: {
       responsive: true,
       maintainAspectRatio: true,
-      aspectRatio: window.innerWidth <= 768 ? 1.2 : 2,
-      plugins: {
-        legend: { display: false },
-        zoom: zoomOptions("reset-zoom-avg-score"),
-      },
+      aspectRatio: window.innerWidth <= 768 ? 1.2 : aspectRatio,
+      plugins,
       scales: {
-        y: { beginAtZero: true },
+        y: yScale,
         x: { grid: { display: false }, min: defaultWindow },
       },
     },
+  });
+}
+
+function renderAvgScore(data) {
+  renderAreaChart(data, {
+    canvasId: "chart-avg-score",
+    chartKey: "avgScore",
+    dataKey: "avg_score",
+    label: "Avg Score",
+    resetBtnId: "reset-zoom-avg-score",
   });
 }
 
@@ -203,8 +181,8 @@ function renderMVP(data) {
         {
           label: "MVPs",
           data: data.map((d) => d.mvp_count),
-          backgroundColor: data.map(() => rgba(color, 0.7)),
-          borderColor: data.map(() => rgba(color, 0.9)),
+          backgroundColor: rgba(color, 0.7),
+          borderColor: rgba(color, 0.9),
           borderWidth: 1,
           borderRadius: 2,
           borderSkipped: false,
@@ -227,97 +205,26 @@ function renderMVP(data) {
 }
 
 function renderShooting(data) {
-  const canvas = document.getElementById("chart-shooting");
-  if (!canvas) return;
-  const color = PLAYER_COLORS[playerName] || { r: 255, g: 107, b: 0 };
-  const labels = data.map((d) => d.date);
-  const defaultWindow = Math.max(0, labels.length - 15);
-
-  charts.shooting = new Chart(canvas, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "Shooting %",
-          data: data.map((d) => d.shooting_pct),
-          borderColor: rgba(color, 0.9),
-          backgroundColor: gradient(canvas, color, 0.2, 0.01),
-          fill: true,
-          tension: 0.35,
-          pointBackgroundColor: rgba(color, 1),
-          pointBorderColor: "#08080C",
-          pointBorderWidth: 2,
-          pointRadius: 3,
-          pointHoverRadius: 5,
-          borderWidth: 2,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      aspectRatio: window.innerWidth <= 768 ? 1.2 : 2,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: { label: (ctx) => `${ctx.parsed.y}%` },
-        },
-        zoom: zoomOptions("reset-zoom-shooting"),
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          max: 100,
-          ticks: { callback: (v) => v + "%" },
-        },
-        x: { grid: { display: false }, min: defaultWindow },
-      },
-    },
+  renderAreaChart(data, {
+    canvasId: "chart-shooting",
+    chartKey: "shooting",
+    dataKey: "shooting_pct",
+    label: "Shooting %",
+    resetBtnId: "reset-zoom-shooting",
+    yScale: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
+    tooltipLabel: (ctx) => `${ctx.parsed.y}%`,
   });
 }
 
 function renderSpeed(data) {
-  const canvas = document.getElementById("chart-speed");
-  if (!canvas) return;
-  const color = PLAYER_COLORS[playerName] || { r: 255, g: 107, b: 0 };
-  const labels = data.map((d) => d.date);
-  const defaultWindow = Math.max(0, labels.length - 15);
-
-  charts.speed = new Chart(canvas, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "Avg Speed",
-          data: data.map((d) => d.avg_speed),
-          borderColor: rgba(color, 0.9),
-          backgroundColor: gradient(canvas, color, 0.2, 0.01),
-          fill: true,
-          tension: 0.35,
-          pointBackgroundColor: rgba(color, 1),
-          pointBorderColor: "#08080C",
-          pointBorderWidth: 2,
-          pointRadius: 3,
-          pointHoverRadius: 5,
-          borderWidth: 2,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      aspectRatio: window.innerWidth <= 768 ? 1.2 : 2.5,
-      plugins: {
-        legend: { display: false },
-        zoom: zoomOptions("reset-zoom-speed"),
-      },
-      scales: {
-        y: { beginAtZero: false },
-        x: { grid: { display: false }, min: defaultWindow },
-      },
-    },
+  renderAreaChart(data, {
+    canvasId: "chart-speed",
+    chartKey: "speed",
+    dataKey: "avg_speed",
+    label: "Avg Speed",
+    resetBtnId: "reset-zoom-speed",
+    aspectRatio: 2.5,
+    yScale: { beginAtZero: false },
   });
 }
 
@@ -325,12 +232,8 @@ async function renderAll() {
   destroyCharts();
 
   const [career, timeSeries] = await Promise.all([
-    fetch(`/api/players/${encodeURIComponent(playerName)}?mode=${currentMode}`).then(
-      (r) => r.json(),
-    ),
-    fetch(
-      `/api/players/${encodeURIComponent(playerName)}/time-series?mode=${currentMode}`,
-    ).then((r) => r.json()),
+    fetchJSON(`/api/players/${encodeURIComponent(playerName)}?mode=${currentMode}`),
+    fetchJSON(`/api/players/${encodeURIComponent(playerName)}/time-series?mode=${currentMode}`),
   ]);
 
   renderCareerBar(career);
@@ -366,39 +269,19 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  document.getElementById("reset-zoom-gas").addEventListener("click", () => {
-    if (charts.gas) {
-      charts.gas.resetZoom();
-      document.getElementById("reset-zoom-gas").hidden = true;
-    }
-  });
-
-  document
-    .getElementById("reset-zoom-avg-score")
-    .addEventListener("click", () => {
-      if (charts.avgScore) {
-        charts.avgScore.resetZoom();
-        document.getElementById("reset-zoom-avg-score").hidden = true;
+  for (const [btnId, chartKey] of [
+    ["reset-zoom-gas", "gas"],
+    ["reset-zoom-avg-score", "avgScore"],
+    ["reset-zoom-shooting", "shooting"],
+    ["reset-zoom-speed", "speed"],
+  ]) {
+    document.getElementById(btnId).addEventListener("click", () => {
+      if (charts[chartKey]) {
+        charts[chartKey].resetZoom();
+        document.getElementById(btnId).hidden = true;
       }
     });
-
-  document
-    .getElementById("reset-zoom-shooting")
-    .addEventListener("click", () => {
-      if (charts.shooting) {
-        charts.shooting.resetZoom();
-        document.getElementById("reset-zoom-shooting").hidden = true;
-      }
-    });
-
-  document
-    .getElementById("reset-zoom-speed")
-    .addEventListener("click", () => {
-      if (charts.speed) {
-        charts.speed.resetZoom();
-        document.getElementById("reset-zoom-speed").hidden = true;
-      }
-    });
+  }
 
   const navWrap = document.querySelector(".mode-nav-wrap");
   const nav = document.querySelector(".mode-nav");

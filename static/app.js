@@ -1,9 +1,4 @@
-/* ── Player & Stat Colors ───────────────────────── */
-const PLAYER_COLORS = {
-  Drew: { r: 0, g: 229, b: 255 } /* cyan */,
-  Steve: { r: 255, g: 107, b: 0 } /* orange */,
-  Jeff: { r: 168, g: 85, b: 247 } /* violet */,
-};
+/* ── Stat Colors ─────────────────────────────────── */
 
 const STAT_COLORS = {
   goals: { r: 255, g: 107, b: 0 },
@@ -30,25 +25,6 @@ function localDateToUTC(dateStr, offsetDays = 0) {
   return new Date(y, m - 1, d + offsetDays).toISOString().replace("T", " ").slice(0, 19);
 }
 
-function rgba({ r, g, b }, a) {
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
-}
-
-function gradient(canvas, { r, g, b }, topAlpha, bottomAlpha) {
-  const ctx = canvas.getContext("2d");
-  const h = canvas.parentElement?.clientHeight || 300;
-  const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${topAlpha})`);
-  grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, ${bottomAlpha})`);
-  return grad;
-}
-
-/* ── Chart.js Defaults ──────────────────────────── */
-Chart.defaults.color = "#5A5A6E";
-Chart.defaults.borderColor = "rgba(255,255,255,0.04)";
-Chart.defaults.font.family = "'DM Mono', monospace";
-Chart.defaults.font.size = 13;
-
 const MODE_PATHS = {
   "3v3": "/",
   "2v2": "/2v2",
@@ -63,11 +39,6 @@ let currentMode = PATH_MODES[window.location.pathname] || "3v3";
 const initialPage =
   parseInt(new URLSearchParams(window.location.search).get("page")) || 1;
 const charts = {};
-
-async function fetchJSON(url) {
-  const res = await fetch(url);
-  return res.json();
-}
 
 function destroyCharts() {
   for (const key of Object.keys(charts)) {
@@ -163,22 +134,6 @@ const seasonMarkersPlugin = {
     });
   },
 };
-
-function zoomOptions(resetBtnId) {
-  const showBtn = () => {
-    document.getElementById(resetBtnId).hidden = false;
-  };
-  return {
-    pan: { enabled: true, mode: "x", onPan: showBtn },
-    zoom: {
-      wheel: { enabled: true },
-      pinch: { enabled: true },
-      mode: "x",
-      onZoom: showBtn,
-    },
-    limits: { x: { minRange: 5 } },
-  };
-}
 
 async function renderWinRateDaily() {
   const data = await fetchJSON(`/api/stats/timeline?mode=${currentMode}`);
