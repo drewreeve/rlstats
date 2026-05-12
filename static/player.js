@@ -223,7 +223,6 @@ function renderSpeed(data) {
     dataKey: "avg_speed",
     label: "Avg Speed",
     resetBtnId: "reset-zoom-speed",
-    aspectRatio: 2.5,
     yScale: { beginAtZero: false },
   });
 }
