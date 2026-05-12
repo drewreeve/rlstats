@@ -15,11 +15,14 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from db import apply_migrations, queries
+from ingest import TRACKED_PLAYERS
 from process import UploadProcessor, process_unprocessed
 from replay_validator import secure_filename
 from replay_validator import validate as validate_replay
 
 logger = logging.getLogger(__name__)
+
+_TRACKED_PLAYER_NAMES = set(TRACKED_PLAYERS.values())
 
 DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -430,22 +433,21 @@ def create_app(
 
     # -- Player routes --
 
-    _TRACKED_PLAYER_NAMES = {"Drew", "Steve", "Jeff"}
-
-    @app.get("/player/{player_name}")
-    async def player_page(player_name: str):
+    def get_tracked_player(player_name: str) -> str:
         if player_name not in _TRACKED_PLAYER_NAMES:
             raise HTTPException(status_code=404, detail="Player not found")
+        return player_name
+
+    @app.get("/player/{player_name}")
+    async def player_page(player_name: Annotated[str, Depends(get_tracked_player)]):
         return HTMLResponse(player_html)
 
     @app.get("/api/players/{player_name}")
     async def player_career(
-        player_name: str,
+        player_name: Annotated[str, Depends(get_tracked_player)],
         conn: Annotated[sqlite3.Connection, Depends(get_conn)],
         mode: Annotated[str, Depends(game_mode)],
     ):
-        if player_name not in _TRACKED_PLAYER_NAMES:
-            raise HTTPException(status_code=404, detail="Player not found")
         row = queries.player_career_stats(conn, player_name=player_name, game_mode=mode)
         if row is None:
             return {
@@ -466,12 +468,10 @@ def create_app(
 
     @app.get("/api/players/{player_name}/time-series")
     async def player_time_series_route(
-        player_name: str,
+        player_name: Annotated[str, Depends(get_tracked_player)],
         conn: Annotated[sqlite3.Connection, Depends(get_conn)],
         mode: Annotated[str, Depends(game_mode)],
     ):
-        if player_name not in _TRACKED_PLAYER_NAMES:
-            raise HTTPException(status_code=404, detail="Player not found")
         rows = queries.player_time_series(conn, player_name=player_name, game_mode=mode)
         return [dict(r) for r in rows]
 
