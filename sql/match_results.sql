@@ -182,3 +182,16 @@ SELECT
     MAX(CASE WHEN result = 'win' THEN streak_len ELSE 0 END) AS longest_win_streak,
     MAX(CASE WHEN result = 'loss' THEN streak_len ELSE 0 END) AS longest_loss_streak
 FROM islands;
+
+-- name: goal_events_for_mode(game_mode)
+-- All goal events with match context for Python lead-duration computation.
+SELECT
+    e.match_id,
+    e.game_seconds,
+    (e.team = m.team) AS is_ours,
+    m.duration_seconds
+FROM match_events e
+JOIN matches m ON m.id = e.match_id
+WHERE e.event_type = 'goal'
+  AND m.game_mode = :game_mode
+ORDER BY e.match_id, e.game_seconds;

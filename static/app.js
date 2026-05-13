@@ -496,6 +496,14 @@ async function renderStreaks() {
     data.longest_loss_streak ?? "—";
 }
 
+async function renderGoalTiming() {
+  const data = await fetchJSON(`/api/stats/goal-timing?mode=${currentMode}`);
+  document.getElementById("timing-concede-value").textContent =
+    data.avg_seconds_to_concede != null ? formatDuration(data.avg_seconds_to_concede) : "—";
+  document.getElementById("timing-lead-value").textContent =
+    data.avg_lead_duration != null ? formatDuration(data.avg_lead_duration) : "—";
+}
+
 async function renderScoreRange() {
   const data = await fetchJSON(`/api/stats/score-range?mode=${currentMode}`);
   const canvas = document.getElementById("chart-score-range");
@@ -648,6 +656,7 @@ async function renderAll() {
   renderScoreRange();
   renderGoalContribution();
   renderOffensivePairings();
+  renderGoalTiming();
 }
 
 /* ── Raw Table ─────────────────────────────────── */

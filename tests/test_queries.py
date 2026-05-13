@@ -591,3 +591,31 @@ def test_player_career_stats_wrong_mode_returns_none():
     conn = _match_db()
     row = queries.player_career_stats(conn, player_name="Drew", game_mode="2v2")
     assert row is None
+
+
+# -- goal_events_for_mode --
+
+
+def test_goal_events_for_mode_returns_rows():
+    conn = _match_db()
+    events = list(queries.goal_events_for_mode(conn, game_mode="3v3"))
+    assert len(events) == 9  # match.json has 9 goals
+    for e in events:
+        row = dict(e)
+        assert "match_id" in row
+        assert "game_seconds" in row
+        assert "is_ours" in row
+        assert "duration_seconds" in row
+
+
+def test_goal_events_for_mode_ordered_by_time():
+    conn = _match_db()
+    events = list(queries.goal_events_for_mode(conn, game_mode="3v3"))
+    times = [e["game_seconds"] for e in events]
+    assert times == sorted(times)
+
+
+def test_goal_events_for_mode_empty_for_missing_mode():
+    conn = _match_db()
+    events = list(queries.goal_events_for_mode(conn, game_mode="2v2"))
+    assert events == []

@@ -6,6 +6,7 @@ import re
 import secrets
 import sqlite3
 from collections.abc import Awaitable, Callable, Generator
+from itertools import groupby
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -181,6 +182,42 @@ STAT_ROUTES = {
     "/api/stats/score-range": queries.score_range,
     "/api/stats/offensive-pairings": queries.offensive_pairings,
 }
+
+
+def compute_goal_timing(
+    events: list[Any],
+) -> tuple[float | None, float | None]:
+    """Returns (avg_seconds_to_concede_after_scoring, avg_lead_duration)."""
+    concede_delays: list[float] = []
+    lead_durations: list[float] = []
+    for _, match_events in groupby(events, key=lambda e: e["match_id"]):
+        our, opp, lead_start, duration = 0, 0, None, None
+        prev_is_ours: bool | None = None
+        prev_time: float | None = None
+        for ev in match_events:
+            duration = ev["duration_seconds"]
+            is_ours = bool(ev["is_ours"])
+            was_leading = our > opp
+            if not is_ours and prev_is_ours and prev_time is not None:
+                concede_delays.append(ev["game_seconds"] - prev_time)
+            if is_ours:
+                our += 1
+            else:
+                opp += 1
+            is_leading = our > opp
+            if not was_leading and is_leading:
+                lead_start = ev["game_seconds"]
+            elif was_leading and not is_leading:
+                if lead_start is not None:
+                    lead_durations.append(ev["game_seconds"] - lead_start)
+                lead_start = None
+            prev_is_ours = is_ours
+            prev_time = ev["game_seconds"]
+        if our > opp and lead_start is not None and duration:
+            lead_durations.append(duration - lead_start)
+    avg_concede = sum(concede_delays) / len(concede_delays) if concede_delays else None
+    avg_lead = sum(lead_durations) / len(lead_durations) if lead_durations else None
+    return avg_concede, avg_lead
 
 
 def _get_conn(db_path: str | Path) -> sqlite3.Connection:
@@ -430,6 +467,20 @@ def create_app(
                 "longest_loss_streak": row["longest_loss_streak"] or 0,
             }
         return {"longest_win_streak": 0, "longest_loss_streak": 0}
+
+    @app.get("/api/stats/goal-timing")
+    async def goal_timing(
+        mode: Annotated[str, Depends(game_mode)],
+        conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    ):
+        events = list(queries.goal_events_for_mode(conn, game_mode=mode))
+        avg_concede, avg_lead = compute_goal_timing(events)
+        return {
+            "avg_seconds_to_concede": round(avg_concede)
+            if avg_concede is not None
+            else None,
+            "avg_lead_duration": round(avg_lead) if avg_lead is not None else None,
+        }
 
     # -- Player routes --
 
