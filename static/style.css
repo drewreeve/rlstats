@@ -619,6 +619,17 @@ header h1 {
     box-shadow: 0 0 20px rgba(255, 60, 60, 0.1), inset 0 0 20px rgba(255, 60, 60, 0.05);
 }
 
+.streak-circle-player {
+    border-color: rgba(var(--player-r), var(--player-g), var(--player-b), 0.5);
+    background: rgba(var(--player-r), var(--player-g), var(--player-b), 0.10);
+    box-shadow: 0 0 20px rgba(var(--player-r), var(--player-g), var(--player-b), 0.1),
+                inset 0 0 20px rgba(var(--player-r), var(--player-g), var(--player-b), 0.05);
+}
+
+.streak-circle-player .streak-value {
+    color: rgba(var(--player-r), var(--player-g), var(--player-b), 1);
+}
+
 .streak-value {
     font-family: var(--font-display);
     font-size: clamp(1.4rem, 7cqi, 2.4rem);

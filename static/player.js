@@ -201,6 +201,20 @@ function renderSpeed(data) {
   });
 }
 
+function renderBoostSpeedCard(career) {
+  const color = PLAYER_COLORS[playerName];
+  if (color) {
+    const display = document.getElementById("boost-speed-display");
+    display.style.setProperty("--player-r", color.r);
+    display.style.setProperty("--player-g", color.g);
+    display.style.setProperty("--player-b", color.b);
+  }
+  document.getElementById("boost-value").textContent =
+    career.avg_boost_per_minute != null ? career.avg_boost_per_minute : "—";
+  document.getElementById("supersonic-value").textContent =
+    career.avg_supersonic_pct != null ? career.avg_supersonic_pct + "%" : "—";
+}
+
 async function renderAll() {
   destroyCharts();
 
@@ -210,6 +224,7 @@ async function renderAll() {
   ]);
 
   renderCareerBar(career);
+  renderBoostSpeedCard(career);
   renderGAS(timeSeries);
   renderAvgScore(timeSeries);
   renderMVP(timeSeries);

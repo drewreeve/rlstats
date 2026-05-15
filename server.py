@@ -514,6 +514,8 @@ def create_app(
                 "mvp_count": 0,
                 "wins": 0,
                 "losses": 0,
+                "avg_boost_per_minute": None,
+                "avg_supersonic_pct": None,
             }
         return dict(row)
 

@@ -34,7 +34,9 @@ SELECT
     ROUND(CAST(SUM(mp.goals) AS REAL) / NULLIF(SUM(mp.shots), 0) * 100, 1) AS shooting_pct,
     SUM(CASE WHEN m.team_mvp_player_id = p.id THEN 1 ELSE 0 END) AS mvp_count,
     SUM(CASE WHEN m.result = 'win' THEN 1 ELSE 0 END) AS wins,
-    SUM(CASE WHEN m.result = 'loss' THEN 1 ELSE 0 END) AS losses
+    SUM(CASE WHEN m.result = 'loss' THEN 1 ELSE 0 END) AS losses,
+    ROUND(AVG(mp.boost_per_minute), 1) AS avg_boost_per_minute,
+    ROUND(AVG(mp.time_supersonic_pct), 1) AS avg_supersonic_pct
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
