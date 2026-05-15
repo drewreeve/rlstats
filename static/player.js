@@ -201,6 +201,20 @@ function renderSpeed(data) {
   });
 }
 
+function renderDemosCard(career) {
+  const color = PLAYER_COLORS[playerName];
+  if (color) {
+    const display = document.getElementById("demos-display");
+    display.style.setProperty("--player-r", color.r);
+    display.style.setProperty("--player-g", color.g);
+    display.style.setProperty("--player-b", color.b);
+  }
+  document.getElementById("demos-committed-value").textContent =
+    career.avg_demos != null ? career.avg_demos : "—";
+  document.getElementById("demos-received-value").textContent =
+    career.avg_demos_received != null ? career.avg_demos_received : "—";
+}
+
 function renderBoostSpeedCard(career) {
   const color = PLAYER_COLORS[playerName];
   if (color) {
@@ -224,6 +238,7 @@ async function renderAll() {
   ]);
 
   renderCareerBar(career);
+  renderDemosCard(career);
   renderBoostSpeedCard(career);
   renderGAS(timeSeries);
   renderAvgScore(timeSeries);

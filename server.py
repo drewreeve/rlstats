@@ -516,6 +516,8 @@ def create_app(
                 "losses": 0,
                 "avg_boost_per_minute": None,
                 "avg_supersonic_pct": None,
+                "avg_demos": None,
+                "avg_demos_received": None,
             }
         return dict(row)
 
