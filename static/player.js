@@ -168,39 +168,13 @@ function renderAvgScore(data) {
 }
 
 function renderMVP(data) {
-  const canvas = document.getElementById("chart-mvp");
-  if (!canvas) return;
-  const color = PLAYER_COLORS[playerName] || { r: 255, g: 107, b: 0 };
-  const labels = data.map((d) => d.date);
-
-  charts.mvp = new Chart(canvas, {
-    type: "bar",
-    data: {
-      labels,
-      datasets: [
-        {
-          label: "MVPs",
-          data: data.map((d) => d.mvp_count),
-          backgroundColor: rgba(color, 0.7),
-          borderColor: rgba(color, 0.9),
-          borderWidth: 1,
-          borderRadius: 2,
-          borderSkipped: false,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      aspectRatio: window.innerWidth <= 768 ? 1.2 : 2,
-      plugins: {
-        legend: { display: false },
-      },
-      scales: {
-        y: { beginAtZero: true, ticks: { stepSize: 1 } },
-        x: { grid: { display: false } },
-      },
-    },
+  renderAreaChart(data, {
+    canvasId: "chart-mvp",
+    chartKey: "mvp",
+    dataKey: "mvp_count",
+    label: "MVPs",
+    resetBtnId: "reset-zoom-mvp",
+    yScale: { beginAtZero: true, ticks: { stepSize: 1 } },
   });
 }
 
