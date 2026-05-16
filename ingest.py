@@ -42,6 +42,54 @@ class ReplayAnalysis:
     all_players: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class OffensivePairing:
+    scorer: tuple[str, str]  # (platform, platform_id)
+    assister: tuple[str, str]  # (platform, platform_id)
+    game_seconds: float
+    team: int
+
+
+def correlate_pairings(
+    events: list[tuple[str, float, str, str, int]],
+    window: float = PAIRING_WINDOW,
+) -> list[OffensivePairing]:
+    goal_events: list[tuple[float, tuple[str, str], int]] = []
+    assist_events: list[tuple[float, tuple[str, str], int]] = []
+    for event_type, game_seconds, platform, platform_id, team in events:
+        identity = (platform, platform_id)
+        if event_type == "goal":
+            goal_events.append((game_seconds, identity, team))
+        elif event_type == "assist":
+            assist_events.append((game_seconds, identity, team))
+
+    pairings: list[OffensivePairing] = []
+    used_assists: set[int] = set()
+    for g_time, g_identity, g_team in goal_events:
+        best_idx = None
+        best_delta = float("inf")
+        for i, (a_time, a_identity, a_team) in enumerate(assist_events):
+            if i in used_assists or a_team != g_team or a_identity == g_identity:
+                continue
+            delta = abs(g_time - a_time)
+            if delta <= window and delta < best_delta:
+                best_delta = delta
+                best_idx = i
+        if best_idx is None:
+            continue
+        _, a_identity, _ = assist_events[best_idx]
+        used_assists.add(best_idx)
+        pairings.append(
+            OffensivePairing(
+                scorer=g_identity,
+                assister=a_identity,
+                game_seconds=g_time,
+                team=g_team,
+            )
+        )
+    return pairings
+
+
 def get_or_create_player(
     conn: sqlite3.Connection,
     platform: str,
@@ -428,10 +476,6 @@ def write_match(
             if row:
                 player_id_map[identity] = row[0]
 
-    # Insert match events and collect goal/assist lists for pairing correlation
-    goal_events: list[tuple[float, int, int]] = []
-    assist_events: list[tuple[float, int, int]] = []
-
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
     for (
         event_type,
@@ -447,41 +491,22 @@ def write_match(
             "INSERT INTO match_events (match_id, event_type, game_seconds, player_id, team) VALUES (?, ?, ?, ?, ?)",
             (match_id, event_type, game_seconds, player_id, ev_team),
         )
-        if event_type == "goal":
-            goal_events.append((game_seconds, player_id, ev_team))
-        elif event_type == "assist":
-            assist_events.append((game_seconds, player_id, ev_team))
 
-    # Correlate goal+assist events into offensive pairings
-    tracked_player_ids = {
-        player_id_map[identity]
-        for identity in tracked_players
-        if identity in player_id_map
-    }
+    tracked_identities = set(tracked_players.keys())
+    pairings = [
+        p
+        for p in correlate_pairings(analysis.match_events)
+        if p.scorer in tracked_identities and p.assister in tracked_identities
+    ]
 
     conn.execute("DELETE FROM offensive_pairings WHERE match_id = ?", (match_id,))
-
-    used_assists: set[int] = set()
-    for g_time, g_player_id, g_team in goal_events:
-        best_idx = None
-        best_delta = float("inf")
-        for i, (a_time, a_player_id, a_team) in enumerate(assist_events):
-            if i in used_assists or a_team != g_team or a_player_id == g_player_id:
-                continue
-            delta = abs(g_time - a_time)
-            if delta <= PAIRING_WINDOW and delta < best_delta:
-                best_delta = delta
-                best_idx = i
-
-        if best_idx is None:
-            continue
-
-        _, a_player_id, _ = assist_events[best_idx]
-        used_assists.add(best_idx)
-        if g_player_id in tracked_player_ids and a_player_id in tracked_player_ids:
+    for p in pairings:
+        scorer_id = player_id_map.get(p.scorer)
+        assister_id = player_id_map.get(p.assister)
+        if scorer_id is not None and assister_id is not None:
             conn.execute(
                 "INSERT INTO offensive_pairings (match_id, game_seconds, scorer_player_id, assister_player_id, team) VALUES (?, ?, ?, ?, ?)",
-                (match_id, g_time, g_player_id, a_player_id, g_team),
+                (match_id, p.game_seconds, scorer_id, assister_id, p.team),
             )
 
 

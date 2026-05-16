@@ -13,3 +13,7 @@ A player identity is stable for the lifetime of a player's account on a given pl
 **Platform** is a normalized short string: `"steam"`, `"epic"`, `"ps4"`, `"xbox"`, `"switch"`.
 
 **Platform ID** is the platform's own identifier for the account (e.g. a Steam64 ID for Steam players, an Epic Account ID for Epic players).
+
+## Offensive Pairing
+
+An **offensive pairing** is a matched (scorer, assister) pair within a single match: a goal and an assist by different players on the same team, where the assist occurred within `PAIRING_WINDOW` seconds of the goal. Only pairings where both players are tracked are recorded. The pairing algorithm is greedy: for each goal (processed in order), it claims the temporally nearest unclaimed assist within the window.

@@ -6,7 +6,9 @@ import pytest
 
 from frame_analysis import analyze_frames
 from ingest import (
+    OffensivePairing,
     analyze_replay,
+    correlate_pairings,
     get_or_create_player,
     ingest_match,
 )
@@ -349,6 +351,74 @@ def test_offensive_pairings_idempotent():
     ingest_match(conn, replay, TRACKED_PLAYERS)
     count2 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
     assert count1 == count2
+
+
+def _ev(
+    event_type: str, game_seconds: float, platform: str, platform_id: str, team: int
+) -> tuple[str, float, str, str, int]:
+    return (event_type, game_seconds, platform, platform_id, team)
+
+
+def test_correlate_pairings_basic():
+    events = [
+        _ev("goal", 10.0, "steam", "A", 0),
+        _ev("assist", 9.5, "steam", "B", 0),
+    ]
+    result = correlate_pairings(events)
+    assert result == [
+        OffensivePairing(
+            scorer=("steam", "A"), assister=("steam", "B"), game_seconds=10.0, team=0
+        )
+    ]
+
+
+def test_correlate_pairings_nearest_wins():
+    events = [
+        _ev("goal", 10.0, "steam", "A", 0),
+        _ev("assist", 8.5, "steam", "B", 0),  # 1.5s away — outside default window
+        _ev("assist", 9.5, "steam", "C", 0),  # 0.5s away — wins
+    ]
+    result = correlate_pairings(events)
+    assert len(result) == 1
+    assert result[0].assister == ("steam", "C")
+
+
+def test_correlate_pairings_no_double_counting():
+    events = [
+        _ev("goal", 10.0, "steam", "A", 0),
+        _ev("goal", 10.1, "steam", "B", 0),
+        _ev("assist", 9.9, "steam", "C", 0),  # can only pair with one goal
+    ]
+    result = correlate_pairings(events)
+    assert len(result) == 1
+
+
+def test_correlate_pairings_outside_window():
+    events = [
+        _ev("goal", 10.0, "steam", "A", 0),
+        _ev("assist", 8.9, "steam", "B", 0),  # 1.1s away — outside 1.0s window
+    ]
+    assert correlate_pairings(events) == []
+
+
+def test_correlate_pairings_same_player_excluded():
+    events = [
+        _ev("goal", 10.0, "steam", "A", 0),
+        _ev("assist", 9.8, "steam", "A", 0),  # same player — excluded
+    ]
+    assert correlate_pairings(events) == []
+
+
+def test_correlate_pairings_cross_team_excluded():
+    events = [
+        _ev("goal", 10.0, "steam", "A", 0),
+        _ev("assist", 9.8, "steam", "B", 1),  # different team — excluded
+    ]
+    assert correlate_pairings(events) == []
+
+
+def test_correlate_pairings_empty():
+    assert correlate_pairings([]) == []
 
 
 def test_boost_stats_tracking():
