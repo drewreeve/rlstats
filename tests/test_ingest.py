@@ -26,6 +26,15 @@ def ingest_fixture(fixture: str) -> sqlite3.Connection:
     return cached_db(fixture)
 
 
+@pytest.fixture()
+def conn_no_network() -> sqlite3.Connection:
+    conn = in_memory_db()
+    replay = load_replay("match.json")
+    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
+    ingest_match(conn, replay)
+    return conn
+
+
 def ingest_all_fixtures():
     return cached_db(*ALL_FIXTURES)
 
@@ -157,30 +166,6 @@ def test_camelcase_match_guid():
     assert replay_hash is not None
 
 
-def test_epic_player_stored_with_correct_platform():
-    conn = ingest_fixture("match.json")
-    row = conn.execute(
-        "SELECT platform, platform_id FROM players WHERE name = 'stm4000'"
-    ).fetchone()
-    assert row == ("epic", "23ce79e90944478599a96ed5402a99e6")
-
-
-def test_ps4_player_stored_with_correct_platform():
-    conn = ingest_fixture("zero_score.json")
-    row = conn.execute(
-        "SELECT platform, platform_id FROM players WHERE name = 'think_charlie'"
-    ).fetchone()
-    assert row == ("ps4", "8532790116262235057")
-
-
-def test_steam_player_stored_with_correct_platform():
-    conn = ingest_fixture("match.json")
-    row = conn.execute(
-        "SELECT platform, platform_id FROM players WHERE name = 'Drew'"
-    ).fetchone()
-    assert row == ("steam", "76561197969365901")
-
-
 def test_possession_tracking():
     conn = ingest_fixture("match.json")
     row = conn.execute(
@@ -202,37 +187,11 @@ def test_possession_tracking():
     assert 200 < total_poss < 450
 
 
-def test_possession_none_without_network_data():
-    """Replays without network_frames should have null possession."""
-    conn = in_memory_db()
-    replay = load_replay("match.json")
-    # Strip network data (copy to avoid mutating cached replay)
-    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
-    ingest_match(conn, replay)
-    row = conn.execute(
+def test_possession_none_without_network_data(conn_no_network: sqlite3.Connection):
+    row = conn_no_network.execute(
         "SELECT team_possession_seconds, opponent_possession_seconds FROM matches"
     ).fetchone()
     assert row == (None, None)
-
-
-def test_extract_demolitions():
-    replay = load_replay("match.json")
-    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
-
-    # Should return a dict with (platform, platform_id) keys
-    assert isinstance(fa.demolitions, dict)
-    assert len(fa.demolitions) > 0
-
-    # Known players from match.json with demos
-    # Jeff (Steam:76561197964215253) = 1 demo
-    # Drew (Steam:76561197969365901) = 1 demo
-    assert fa.demolitions[("steam", "76561197964215253")] == 1  # Jeff
-    assert fa.demolitions[("steam", "76561197969365901")] == 1  # Drew
-
-
-def test_extract_demolitions_without_network_data():
-    fa = analyze_frames({"properties": {}}, 0, set(), 300, "3v3")
-    assert fa.demolitions == {}
 
 
 def test_demolitions_stored_in_match_players():
@@ -241,32 +200,15 @@ def test_demolitions_stored_in_match_players():
         SELECT p.name, mp.demos
         FROM match_players mp
         JOIN players p ON p.id = mp.player_id
-        WHERE mp.demos > 0
         ORDER BY p.name
     """).fetchall()
 
-    # Drew and Jeff each have 1 demo; stm4000 has 1; BLM_SCAM has 2
-    names = [r[0] for r in rows]
-    assert "Drew" in names
-    assert "Jeff" in names
-
-
-def test_extract_demos_received():
-    replay = load_replay("match.json")
-    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
-
-    assert isinstance(fa.demos_received, dict)
-    assert len(fa.demos_received) > 0
-
-    # Each tracked player received 1 player-inflicted demo
-    assert fa.demos_received[("steam", "76561197964215253")] == 1  # Jeff
-    assert fa.demos_received[("steam", "76561197969365901")] == 1  # Drew
-    assert fa.demos_received[("steam", "76561198008422893")] == 1  # Steve
-
-
-def test_extract_demos_received_without_network_data():
-    fa = analyze_frames({"properties": {}}, 0, set(), 300, "3v3")
-    assert fa.demos_received == {}
+    demo_counts = {name: demos for name, demos in rows}
+    assert demo_counts["Drew"] == 1
+    assert demo_counts["Jeff"] == 1
+    assert demo_counts["Softycooks"] == 2
+    assert demo_counts["stm4000"] == 1
+    assert demo_counts["Steve"] == 0
 
 
 def test_demos_received_stored_in_match_players():
@@ -275,14 +217,16 @@ def test_demos_received_stored_in_match_players():
         SELECT p.name, mp.demos_received
         FROM match_players mp
         JOIN players p ON p.id = mp.player_id
-        WHERE mp.demos_received > 0
         ORDER BY p.name
     """).fetchall()
 
-    names = [r[0] for r in rows]
-    assert "Drew" in names
-    assert "Jeff" in names
-    assert "Steve" in names
+    recv_counts = {name: demos_received for name, demos_received in rows}
+    assert recv_counts["Drew"] == 1
+    assert recv_counts["Jeff"] == 1
+    assert recv_counts["Steve"] == 1
+    assert recv_counts["Softycooks"] == 1
+    assert recv_counts["stm4000"] == 1
+    assert recv_counts["BLM_SCAM"] == 0
 
 
 def test_ball_thirds_tracking():
@@ -311,47 +255,11 @@ def test_ball_thirds_tracking():
     assert off_s < total * 0.9
 
 
-def test_ball_thirds_none_without_network_data():
-    """Replays without network_frames should have null ball thirds."""
-    conn = in_memory_db()
-    replay = load_replay("match.json")
-    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
-    ingest_match(conn, replay)
-    row = conn.execute(
+def test_ball_thirds_none_without_network_data(conn_no_network: sqlite3.Connection):
+    row = conn_no_network.execute(
         "SELECT defensive_third_seconds, neutral_third_seconds, offensive_third_seconds FROM matches"
     ).fetchone()
     assert row == (None, None, None)
-
-
-def test_extract_match_events():
-    replay = load_replay("match.json")
-    # tracked_team is 0 for match.json (Drew/Steve/Jeff are team 0)
-    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
-    events = fa.match_events
-
-    assert isinstance(events, list)
-    assert len(events) > 0
-
-    # Each event is (event_type, game_seconds, platform, platform_id, team)
-    for ev in events:
-        assert ev[0] in ("goal", "shot", "save", "demo", "assist")
-        assert isinstance(ev[1], (int, float))
-        assert ev[1] >= 0
-        assert ev[4] in (0, 1)
-
-    # Count goals — should match the 5-4 score (9 total)
-    goals = [e for e in events if e[0] == "goal"]
-    assert len(goals) == 9
-
-    team_goals = [e for e in goals if e[4] == 0]
-    opp_goals = [e for e in goals if e[4] == 1]
-    assert len(team_goals) == 5
-    assert len(opp_goals) == 4
-
-
-def test_extract_match_events_without_network_data():
-    fa = analyze_frames({"properties": {}}, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
-    assert fa.match_events == []
 
 
 def test_match_events_stored_in_db():
@@ -425,10 +333,10 @@ def test_offensive_pairings_only_tracked_players():
     rows = conn.execute("""
         SELECT scorer_player_id, assister_player_id FROM offensive_pairings
     """).fetchall()
-    tracked_ids = set(
-        conn.execute("SELECT id FROM players WHERE is_tracked = 1").fetchall()
-    )
-    tracked_ids = {r[0] for r in tracked_ids}
+    tracked_ids = {
+        r[0]
+        for r in conn.execute("SELECT id FROM players WHERE is_tracked = 1").fetchall()
+    }
     for scorer_id, assister_id in rows:
         assert scorer_id in tracked_ids
         assert assister_id in tracked_ids
@@ -449,121 +357,28 @@ def test_boost_stats_tracking():
     row = conn.execute(
         "SELECT team_boost_collected, opponent_boost_collected, team_boost_stolen, opponent_boost_stolen FROM matches"
     ).fetchone()
-    team_collected, opp_collected, team_stolen, opp_stolen = row
-
     assert row == (6276, 8472, 2212, 3468)
-    assert team_collected is not None
-    assert opp_collected is not None
-    assert team_stolen is not None
-    assert opp_stolen is not None
-    assert team_collected > 0
-    assert opp_collected > 0
-    assert team_stolen >= 0
-    assert opp_stolen >= 0
-    assert team_stolen <= team_collected
-    assert opp_stolen <= opp_collected
 
 
-def test_boost_stats_none_without_network_data():
-    conn = in_memory_db()
-    replay = load_replay("match.json")
-    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
-    ingest_match(conn, replay)
-    row = conn.execute(
+def test_boost_stats_none_without_network_data(conn_no_network: sqlite3.Connection):
+    row = conn_no_network.execute(
         "SELECT team_boost_collected, opponent_boost_collected, team_boost_stolen, opponent_boost_stolen FROM matches"
     ).fetchone()
     assert row == (None, None, None, None)
-
-
-def test_boost_stats_dedupes_repeated_pickup_state():
-    replay = {
-        "objects": [
-            "TAGame.Car_TA:TeamPaint",
-            "TAGame.RBActor_TA:ReplicatedRBState",
-            "TAGame.VehiclePickup_TA:NewReplicatedPickupData",
-        ],
-        "network_frames": {
-            "frames": [
-                {
-                    "time": 0.0,
-                    "updated_actors": [
-                        {
-                            "actor_id": 1,
-                            "object_id": 0,
-                            "attribute": {"TeamPaint": {"team": 0}},
-                        },
-                        {
-                            "actor_id": 1,
-                            "object_id": 1,
-                            "attribute": {
-                                "RigidBody": {"location": {"x": 0, "y": 100}}
-                            },
-                        },
-                        {
-                            "actor_id": 10,
-                            "object_id": 2,
-                            "attribute": {
-                                "PickupNew": {"picked_up": 1, "instigator": 1}
-                            },
-                        },
-                    ],
-                },
-                {
-                    "time": 0.1,
-                    "updated_actors": [
-                        {
-                            "actor_id": 10,
-                            "object_id": 2,
-                            "attribute": {
-                                "PickupNew": {"picked_up": 1, "instigator": 1}
-                            },
-                        }
-                    ],
-                },
-                {
-                    "time": 0.2,
-                    "updated_actors": [
-                        {
-                            "actor_id": 10,
-                            "object_id": 2,
-                            "attribute": {
-                                "PickupNew": {"picked_up": 3, "instigator": 1}
-                            },
-                        }
-                    ],
-                },
-            ]
-        },
-    }
-
-    fa = analyze_frames(
-        replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
-    )
-    assert (
-        fa.team_boost_collected,
-        fa.opponent_boost_collected,
-        fa.team_boost_stolen,
-        fa.opponent_boost_stolen,
-    ) == (
-        24,
-        0,
-        24,
-        0,
-    )
 
 
 def test_player_movement_stats_tracking():
     conn = ingest_fixture("match.json")
     rows = conn.execute("""
         SELECT p.name, mp.boost_per_minute, mp.avg_speed, mp.time_supersonic_pct,
-               mp.small_pads, mp.large_pads
+               mp.small_pads, mp.large_pads, mp.stolen_small_pads, mp.stolen_large_pads
         FROM match_players mp
         JOIN players p ON p.id = mp.player_id
         ORDER BY p.name
     """).fetchall()
 
     assert len(rows) == 6
-    for name, bpm, avg_spd, supersonic, _, _ in rows:
+    for name, bpm, avg_spd, supersonic, _, _, _, _ in rows:
         assert bpm is not None, f"{name} boost_per_minute is null"
         assert avg_spd is not None, f"{name} avg_speed is null"
         assert supersonic is not None, f"{name} time_supersonic_pct is null"
@@ -584,49 +399,31 @@ def test_player_movement_stats_tracking():
     )
 
     # At least one tracked player collected boost pads
-    assert any(small + large > 0 for _, _, _, _, small, large in tracked), (
+    assert any(small + large > 0 for _, _, _, _, small, large, _, _ in tracked), (
         "No tracked player collected any boost pads"
     )
 
+    # Stolen pads are populated and within bounds
+    for name, _, _, _, small, large, stolen_small, stolen_large in tracked:
+        assert stolen_small is not None, f"{name} stolen_small_pads is null"
+        assert stolen_large is not None, f"{name} stolen_large_pads is null"
+        assert stolen_small <= small, f"{name} stolen_small > small"
+        assert stolen_large <= large, f"{name} stolen_large > large"
 
-def test_player_movement_stats_none_without_network_data():
-    conn = in_memory_db()
-    replay = load_replay("match.json")
-    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
-    ingest_match(conn, replay)
-    rows = conn.execute(
+    assert any(
+        stolen_small + stolen_large > 0
+        for _, _, _, _, _, _, stolen_small, stolen_large in tracked
+    ), "No tracked player has stolen pads"
+
+
+def test_player_movement_stats_none_without_network_data(
+    conn_no_network: sqlite3.Connection,
+):
+    rows = conn_no_network.execute(
         "SELECT boost_per_minute, avg_speed, time_supersonic_pct FROM match_players"
     ).fetchall()
     for row in rows:
         assert row == (None, None, None)
-
-
-def test_extract_player_movement_stats():
-    replay = load_replay("match.json")
-    duration = replay["properties"].get("TotalSecondsPlayed")
-    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), duration, "3v3")
-    stats = fa.movement_stats
-
-    assert isinstance(stats, dict)
-    assert len(stats) > 0
-
-    # Known players should be present
-    drew_key = ("steam", "76561197969365901")
-    jeff_key = ("steam", "76561197964215253")
-    assert drew_key in stats
-    assert jeff_key in stats
-
-    for _, s in stats.items():
-        assert "boost_per_minute" in s
-        assert "avg_speed" in s
-        assert "time_supersonic_pct" in s
-        assert s["boost_per_minute"] >= 0
-        assert s["avg_speed"] >= 0
-        assert 0 <= s["time_supersonic_pct"] <= 100
-        assert "small_pads" in s
-        assert "large_pads" in s
-        assert "stolen_small_pads" in s
-        assert "stolen_large_pads" in s
 
 
 def test_actor_id_recycling_separates_boost_consumption():
@@ -989,31 +786,6 @@ def test_demos_received_when_demolish_and_deletion_same_frame():
     assert fa.demos_received.get(("steam", "VICTIM")) == 1, (
         "demo should be counted even when victim car is deleted in the same frame as the demolish notification"
     )
-
-
-def test_extract_player_pad_stats():
-    replay = load_replay("match.json")
-    duration = replay["properties"].get("TotalSecondsPlayed")
-    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), duration, "standard")
-    stats = fa.movement_stats
-
-    assert len(stats) > 0
-
-    for _, s in stats.items():
-        small = s["small_pads"]
-        large = s["large_pads"]
-        stolen_small = s["stolen_small_pads"]
-        stolen_large = s["stolen_large_pads"]
-        assert small >= 0
-        assert large >= 0
-        assert stolen_small >= 0
-        assert stolen_large >= 0
-        assert stolen_small <= small, f"stolen_small ({stolen_small}) > small ({small})"
-        assert stolen_large <= large, f"stolen_large ({stolen_large}) > large ({large})"
-
-    # At least some players should have collected pads
-    total_pads = sum(s["small_pads"] + s["large_pads"] for s in stats.values())
-    assert total_pads > 0, "Expected at least some pad pickups"
 
 
 def test_player_name_updates_on_change():

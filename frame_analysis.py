@@ -22,15 +22,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple
 
-NETWORK_PLATFORM_MAP = {
-    "Steam": "steam",
-    "Epic": "epic",
-    "PlayStation": "ps4",
-    "PsyNet": "switch",
-    "Xbox": "xbox",
-}
+from player_identity import from_network_frame
 
 # Coordinates are taken from wiki.rlbot.org
 # https://wiki.rlbot.org/v4/botmaking/useful-game-values/
@@ -174,27 +168,6 @@ class FrameHandler(ABC):
 
     @abstractmethod
     def finalize(self, ctx: FrameContext) -> Any: ...
-
-
-def _resolve_network_identity(
-    uid: dict[str, Any],
-) -> tuple[str, str] | None:
-    """Resolve a UniqueId attribute from network frames to (platform, platform_id)."""
-    remote: Any = uid.get("remote_id", {})
-    if not remote:
-        return None
-    platform_key = next(iter(remote))
-    platform = NETWORK_PLATFORM_MAP.get(platform_key)
-    if not platform:
-        return None
-    value: Any = remote[platform_key]
-    if isinstance(value, dict):
-        platform_id: Any = cast(dict[str, Any], value).get("online_id")
-    else:
-        platform_id = value
-    if not platform_id:
-        return None
-    return (platform, str(platform_id))
 
 
 def _parse_pickup(
@@ -969,7 +942,7 @@ def analyze_frames(
                     ctx.resolver.link_car_to_pri(aid, pri_actor)
             elif oid == uid_obj_id:
                 uid = actor.get("attribute", {}).get("UniqueId", {})
-                identity = _resolve_network_identity(uid)
+                identity = from_network_frame(uid)
                 if identity:
                     ctx.resolver.set_identity(aid, *identity)
             elif oid == team_paint_obj_id:

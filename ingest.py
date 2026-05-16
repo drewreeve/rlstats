@@ -6,42 +6,15 @@ import sqlite3
 from typing import Any
 
 from frame_analysis import analyze_frames
+from player_identity import PlayerIdentity, from_player_stats
 
 TRACKED_PLAYERS = {
-    ("steam", "76561197969365901"): "Drew",
-    ("steam", "76561198008422893"): "Steve",
-    ("steam", "76561197964215253"): "Jeff",
-}
-
-PLATFORM_MAP = {
-    "OnlinePlatform_Steam": "steam",
-    "OnlinePlatform_Epic": "epic",
-    "OnlinePlatform_PS4": "ps4",
-    "OnlinePlatform_Switch": "switch",
-    "OnlinePlatform_NNX": "switch",
-    "OnlinePlatform_Xbox": "xbox",  # Not sure if this is needed now
-    "OnlinePlatform_Dingo": "xbox",
+    PlayerIdentity("steam", "76561197969365901"): "Drew",
+    PlayerIdentity("steam", "76561198008422893"): "Steve",
+    PlayerIdentity("steam", "76561197964215253"): "Jeff",
 }
 
 PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
-
-
-def _extract_platform_id(player: dict[str, Any]) -> tuple[str, str] | None:
-    platform_value = player.get("Platform", {}).get("value", "")
-    platform = PLATFORM_MAP.get(platform_value)
-    if not platform:
-        return None
-
-    if platform == "epic":
-        epic_id = player.get("PlayerID", {}).get("fields", {}).get("EpicAccountId", "")
-        if epic_id:
-            return (platform, epic_id)
-        return None
-
-    online_id = player.get("OnlineID", "0")
-    if online_id and online_id != "0":
-        return (platform, online_id)
-    return None
 
 
 def get_or_create_player(
@@ -98,7 +71,7 @@ def _tracked_player_stats(props: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         p
         for p in props.get("PlayerStats", [])
-        if (identity := _extract_platform_id(p)) and identity in TRACKED_PLAYERS
+        if (identity := from_player_stats(p)) and identity in TRACKED_PLAYERS
     ]
 
 
@@ -131,7 +104,7 @@ def _resolve_mvp_player_id(
     if not tracked_players:
         return None
     mvp_stats = max(tracked_players, key=lambda p: p.get("Score", 0))
-    identity = _extract_platform_id(mvp_stats)
+    identity = from_player_stats(mvp_stats)
     if not identity:
         return None
     platform, platform_id = identity
@@ -238,7 +211,7 @@ def _upsert_match_players(
     for player in all_players:
         if player.get("bBot"):
             continue
-        identity = _extract_platform_id(player)
+        identity = from_player_stats(player)
         if not identity:
             continue
         platform, platform_id = identity
@@ -402,11 +375,11 @@ def write_match(conn: sqlite3.Connection, analysis: dict[str, Any]):
     # Build identity -> player_id map (players were just upserted above)
     player_id_map: dict[tuple[str, str], int] = {}
     for player in all_players:
-        identity = _extract_platform_id(player)
+        identity = from_player_stats(player)
         if identity:
             row = conn.execute(
                 "SELECT id FROM players WHERE platform = ? AND platform_id = ?",
-                (identity[0], identity[1]),
+                identity,
             ).fetchone()
             if row:
                 player_id_map[identity] = row[0]

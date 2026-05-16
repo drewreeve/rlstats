@@ -16,7 +16,7 @@ USER appuser
 COPY --chown=appuser:appuser pyproject.toml uv.lock ./
 RUN uv sync --locked --no-editable --compile-bytecode --no-dev --no-install-project --no-cache
 
-COPY --chown=appuser:appuser server.py ingest.py db.py process.py frame_analysis.py replay_validator.py ./
+COPY --chown=appuser:appuser server.py ingest.py db.py process.py frame_analysis.py replay_validator.py player_identity.py ./
 COPY --chown=appuser:appuser migrations/ migrations/
 COPY --chown=appuser:appuser sql/ sql/
 COPY --chown=appuser:appuser static/ static/
