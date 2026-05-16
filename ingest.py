@@ -3,12 +3,43 @@
 
 import datetime
 import sqlite3
+from dataclasses import dataclass
 from typing import Any
 
 from frame_analysis import analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
 
 PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
+
+
+@dataclass(frozen=True)
+class ReplayAnalysis:
+    replay_hash: str
+    played_at_sql: str
+    duration: int | None
+    forfeit: int
+    team_size: int | None
+    team: int | None
+    team_score: int | None
+    opponent_score: int | None
+    result: str
+    map_name: str | None
+    game_mode: str | None
+    team_possession_seconds: float | None
+    opponent_possession_seconds: float | None
+    defensive_third_seconds: float | None
+    neutral_third_seconds: float | None
+    offensive_third_seconds: float | None
+    team_boost_collected: int | None
+    opponent_boost_collected: int | None
+    team_boost_stolen: int | None
+    opponent_boost_stolen: int | None
+    demolitions: dict[tuple[str, str], int]
+    demos_received: dict[tuple[str, str], int]
+    movement_stats: dict[tuple[str, str], dict[str, float | int]]
+    match_events: list[tuple[str, float, str, str, int]]
+    tracked_player_stats: list[dict[str, Any]]
+    all_players: list[dict[str, Any]]
 
 
 def get_or_create_player(
@@ -278,7 +309,7 @@ def _upsert_match_players(
 
 def analyze_replay(
     replay: dict[str, Any], tracked_players: dict[PlayerIdentity, str]
-) -> dict[str, Any] | None:
+) -> ReplayAnalysis | None:
     props = replay.get("properties", {})
 
     replay_hash = props.get("MatchGUID") or props.get("MatchGuid")
@@ -310,78 +341,78 @@ def analyze_replay(
 
     fa = analyze_frames(replay, team, set(tracked_players.keys()), duration, game_mode)
 
-    return {
-        "replay_hash": replay_hash,
-        "played_at_sql": played_at_sql,
-        "duration": duration,
-        "forfeit": forfeit,
-        "team_size": team_size,
-        "team": team,
-        "team_score": team_score,
-        "opponent_score": opponent_score,
-        "result": result,
-        "map_name": map_name,
-        "game_mode": game_mode,
-        "team_possession_seconds": fa.team_possession_seconds,
-        "opponent_possession_seconds": fa.opponent_possession_seconds,
-        "defensive_third_seconds": fa.defensive_third_seconds,
-        "neutral_third_seconds": fa.neutral_third_seconds,
-        "offensive_third_seconds": fa.offensive_third_seconds,
-        "team_boost_collected": fa.team_boost_collected,
-        "opponent_boost_collected": fa.opponent_boost_collected,
-        "team_boost_stolen": fa.team_boost_stolen,
-        "opponent_boost_stolen": fa.opponent_boost_stolen,
-        "tracked_player_stats": tracked,
-        "all_players": props.get("PlayerStats", []),
-        "demolitions": fa.demolitions,
-        "demos_received": fa.demos_received,
-        "movement_stats": fa.movement_stats,
-        "match_events": fa.match_events,
-    }
+    return ReplayAnalysis(
+        replay_hash=replay_hash,
+        played_at_sql=played_at_sql,
+        duration=duration,
+        forfeit=forfeit,
+        team_size=team_size,
+        team=team,
+        team_score=team_score,
+        opponent_score=opponent_score,
+        result=result,
+        map_name=map_name,
+        game_mode=game_mode,
+        team_possession_seconds=fa.team_possession_seconds,
+        opponent_possession_seconds=fa.opponent_possession_seconds,
+        defensive_third_seconds=fa.defensive_third_seconds,
+        neutral_third_seconds=fa.neutral_third_seconds,
+        offensive_third_seconds=fa.offensive_third_seconds,
+        team_boost_collected=fa.team_boost_collected,
+        opponent_boost_collected=fa.opponent_boost_collected,
+        team_boost_stolen=fa.team_boost_stolen,
+        opponent_boost_stolen=fa.opponent_boost_stolen,
+        demolitions=fa.demolitions,
+        demos_received=fa.demos_received,
+        movement_stats=fa.movement_stats,
+        match_events=fa.match_events,
+        tracked_player_stats=tracked,
+        all_players=props.get("PlayerStats", []),
+    )
 
 
 def write_match(
     conn: sqlite3.Connection,
-    analysis: dict[str, Any],
+    analysis: ReplayAnalysis,
     tracked_players: dict[PlayerIdentity, str],
 ):
     mvp_player_id = _resolve_mvp_player_id(
-        conn, analysis["tracked_player_stats"], tracked_players
+        conn, analysis.tracked_player_stats, tracked_players
     )
 
     match_id = _upsert_match(
         conn,
-        replay_hash=analysis["replay_hash"],
-        played_at_sql=analysis["played_at_sql"],
-        duration=analysis["duration"],
-        forfeit=analysis["forfeit"],
-        team_size=analysis["team_size"],
-        team=analysis["team"],
-        team_score=analysis["team_score"],
-        opponent_score=analysis["opponent_score"],
-        result=analysis["result"],
+        replay_hash=analysis.replay_hash,
+        played_at_sql=analysis.played_at_sql,
+        duration=analysis.duration,
+        forfeit=analysis.forfeit,
+        team_size=analysis.team_size,
+        team=analysis.team,
+        team_score=analysis.team_score,
+        opponent_score=analysis.opponent_score,
+        result=analysis.result,
         mvp_player_id=mvp_player_id,
-        map_name=analysis["map_name"],
-        game_mode=analysis["game_mode"],
-        team_possession_seconds=analysis["team_possession_seconds"],
-        opponent_possession_seconds=analysis["opponent_possession_seconds"],
-        defensive_third_seconds=analysis["defensive_third_seconds"],
-        neutral_third_seconds=analysis["neutral_third_seconds"],
-        offensive_third_seconds=analysis["offensive_third_seconds"],
-        team_boost_collected=analysis["team_boost_collected"],
-        opponent_boost_collected=analysis["opponent_boost_collected"],
-        team_boost_stolen=analysis["team_boost_stolen"],
-        opponent_boost_stolen=analysis["opponent_boost_stolen"],
+        map_name=analysis.map_name,
+        game_mode=analysis.game_mode,
+        team_possession_seconds=analysis.team_possession_seconds,
+        opponent_possession_seconds=analysis.opponent_possession_seconds,
+        defensive_third_seconds=analysis.defensive_third_seconds,
+        neutral_third_seconds=analysis.neutral_third_seconds,
+        offensive_third_seconds=analysis.offensive_third_seconds,
+        team_boost_collected=analysis.team_boost_collected,
+        opponent_boost_collected=analysis.opponent_boost_collected,
+        team_boost_stolen=analysis.team_boost_stolen,
+        opponent_boost_stolen=analysis.opponent_boost_stolen,
     )
 
-    all_players = analysis["all_players"]
+    all_players = analysis.all_players
     _upsert_match_players(
         conn,
         match_id,
         all_players,
-        analysis["demolitions"],
-        analysis["demos_received"],
-        analysis["movement_stats"],
+        analysis.demolitions,
+        analysis.demos_received,
+        analysis.movement_stats,
         tracked_players,
     )
 
@@ -402,9 +433,13 @@ def write_match(
     assist_events: list[tuple[float, int, int]] = []
 
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
-    for event_type, game_seconds, platform, platform_id, ev_team in analysis[
-        "match_events"
-    ]:
+    for (
+        event_type,
+        game_seconds,
+        platform,
+        platform_id,
+        ev_team,
+    ) in analysis.match_events:
         player_id = player_id_map.get((platform, platform_id))
         if player_id is None:
             continue

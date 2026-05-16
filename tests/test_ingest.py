@@ -804,7 +804,7 @@ def test_player_name_updates_on_change():
 def test_played_at_derived_from_match_start_epoch():
     analysis = analyze_replay(load_replay("match.json"), TRACKED_PLAYERS)
     assert analysis is not None
-    assert analysis["played_at_sql"] == "2026-02-08 23:27:57"
+    assert analysis.played_at_sql == "2026-02-08 23:27:57"
 
 
 def test_analyze_replay_rejects_when_no_date_source_available():
@@ -828,7 +828,7 @@ def test_played_at_falls_back_to_bakkesmod_game_start_time():
         _replay_with_bakkesmod_time("2024-08-10T02:37:59-0400"), TRACKED_PLAYERS
     )
     assert analysis is not None
-    assert analysis["played_at_sql"] == "2024-08-10 06:37:59"
+    assert analysis.played_at_sql == "2024-08-10 06:37:59"
 
 
 def test_match_start_epoch_takes_precedence_over_bakkesmod():
@@ -838,4 +838,4 @@ def test_match_start_epoch_takes_precedence_over_bakkesmod():
     ]
     analysis = analyze_replay(replay, TRACKED_PLAYERS)
     assert analysis is not None
-    assert analysis["played_at_sql"] == "2026-02-08 23:27:57"
+    assert analysis.played_at_sql == "2026-02-08 23:27:57"

@@ -11,7 +11,7 @@ from typing import Any
 import orjson
 
 from config import load_tracked_players
-from ingest import analyze_replay, ingest_match, write_match
+from ingest import ReplayAnalysis, analyze_replay, ingest_match, write_match
 from player_identity import PlayerIdentity
 
 logger = logging.getLogger(__name__)
@@ -147,7 +147,7 @@ class UploadProcessor:
 
 def _parse_and_analyze(
     replay_path: Path, tracked_players: dict[PlayerIdentity, str]
-) -> dict[str, Any] | None:
+) -> ReplayAnalysis | None:
     """Worker for parallel processing: parse + analyze a replay without DB access."""
     replay, _ = parse_replay(replay_path)
     if replay is None:
