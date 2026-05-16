@@ -59,6 +59,51 @@ BIG_PAD_RADIUS = 400
 BIG_PAD_RADIUS_SQ = BIG_PAD_RADIUS**2
 
 
+class IdentityResolver:
+    """Owns the three-map identity chain and exposes typed resolution methods.
+
+    Chain: car_actor_id → pri_actor_id → (platform, platform_id)
+    Boost components add a fourth entry point: component_actor_id → car_actor_id.
+    """
+
+    def __init__(self) -> None:
+        self._car_to_pri: dict[int, int] = {}
+        self._pri_identity: dict[int, tuple[str, str]] = {}
+        self._component_to_car: dict[int, int] = {}
+
+    def link_car_to_pri(self, car_id: int, pri_id: int) -> None:
+        self._car_to_pri[car_id] = pri_id
+
+    def set_identity(self, pri_id: int, platform: str, platform_id: str) -> None:
+        self._pri_identity[pri_id] = (platform, platform_id)
+
+    def link_component_to_car(self, comp_id: int, car_id: int) -> None:
+        self._component_to_car[comp_id] = car_id
+
+    def remove_actor(self, aid: int) -> None:
+        self._car_to_pri.pop(aid, None)
+        self._pri_identity.pop(aid, None)
+        self._component_to_car.pop(aid, None)
+
+    def resolve_car(self, car_id: int) -> tuple[str, str] | None:
+        pri = self._car_to_pri.get(car_id)
+        if pri is None:
+            return None
+        return self._pri_identity.get(pri)
+
+    def resolve_pri(self, pri_id: int) -> tuple[str, str] | None:
+        return self._pri_identity.get(pri_id)
+
+    def resolve_component(self, comp_id: int) -> tuple[str, str] | None:
+        car_id = self._component_to_car.get(comp_id)
+        if car_id is None:
+            return None
+        return self.resolve_car(car_id)
+
+    def find_pri_ids_for(self, identities: set[tuple[str, str]]) -> list[int]:
+        return [aid for aid, ident in self._pri_identity.items() if ident in identities]
+
+
 class FrameAnalysis(NamedTuple):
     team_possession_seconds: float | None
     opponent_possession_seconds: float | None
@@ -85,11 +130,7 @@ class FrameContext:
     boost_comp_actors: set[int] = field(default_factory=set[int])
 
     # Identity resolution chain
-    car_to_pri: dict[int, int] = field(default_factory=dict[int, int])
-    pri_identity: dict[int, tuple[str, str]] = field(
-        default_factory=dict[int, tuple[str, str]]
-    )
-    component_to_car: dict[int, int] = field(default_factory=dict[int, int])
+    resolver: IdentityResolver = field(default_factory=IdentityResolver)
 
     # Per-actor state
     actor_team: dict[int, int] = field(default_factory=dict[int, int])
@@ -101,12 +142,6 @@ class FrameContext:
     is_playing: bool = False
     frame_time: float = 0.0
 
-    def resolve_car_identity(self, car_id: int) -> tuple[str, str] | None:
-        pri = self.car_to_pri.get(car_id)
-        if pri is None or pri < 0:
-            return None
-        return self.pri_identity.get(pri)
-
 
 class FrameHandler(ABC):
     """Base class for frame-loop handlers.
@@ -115,12 +150,12 @@ class FrameHandler(ABC):
 
     - ``on_update``: called after shared ``FrameContext`` state for this frame
       has been updated (``is_playing``, ``actor_team``, ``actor_position``,
-      ``car_to_pri``, ``pri_identity``, archetype sets, etc.). Actor deletions
-      for the frame have NOT yet been processed.
+      archetype sets, resolver maps, etc.). Actor deletions for the frame have
+      NOT yet been processed.
     - ``on_deleted_actor``: called before the actor is removed from
-      ``car_actors``, ``car_to_pri``, ``pri_identity``, ``component_to_car``,
-      ``actor_team``, ``actor_position``. Identity resolution via
-      ``ctx.resolve_car_identity`` is still valid here.
+      ``car_actors``, ``ball_actors``, ``boost_comp_actors``, ``actor_team``,
+      ``actor_position``, and the resolver's internal maps. Identity resolution
+      via ``ctx.resolver.resolve_car(aid)`` is still valid here.
     - ``finalize``: called once after all frames. Any remaining live-actor
       state (boost components, speed samples) must be flushed into
       identity-keyed accumulators here.
@@ -351,7 +386,7 @@ class DemolitionsHandler(FrameHandler):
     def finalize(self, ctx: FrameContext) -> dict[tuple[str, str], int]:
         result: dict[tuple[str, str], int] = {}
         for aid, count in self.actor_demos.items():
-            identity = ctx.pri_identity.get(aid)
+            identity = ctx.resolver.resolve_pri(aid)
             if identity:
                 result[identity] = count
         return result
@@ -391,7 +426,7 @@ class DemosReceivedHandler(FrameHandler):
             return
         vid = victim["actor"]
         victim_identity = (
-            ctx.resolve_car_identity(vid) if vid in ctx.car_actors else None
+            ctx.resolver.resolve_car(vid) if vid in ctx.car_actors else None
         )
         if victim_identity:
             self.demos_received[victim_identity] = (
@@ -508,23 +543,31 @@ class MovementHandler(FrameHandler):
         self.identity_boost_consumed: dict[tuple[str, str], float] = {}
         self.identity_speeds: dict[tuple[str, str], list[tuple[float, float]]] = {}
 
+    def _flush_boost_comp(
+        self, ctx: FrameContext, comp_id: int, consumed: float
+    ) -> None:
+        identity = ctx.resolver.resolve_component(comp_id)
+        if identity:
+            self.identity_boost_consumed[identity] = (
+                self.identity_boost_consumed.get(identity, 0.0) + consumed
+            )
+
+    def _flush_speed_samples(
+        self, ctx: FrameContext, car_id: int, samples: list[tuple[float, float]]
+    ) -> None:
+        identity = ctx.resolver.resolve_car(car_id)
+        if identity:
+            self.identity_speeds.setdefault(identity, []).extend(samples)
+
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         self.comp_boost.pop(aid, None)
         self.last_pickup_state.pop(aid, None)
         consumed = self.comp_boost_consumed.pop(aid, None)
         if consumed:
-            car_id = ctx.component_to_car.get(aid)
-            if car_id is not None:
-                identity = ctx.resolve_car_identity(car_id)
-                if identity:
-                    self.identity_boost_consumed[identity] = (
-                        self.identity_boost_consumed.get(identity, 0.0) + consumed
-                    )
+            self._flush_boost_comp(ctx, aid, consumed)
         samples = self.car_speed_samples.pop(aid, None)
         if samples:
-            identity = ctx.resolve_car_identity(aid)
-            if identity:
-                self.identity_speeds.setdefault(identity, []).extend(samples)
+            self._flush_speed_samples(ctx, aid, samples)
 
     def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
         oid = actor.get("object_id")
@@ -569,7 +612,7 @@ class MovementHandler(FrameHandler):
             if result is None:
                 return
             instigator, _, is_big, is_stolen = result
-            identity = ctx.resolve_car_identity(instigator)
+            identity = ctx.resolver.resolve_car(instigator)
             if identity is None:
                 return
             pads = self.identity_pads.setdefault(
@@ -595,18 +638,10 @@ class MovementHandler(FrameHandler):
     ) -> dict[tuple[str, str], dict[str, float | int]]:
         # Deleted-actor data already accumulated; handle remaining live actors
         for comp_id, consumed in self.comp_boost_consumed.items():
-            car_id = ctx.component_to_car.get(comp_id)
-            if car_id is not None:
-                identity = ctx.resolve_car_identity(car_id)
-                if identity:
-                    self.identity_boost_consumed[identity] = (
-                        self.identity_boost_consumed.get(identity, 0.0) + consumed
-                    )
+            self._flush_boost_comp(ctx, comp_id, consumed)
 
         for car_id, samples in self.car_speed_samples.items():
-            identity = ctx.resolve_car_identity(car_id)
-            if identity:
-                self.identity_speeds.setdefault(identity, []).extend(samples)
+            self._flush_speed_samples(ctx, car_id, samples)
 
         # Build results
         all_identities = (
@@ -769,11 +804,8 @@ class MatchEventsHandler(FrameHandler):
             return best_gs
 
         tracked_team_actor = None
-        for aid, player_identity in ctx.pri_identity.items():
-            if (
-                player_identity in self.tracked_identities
-                and aid in self.actor_team_actor
-            ):
+        for aid in ctx.resolver.find_pri_ids_for(self.tracked_identities):
+            if aid in self.actor_team_actor:
                 tracked_team_actor = self.actor_team_actor[aid]
                 break
 
@@ -792,7 +824,7 @@ class MatchEventsHandler(FrameHandler):
 
         events: list[tuple[str, float, str, str, int]] = []
         for event_type, ft, aid in self.raw_events:
-            identity = ctx.pri_identity.get(aid)
+            identity = ctx.resolver.resolve_pri(aid)
             team = resolve_team(aid)
             if identity is None or team is None:
                 continue
@@ -885,6 +917,13 @@ def analyze_frames(
         for oid in h.update_obj_ids:
             update_dispatch.setdefault(oid, []).append(h)
 
+    # Only handlers that override on_deleted_actor need to be called on deletions
+    deleted_actor_handlers = [
+        h
+        for h in handlers
+        if type(h).on_deleted_actor is not FrameHandler.on_deleted_actor
+    ]
+
     ctx = FrameContext()
 
     for frame in frames:
@@ -921,18 +960,18 @@ def analyze_frames(
             elif oid == vehicle_obj_id:
                 car_id = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
                 if car_id is not None and car_id >= 0:
-                    ctx.component_to_car[aid] = car_id
+                    ctx.resolver.link_component_to_car(aid, car_id)
             elif oid == pri_obj_id:
                 pri_actor = (
                     actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
                 )
                 if pri_actor is not None and pri_actor >= 0 and aid in ctx.car_actors:
-                    ctx.car_to_pri[aid] = pri_actor
+                    ctx.resolver.link_car_to_pri(aid, pri_actor)
             elif oid == uid_obj_id:
                 uid = actor.get("attribute", {}).get("UniqueId", {})
                 identity = _resolve_network_identity(uid)
                 if identity:
-                    ctx.pri_identity[aid] = identity
+                    ctx.resolver.set_identity(aid, *identity)
             elif oid == team_paint_obj_id:
                 team = actor.get("attribute", {}).get("TeamPaint", {}).get("team")
                 if team is not None:
@@ -956,15 +995,13 @@ def analyze_frames(
         #    handler can still resolve identity via the car mapping.
         deleted_actors = frame.get("deleted_actors", [])
         for aid in deleted_actors:
-            for h in handlers:
+            for h in deleted_actor_handlers:
                 h.on_deleted_actor(ctx, aid)
         for aid in deleted_actors:
             ctx.car_actors.discard(aid)
             ctx.ball_actors.discard(aid)
             ctx.boost_comp_actors.discard(aid)
-            ctx.component_to_car.pop(aid, None)
-            ctx.car_to_pri.pop(aid, None)
-            ctx.pri_identity.pop(aid, None)
+            ctx.resolver.remove_actor(aid)
             ctx.actor_team.pop(aid, None)
             ctx.actor_position.pop(aid, None)
 
