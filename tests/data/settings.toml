@@ -1,0 +1,16 @@
+# Test fixture — upload disabled (no [server] section)
+
+[[players]]
+platform = "steam"
+platform_id = "76561197969365901"
+name = "Drew"
+
+[[players]]
+platform = "steam"
+platform_id = "76561198008422893"
+name = "Steve"
+
+[[players]]
+platform = "steam"
+platform_id = "76561197964215253"
+name = "Jeff"

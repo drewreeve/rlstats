@@ -8,19 +8,17 @@ from typing import Any
 from frame_analysis import analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
 
-TRACKED_PLAYERS = {
-    PlayerIdentity("steam", "76561197969365901"): "Drew",
-    PlayerIdentity("steam", "76561198008422893"): "Steve",
-    PlayerIdentity("steam", "76561197964215253"): "Jeff",
-}
-
 PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
 
 
 def get_or_create_player(
-    conn: sqlite3.Connection, platform: str, platform_id: str, name: str
+    conn: sqlite3.Connection,
+    platform: str,
+    platform_id: str,
+    name: str,
+    is_tracked: bool,
 ) -> int:
-    tracked = 1 if (platform, platform_id) in TRACKED_PLAYERS else 0
+    tracked = 1 if is_tracked else 0
     return int(
         conn.execute(
             """INSERT INTO players (platform, platform_id, name, is_tracked) VALUES (?, ?, ?, ?)
@@ -67,11 +65,13 @@ def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
     return None
 
 
-def _tracked_player_stats(props: dict[str, Any]) -> list[dict[str, Any]]:
+def _tracked_player_stats(
+    props: dict[str, Any], tracked_players: dict[PlayerIdentity, str]
+) -> list[dict[str, Any]]:
     return [
         p
         for p in props.get("PlayerStats", [])
-        if (identity := from_player_stats(p)) and identity in TRACKED_PLAYERS
+        if (identity := from_player_stats(p)) and identity in tracked_players
     ]
 
 
@@ -99,17 +99,19 @@ def _resolve_result(team_score: Any, opponent_score: Any) -> str | None:
 
 
 def _resolve_mvp_player_id(
-    conn: sqlite3.Connection, tracked_players: list[dict[str, Any]]
+    conn: sqlite3.Connection,
+    tracked_player_stats: list[dict[str, Any]],
+    tracked_players: dict[PlayerIdentity, str],
 ) -> int | None:
-    if not tracked_players:
+    if not tracked_player_stats:
         return None
-    mvp_stats = max(tracked_players, key=lambda p: p.get("Score", 0))
+    mvp_stats = max(tracked_player_stats, key=lambda p: p.get("Score", 0))
     identity = from_player_stats(mvp_stats)
     if not identity:
         return None
     platform, platform_id = identity
-    mvp_name = TRACKED_PLAYERS[identity]
-    return get_or_create_player(conn, platform, platform_id, mvp_name)
+    mvp_name = tracked_players[identity]
+    return get_or_create_player(conn, platform, platform_id, mvp_name, True)
 
 
 def _upsert_match(
@@ -207,6 +209,7 @@ def _upsert_match_players(
     demolitions: dict[tuple[str, str], int],
     demos_received: dict[tuple[str, str], int],
     movement_stats: dict[tuple[str, str], dict[str, float]],
+    tracked_players: dict[PlayerIdentity, str],
 ):
     for player in all_players:
         if player.get("bBot"):
@@ -216,11 +219,12 @@ def _upsert_match_players(
             continue
         platform, platform_id = identity
         name = player.get("Name", "Unknown")
-        # Use tracked name if this is a tracked player
-        tracked_name = TRACKED_PLAYERS.get(identity)
+        tracked_name = tracked_players.get(identity)
         if tracked_name:
             name = tracked_name
-        player_id = get_or_create_player(conn, platform, platform_id, name)
+        player_id = get_or_create_player(
+            conn, platform, platform_id, name, tracked_name is not None
+        )
         demos = demolitions.get(identity, 0)
         demos_recv = demos_received.get(identity, 0)
         mv = movement_stats.get(identity, {})
@@ -272,7 +276,9 @@ def _upsert_match_players(
         )
 
 
-def analyze_replay(replay: dict[str, Any]) -> dict[str, Any] | None:
+def analyze_replay(
+    replay: dict[str, Any], tracked_players: dict[PlayerIdentity, str]
+) -> dict[str, Any] | None:
     props = replay.get("properties", {})
 
     replay_hash = props.get("MatchGUID") or props.get("MatchGuid")
@@ -294,15 +300,15 @@ def analyze_replay(replay: dict[str, Any]) -> dict[str, Any] | None:
 
     team0_score = props.get("Team0Score", 0)
     team1_score = props.get("Team1Score", 0)
-    tracked_players = _tracked_player_stats(props)
+    tracked = _tracked_player_stats(props, tracked_players)
     team, team_score, opponent_score = _resolve_team_scores(
-        tracked_players, team0_score, team1_score
+        tracked, team0_score, team1_score
     )
     result = _resolve_result(team_score, opponent_score)
     if result is None:
         return None
 
-    fa = analyze_frames(replay, team, set(TRACKED_PLAYERS.keys()), duration, game_mode)
+    fa = analyze_frames(replay, team, set(tracked_players.keys()), duration, game_mode)
 
     return {
         "replay_hash": replay_hash,
@@ -325,7 +331,7 @@ def analyze_replay(replay: dict[str, Any]) -> dict[str, Any] | None:
         "opponent_boost_collected": fa.opponent_boost_collected,
         "team_boost_stolen": fa.team_boost_stolen,
         "opponent_boost_stolen": fa.opponent_boost_stolen,
-        "tracked_players": tracked_players,
+        "tracked_player_stats": tracked,
         "all_players": props.get("PlayerStats", []),
         "demolitions": fa.demolitions,
         "demos_received": fa.demos_received,
@@ -334,8 +340,14 @@ def analyze_replay(replay: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def write_match(conn: sqlite3.Connection, analysis: dict[str, Any]):
-    mvp_player_id = _resolve_mvp_player_id(conn, analysis["tracked_players"])
+def write_match(
+    conn: sqlite3.Connection,
+    analysis: dict[str, Any],
+    tracked_players: dict[PlayerIdentity, str],
+):
+    mvp_player_id = _resolve_mvp_player_id(
+        conn, analysis["tracked_player_stats"], tracked_players
+    )
 
     match_id = _upsert_match(
         conn,
@@ -370,6 +382,7 @@ def write_match(conn: sqlite3.Connection, analysis: dict[str, Any]):
         analysis["demolitions"],
         analysis["demos_received"],
         analysis["movement_stats"],
+        tracked_players,
     )
 
     # Build identity -> player_id map (players were just upserted above)
@@ -407,7 +420,7 @@ def write_match(conn: sqlite3.Connection, analysis: dict[str, Any]):
     # Correlate goal+assist events into offensive pairings
     tracked_player_ids = {
         player_id_map[identity]
-        for identity in TRACKED_PLAYERS
+        for identity in tracked_players
         if identity in player_id_map
     }
 
@@ -437,8 +450,12 @@ def write_match(conn: sqlite3.Connection, analysis: dict[str, Any]):
             )
 
 
-def ingest_match(conn: sqlite3.Connection, replay: dict[str, Any]):
-    analysis = analyze_replay(replay)
+def ingest_match(
+    conn: sqlite3.Connection,
+    replay: dict[str, Any],
+    tracked_players: dict[PlayerIdentity, str],
+):
+    analysis = analyze_replay(replay, tracked_players)
     if analysis is None:
         raise ValueError("Replay could not be analyzed")
-    write_match(conn, analysis)
+    write_match(conn, analysis, tracked_players)

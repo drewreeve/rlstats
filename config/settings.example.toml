@@ -1,0 +1,27 @@
+# Copy this file to config/settings.toml and fill in your settings.
+
+[server]
+# Password required to upload replay files. Remove this line to disable uploads.
+upload_password = "changeme"
+# Session signing key. Set this in production for stable sessions across restarts.
+# Omit or leave blank to auto-generate a new key each startup (sessions won't survive restarts).
+# secret_key = ""
+
+# platform: one of "steam", "epic", "ps4", "xbox", "switch"
+# platform_id: the platform's own account identifier (Steam64 ID, Epic Account ID, etc.)
+# name: display name used in stats
+
+[[players]]
+platform = "steam"
+platform_id = "76561197969365901"
+name = "Drew"
+
+[[players]]
+platform = "steam"
+platform_id = "76561198008422893"
+name = "Steve"
+
+[[players]]
+platform = "steam"
+platform_id = "76561197964215253"
+name = "Jeff"

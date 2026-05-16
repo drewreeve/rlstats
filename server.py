@@ -15,15 +15,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+import config
 from db import apply_migrations, queries
-from ingest import TRACKED_PLAYERS
 from process import UploadProcessor, process_unprocessed
 from replay_validator import secure_filename
 from replay_validator import validate as validate_replay
 
 logger = logging.getLogger(__name__)
-
-_TRACKED_PLAYER_NAMES = set(TRACKED_PLAYERS.values())
 
 DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -232,8 +230,14 @@ def create_app(
     db_path: str | Path,
     replay_dir: Path | None = None,
     processor: UploadProcessor | None = None,
+    settings: config.Settings | None = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
+
+    if settings is None:
+        settings = config.load_settings()
+    tracked_player_names = set(settings.players.values())
+    upload_password = settings.upload_password
 
     upload_dir = replay_dir or REPLAY_DIR
 
@@ -289,7 +293,7 @@ def create_app(
     # SessionMiddleware must be added AFTER @app.middleware("http") decorators
     # because add_middleware inserts at position 0, making the last-added
     # middleware outermost. Session must wrap CSRF so request.session is available.
-    secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+    secret_key = settings.secret_key or secrets.token_hex(32)
     app.add_middleware(
         SessionMiddleware,  # type: ignore[arg-type]
         secret_key=secret_key,
@@ -321,7 +325,6 @@ def create_app(
 
     @app.post("/api/auth")
     async def auth(request: Request):
-        upload_password = os.environ.get("UPLOAD_PASSWORD")
         if not upload_password:
             return JSONResponse({"error": "Upload disabled"}, status_code=403)
         data = await request.json()
@@ -485,7 +488,7 @@ def create_app(
     # -- Player routes --
 
     def get_tracked_player(player_name: str) -> str:
-        if player_name not in _TRACKED_PLAYER_NAMES:
+        if player_name not in tracked_player_names:
             raise HTTPException(status_code=404, detail="Player not found")
         return player_name
 
@@ -557,10 +560,11 @@ def main():
     apply_migrations(conn)
     conn.close()
 
-    process_unprocessed(DB_PATH, REPLAY_DIR)
+    settings = config.load_settings()
+    process_unprocessed(DB_PATH, REPLAY_DIR, settings.players)
 
-    processor = UploadProcessor(DB_PATH)
-    app = create_app(DB_PATH, processor=processor)
+    processor = UploadProcessor(DB_PATH, settings.players)
+    app = create_app(DB_PATH, processor=processor, settings=settings)
     print(f"Serving on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
 

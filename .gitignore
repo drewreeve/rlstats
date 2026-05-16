@@ -1,4 +1,4 @@
-.env
+config/settings.toml
 # Python-generated files
 __pycache__/
 *.py[oc]

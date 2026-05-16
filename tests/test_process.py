@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import patch
 
 from process import UploadProcessor, parse_replay, process_batch, process_replay
-from tests.fixtures import file_db, in_memory_db, load_replay
+from tests.fixtures import TRACKED_PLAYERS, file_db, in_memory_db, load_replay
 
 
 def _make_conn() -> sqlite3.Connection:
@@ -64,7 +64,7 @@ def test_process_replay_success(tmp_path: Path):
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     with patch("process.subprocess.run", side_effect=fake_rrrocket):
-        success, error = process_replay(replay_path, conn)
+        success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
 
     assert success is True
     assert error is None
@@ -90,7 +90,7 @@ def test_process_replay_ingest_failure(tmp_path: Path):
         patch("process.subprocess.run", side_effect=fake_rrrocket),
         patch("process.ingest_match", side_effect=RuntimeError("ingest broke")),
     ):
-        success, error = process_replay(replay_path, conn)
+        success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
 
     assert success is False
     assert error is not None
@@ -122,7 +122,7 @@ def test_process_batch_commits(tmp_path: Path):
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     with patch("process.subprocess.run", side_effect=fake_rrrocket):
-        process_batch(files, conn)
+        process_batch(files, conn, TRACKED_PLAYERS)
 
     row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
     assert row[0] == 3
@@ -137,13 +137,13 @@ def test_upload_processor_debounce(tmp_path: Path):
     batch_calls: list[list[Path]] = []
 
     def fake_batch(
-        f: list[Path], c: sqlite3.Connection
+        f: list[Path], c: sqlite3.Connection, tp: object
     ) -> dict[str, tuple[bool, None]]:
         batch_calls.append(list(f))
         return {p.name: (True, None) for p in f}
 
     with patch("process.process_batch", side_effect=fake_batch):
-        proc = UploadProcessor(db_path, delay=0.1)
+        proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=0.1)
 
         for i in range(5):
             proc.enqueue(tmp_path / f"match{i}.replay")

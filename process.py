@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 import sqlite3
@@ -9,7 +10,9 @@ from typing import Any
 
 import orjson
 
+from config import load_tracked_players
 from ingest import analyze_replay, ingest_match, write_match
+from player_identity import PlayerIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,9 @@ def parse_replay(replay_path: Path) -> tuple[dict[str, Any] | None, str | None]:
 
 
 def process_replay(
-    replay_path: Path, conn: sqlite3.Connection
+    replay_path: Path,
+    conn: sqlite3.Connection,
+    tracked_players: dict[PlayerIdentity, str],
 ) -> tuple[bool, str | None]:
     """Run rrrocket on a .replay file, then ingest the parsed data.
 
@@ -69,7 +74,7 @@ def process_replay(
         return False, error
 
     try:
-        ingest_match(conn, replay)
+        ingest_match(conn, replay, tracked_players)
     except Exception as exc:
         msg = f"Ingest failed: {exc}"
         logger.warning("Ingest failed for %s: %s", replay_path.name, exc)
@@ -80,7 +85,9 @@ def process_replay(
 
 
 def process_batch(
-    files: list[Path], conn: sqlite3.Connection
+    files: list[Path],
+    conn: sqlite3.Connection,
+    tracked_players: dict[PlayerIdentity, str],
 ) -> dict[str, tuple[bool, str | None]]:
     """Process a list of replay files in a single DB transaction.
 
@@ -89,7 +96,9 @@ def process_batch(
     results: dict[str, tuple[bool, str | None]] = {}
     with _batch_lock:
         for replay_path in files:
-            results[replay_path.name] = process_replay(replay_path, conn)
+            results[replay_path.name] = process_replay(
+                replay_path, conn, tracked_players
+            )
         conn.commit()
         for replay_path in files:
             if results[replay_path.name][0]:
@@ -100,8 +109,14 @@ def process_batch(
 class UploadProcessor:
     """Debounced batch processor for uploaded replay files."""
 
-    def __init__(self, db_path: str | Path, delay: float = 2.0):
+    def __init__(
+        self,
+        db_path: str | Path,
+        tracked_players: dict[PlayerIdentity, str],
+        delay: float = 2.0,
+    ):
         self.db_path = db_path
+        self.tracked_players = tracked_players
         self.delay = delay
         self._queue: list[Path] = []
         self._lock = threading.Lock()
@@ -125,17 +140,19 @@ class UploadProcessor:
             logger.info("Processing %d uploaded replay(s)", len(files))
             conn = _open_write_conn(self.db_path)
             try:
-                process_batch(files, conn)
+                process_batch(files, conn, self.tracked_players)
             finally:
                 conn.close()
 
 
-def _parse_and_analyze(replay_path: Path) -> dict[str, Any] | None:
+def _parse_and_analyze(
+    replay_path: Path, tracked_players: dict[PlayerIdentity, str]
+) -> dict[str, Any] | None:
     """Worker for parallel processing: parse + analyze a replay without DB access."""
     replay, _ = parse_replay(replay_path)
     if replay is None:
         return None
-    analysis = analyze_replay(replay)
+    analysis = analyze_replay(replay, tracked_players)
     if analysis is None:
         logger.warning(
             "Skipping %s: replay could not be analyzed",
@@ -144,7 +161,13 @@ def _parse_and_analyze(replay_path: Path) -> dict[str, Any] | None:
     return analysis
 
 
-def process_unprocessed(db_path: Path, replay_dir: Path, *, force: bool = False):
+def process_unprocessed(
+    db_path: Path,
+    replay_dir: Path,
+    tracked_players: dict[PlayerIdentity, str],
+    *,
+    force: bool = False,
+):
     """Parse and ingest .replay files.
 
     By default only processes files without an .ingested sentinel.
@@ -153,10 +176,9 @@ def process_unprocessed(db_path: Path, replay_dir: Path, *, force: bool = False)
     if force:
         replay_paths = sorted(replay_dir.glob("*.replay"))
     else:
+        already_ingested = {p.stem for p in replay_dir.glob("*.replay.ingested")}
         replay_paths = sorted(
-            p
-            for p in replay_dir.glob("*.replay")
-            if not p.with_suffix(p.suffix + ".ingested").exists()
+            p for p in replay_dir.glob("*.replay") if p.name not in already_ingested
         )
     if not replay_paths:
         return
@@ -164,15 +186,16 @@ def process_unprocessed(db_path: Path, replay_dir: Path, *, force: bool = False)
     logger.info("Processing %d replay(s)...", len(replay_paths))
 
     workers = max(1, (os.cpu_count() or 2) // 2)
+    worker = functools.partial(_parse_and_analyze, tracked_players=tracked_players)
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(_parse_and_analyze, replay_paths))
+        results = list(pool.map(worker, replay_paths))
 
     conn = _open_write_conn(db_path)
     try:
         ingested: list[Path] = []
         for path, analysis in zip(replay_paths, results, strict=True):
             if analysis is not None:
-                write_match(conn, analysis)
+                write_match(conn, analysis, tracked_players)
                 ingested.append(path)
         conn.commit()
         for replay_path in ingested:
@@ -204,4 +227,5 @@ if __name__ == "__main__":
     apply_migrations(conn)
     conn.close()
 
-    process_unprocessed(db_path, replay_dir, force=args.force)
+    tracked_players = load_tracked_players()
+    process_unprocessed(db_path, replay_dir, tracked_players, force=args.force)

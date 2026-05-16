@@ -6,12 +6,11 @@ import pytest
 
 from frame_analysis import analyze_frames
 from ingest import (
-    TRACKED_PLAYERS,
     analyze_replay,
     get_or_create_player,
     ingest_match,
 )
-from tests.fixtures import cached_db, in_memory_db, load_replay
+from tests.fixtures import TRACKED_PLAYERS, cached_db, in_memory_db, load_replay
 
 ALL_FIXTURES = [
     "zero_score.json",
@@ -31,7 +30,7 @@ def conn_no_network() -> sqlite3.Connection:
     conn = in_memory_db()
     replay = load_replay("match.json")
     replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
-    ingest_match(conn, replay)
+    ingest_match(conn, replay, TRACKED_PLAYERS)
     return conn
 
 
@@ -345,9 +344,9 @@ def test_offensive_pairings_only_tracked_players():
 def test_offensive_pairings_idempotent():
     conn = in_memory_db()
     replay = load_replay("match.json")
-    ingest_match(conn, replay)
+    ingest_match(conn, replay, TRACKED_PLAYERS)
     count1 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
-    ingest_match(conn, replay)
+    ingest_match(conn, replay, TRACKED_PLAYERS)
     count2 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
     assert count1 == count2
 
@@ -790,11 +789,11 @@ def test_demos_received_when_demolish_and_deletion_same_frame():
 
 def test_player_name_updates_on_change():
     conn = in_memory_db()
-    get_or_create_player(conn, "steam", "123", "OldName")
+    get_or_create_player(conn, "steam", "123", "OldName", False)
     row = conn.execute("SELECT name FROM players WHERE platform_id = '123'").fetchone()
     assert row[0] == "OldName"
 
-    get_or_create_player(conn, "steam", "123", "NewName")
+    get_or_create_player(conn, "steam", "123", "NewName", False)
     row = conn.execute("SELECT name FROM players WHERE platform_id = '123'").fetchone()
     assert row[0] == "NewName"
 
@@ -803,7 +802,7 @@ def test_player_name_updates_on_change():
 
 
 def test_played_at_derived_from_match_start_epoch():
-    analysis = analyze_replay(load_replay("match.json"))
+    analysis = analyze_replay(load_replay("match.json"), TRACKED_PLAYERS)
     assert analysis is not None
     assert analysis["played_at_sql"] == "2026-02-08 23:27:57"
 
@@ -812,7 +811,7 @@ def test_analyze_replay_rejects_when_no_date_source_available():
     replay = copy.deepcopy(load_replay("match.json"))
     del replay["properties"]["MatchStartEpoch"]
     replay["debug_info"] = []
-    assert analyze_replay(replay) is None
+    assert analyze_replay(replay, TRACKED_PLAYERS) is None
 
 
 def _replay_with_bakkesmod_time(game_start_time: str) -> dict[str, Any]:
@@ -825,7 +824,9 @@ def _replay_with_bakkesmod_time(game_start_time: str) -> dict[str, Any]:
 
 
 def test_played_at_falls_back_to_bakkesmod_game_start_time():
-    analysis = analyze_replay(_replay_with_bakkesmod_time("2024-08-10T02:37:59-0400"))
+    analysis = analyze_replay(
+        _replay_with_bakkesmod_time("2024-08-10T02:37:59-0400"), TRACKED_PLAYERS
+    )
     assert analysis is not None
     assert analysis["played_at_sql"] == "2024-08-10 06:37:59"
 
@@ -835,6 +836,6 @@ def test_match_start_epoch_takes_precedence_over_bakkesmod():
     replay["debug_info"] = [
         {"frame": 0, "user": "GameStartTime", "text": "2020-01-01T00:00:00+0000"}
     ]
-    analysis = analyze_replay(replay)
+    analysis = analyze_replay(replay, TRACKED_PLAYERS)
     assert analysis is not None
     assert analysis["played_at_sql"] == "2026-02-08 23:27:57"

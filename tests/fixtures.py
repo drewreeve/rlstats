@@ -3,10 +3,13 @@ import json
 import sqlite3
 from pathlib import Path
 
+from config import load_settings
 from db import apply_migrations
 from ingest import ingest_match
 
 TEST_DATA_DIR = Path(__file__).parent / "data"
+
+TRACKED_PLAYERS = load_settings(TEST_DATA_DIR).players
 
 
 @functools.cache
@@ -28,7 +31,7 @@ def _cached_ingested_db(replay_names: tuple[str, ...]) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     apply_migrations(conn)
     for name in replay_names:
-        ingest_match(conn, load_replay(name))
+        ingest_match(conn, load_replay(name), TRACKED_PLAYERS)
     conn.commit()
     return conn
 

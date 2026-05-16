@@ -27,12 +27,26 @@ uv run python process.py             # Run rrrocket + ingest new replays into th
 uv run python process.py --force     # Re-process all replays, including already-ingested ones
 ```
 
-## Environment Variables
+## Configuration
+
+Copy `config/settings.example.toml` to `config/settings.toml` and fill in your settings.
+
+### `[server]` section
+
+| Key | Description | Default |
+|---|---|---|
+| `upload_password` | Password required to upload replay files. Omit to disable uploads. | *(none)* |
+| `secret_key` | Session signing key. Set in production for stable sessions across restarts. | Auto-generated at startup |
+
+### `[[players]]` section
+
+List all tracked players. Each entry needs `platform`, `platform_id`, and `name`.
+
+### Environment variables
 
 | Variable | Description | Default |
 |---|---|---|
-| `SECRET_KEY` | Flask session secret key. Set this in production for stable sessions across restarts. | Random hex token (generated at startup) |
-| `UPLOAD_PASSWORD` | Password required to upload replay files. Uploads are disabled if not set. | *(none)* |
 | `HOST` | Address the server binds to. | `0.0.0.0` |
 | `PORT` | Port the server listens on. | `8080` |
+| `CONFIG_DIR` | Directory containing `settings.toml`. | `config` |
 
