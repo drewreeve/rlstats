@@ -15,24 +15,25 @@ class PlayerIdentity(NamedTuple):
     platform_id: str
 
 
-# Keys are the platform strings used in the rrrocket PlayerStats blob.
-_PLAYER_STATS_PLATFORM_MAP = {
-    "OnlinePlatform_Steam": "steam",
-    "OnlinePlatform_Epic": "epic",
-    "OnlinePlatform_PS4": "ps4",
-    "OnlinePlatform_Switch": "switch",
-    "OnlinePlatform_NNX": "switch",
-    "OnlinePlatform_Xbox": "xbox",
-    "OnlinePlatform_Dingo": "xbox",
-}
+class _PlatformSpec(NamedTuple):
+    normalized: str
+    player_stats_keys: tuple[str, ...]
+    network_key: str
 
-# Keys are the platform strings used in the rrrocket network frame UniqueId attribute.
-_NETWORK_PLATFORM_MAP = {
-    "Steam": "steam",
-    "Epic": "epic",
-    "PlayStation": "ps4",
-    "PsyNet": "switch",
-    "Xbox": "xbox",
+
+_PLATFORMS: tuple[_PlatformSpec, ...] = (
+    _PlatformSpec("steam", ("OnlinePlatform_Steam",), "Steam"),
+    _PlatformSpec("epic", ("OnlinePlatform_Epic",), "Epic"),
+    _PlatformSpec("ps4", ("OnlinePlatform_PS4",), "PlayStation"),
+    _PlatformSpec("switch", ("OnlinePlatform_Switch", "OnlinePlatform_NNX"), "PsyNet"),
+    _PlatformSpec("xbox", ("OnlinePlatform_Xbox", "OnlinePlatform_Dingo"), "Xbox"),
+)
+
+_PLAYER_STATS_PLATFORM_MAP: dict[str, str] = {
+    key: spec.normalized for spec in _PLATFORMS for key in spec.player_stats_keys
+}
+_NETWORK_PLATFORM_MAP: dict[str, str] = {
+    spec.network_key: spec.normalized for spec in _PLATFORMS
 }
 
 
