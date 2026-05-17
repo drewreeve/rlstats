@@ -15,6 +15,7 @@ from frame_analysis import (
     BoostStatsHandler,
     DemolitionsHandler,
     DemosReceivedHandler,
+    FrameAnalysis,
     FrameContext,
     IdentityResolver,
     MatchEventsHandler,
@@ -122,15 +123,19 @@ def test_possession_handler_splits_time_by_last_hit_team():
     h.on_update(ctx, _hit(1))
     ctx.frame_time = 20.0
 
-    team, opp = h.finalize(ctx)
-    assert team == 10.0
-    assert opp == 10.0
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_possession_seconds == 10.0
+    assert fa.opponent_possession_seconds == 10.0
 
 
 def test_possession_handler_no_touches_returns_none():
     h = PossessionHandler(HIT_TEAM_OID, tracked_team=0)
     ctx = FrameContext(frame_time=30.0)
-    assert h.finalize(ctx) == (None, None)
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_possession_seconds is None
+    assert fa.opponent_possession_seconds is None
 
 
 def test_possession_handler_inverts_for_team_1():
@@ -142,9 +147,10 @@ def test_possession_handler_inverts_for_team_1():
     h.on_update(ctx, _hit(1))
     ctx.frame_time = 10.0
 
-    team, opp = h.finalize(ctx)
-    assert team == 4.0  # team 1
-    assert opp == 6.0  # team 0
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_possession_seconds == 4.0  # team 1
+    assert fa.opponent_possession_seconds == 6.0  # team 0
 
 
 # -- BallThirdsHandler --
@@ -168,7 +174,11 @@ def test_ball_thirds_handler_ignores_non_ball_actors():
     ctx.frame_time = 5.0
     h.on_update(ctx, _ball_update(actor_id=42, y=2500.0))
 
-    assert h.finalize(ctx) == (None, None, None)
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.defensive_third_seconds is None
+    assert fa.neutral_third_seconds is None
+    assert fa.offensive_third_seconds is None
 
 
 def test_ball_thirds_handler_buckets_time_by_zone():
@@ -186,10 +196,11 @@ def test_ball_thirds_handler_buckets_time_by_zone():
     ctx.frame_time = 9.0
     h.on_update(ctx, _ball_update(7, 2500.0))
 
-    defensive, neutral, offensive = h.finalize(ctx)
-    assert defensive == 3.0
-    assert neutral == 2.0
-    assert offensive == 4.0
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.defensive_third_seconds == 3.0
+    assert fa.neutral_third_seconds == 2.0
+    assert fa.offensive_third_seconds == 4.0
 
 
 # -- DemolitionsHandler --
@@ -207,7 +218,9 @@ def test_demolitions_handler_maps_counter_max_to_identity():
     )  # not max
     h.on_update(ctx, {"actor_id": 6, "object_id": DEMO_OID, "attribute": {"Int": 3}})
 
-    assert h.finalize(ctx) == {("steam", "AAA"): 2, ("steam", "BBB"): 3}
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.demolitions == {("steam", "AAA"): 2, ("steam", "BBB"): 3}
 
 
 def test_demolitions_handler_skips_unknown_identities():
@@ -215,7 +228,9 @@ def test_demolitions_handler_skips_unknown_identities():
     ctx = FrameContext()
     # No pri_identity for actor 9
     h.on_update(ctx, {"actor_id": 9, "object_id": DEMO_OID, "attribute": {"Int": 4}})
-    assert h.finalize(ctx) == {}
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.demolitions == {}
 
 
 # -- DemosReceivedHandler --
@@ -256,7 +271,9 @@ def test_demos_received_handler_counts_active_transitions():
     # Second hit
     h.on_update(ctx, _demolish(actor_id=7, victim_active=True, victim_actor=7))
 
-    assert h.finalize(ctx) == {("steam", "VICTIM"): 2}
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.demos_received == {("steam", "VICTIM"): 2}
 
 
 def test_demos_received_handler_skips_self_demolish():
@@ -270,7 +287,9 @@ def test_demos_received_handler_skips_self_demolish():
         ctx,
         _demolish(actor_id=7, victim_active=True, victim_actor=7, self_demolish=True),
     )
-    assert h.finalize(ctx) == {}
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.demos_received == {}
 
 
 def test_demos_received_handler_skips_when_attacker_inactive():
@@ -286,7 +305,9 @@ def test_demos_received_handler_skips_when_attacker_inactive():
             actor_id=7, victim_active=True, victim_actor=7, attacker_active=False
         ),
     )
-    assert h.finalize(ctx) == {}
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.demos_received == {}
 
 
 def test_demos_received_handler_cleans_up_on_delete():
@@ -301,7 +322,9 @@ def test_demos_received_handler_cleans_up_on_delete():
     # After deletion, the next "active=True" should count as a NEW hit
     # (previous active state was cleared)
     h.on_update(ctx, _demolish(actor_id=7, victim_active=True, victim_actor=7))
-    assert h.finalize(ctx) == {("steam", "VICTIM"): 2}
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.demos_received == {("steam", "VICTIM"): 2}
 
 
 # -- BoostStatsHandler --
@@ -329,11 +352,12 @@ def test_boost_stats_handler_attributes_big_pad_to_team():
 
     h.on_update(ctx, _pickup(pickup_actor_id=50, instigator=1, picked_up_state=1))
 
-    team, opp, team_stolen, opp_stolen = h.finalize(ctx)
-    assert team == 100
-    assert opp == 0
-    assert team_stolen == 0
-    assert opp_stolen == 0
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_boost_collected == 100
+    assert fa.opponent_boost_collected == 0
+    assert fa.team_boost_stolen == 0
+    assert fa.opponent_boost_stolen == 0
 
 
 def test_boost_stats_handler_detects_stolen():
@@ -344,11 +368,12 @@ def test_boost_stats_handler_detects_stolen():
 
     h.on_update(ctx, _pickup(50, instigator=1, picked_up_state=1))
 
-    team, opp, team_stolen, opp_stolen = h.finalize(ctx)
-    assert team == 100
-    assert team_stolen == 100
-    assert opp == 0
-    assert opp_stolen == 0
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_boost_collected == 100
+    assert fa.team_boost_stolen == 100
+    assert fa.opponent_boost_collected == 0
+    assert fa.opponent_boost_stolen == 0
 
 
 def test_boost_stats_handler_small_pad_when_far_from_big():
@@ -359,8 +384,9 @@ def test_boost_stats_handler_small_pad_when_far_from_big():
 
     h.on_update(ctx, _pickup(50, instigator=1, picked_up_state=1))
 
-    team, _, _, _ = h.finalize(ctx)
-    assert team == 12
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_boost_collected == 12
 
 
 def test_boost_stats_handler_dedupes_same_pickup_state():
@@ -374,14 +400,20 @@ def test_boost_stats_handler_dedupes_same_pickup_state():
         ctx, _pickup(50, instigator=1, picked_up_state=1)
     )  # same state -> ignored
 
-    team, _, _, _ = h.finalize(ctx)
-    assert team == 100
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_boost_collected == 100
 
 
 def test_boost_stats_handler_returns_none_when_nothing_collected():
     h = BoostStatsHandler(PICKUP_OID, tracked_team=0, big_pads=BIG_PADS)
     ctx = FrameContext()
-    assert h.finalize(ctx) == (None, None, None, None)
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_boost_collected is None
+    assert fa.opponent_boost_collected is None
+    assert fa.team_boost_stolen is None
+    assert fa.opponent_boost_stolen is None
 
 
 # -- MovementHandler --
@@ -423,8 +455,9 @@ def test_movement_handler_attributes_boost_consumption_on_delete():
     h.on_update(ctx, _boost_amount(10, 200))  # 55 consumed
     h.on_deleted_actor(ctx, 10)
 
-    result = h.finalize(ctx)
-    bpm = result[("steam", "PLAYER")]["boost_per_minute"]
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    bpm = fa.movement_stats[("steam", "PLAYER")]["boost_per_minute"]
     # 55 / 255 * 100 / (300 / 60) = ~4.3
     assert bpm == 4.3
 
@@ -437,7 +470,9 @@ def test_movement_handler_skips_boost_when_not_playing():
     h.on_update(ctx, _boost_amount(10, 255))
     h.on_update(ctx, _boost_amount(10, 200))
 
-    assert h.finalize(ctx) == {}
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.movement_stats == {}
 
 
 def test_movement_handler_accumulates_speed_samples():
@@ -454,8 +489,9 @@ def test_movement_handler_accumulates_speed_samples():
     ctx.frame_time = 2.0
     h.on_update(ctx, _car_velocity(1, x=1000.0))
 
-    result = h.finalize(ctx)
-    stats = result[("steam", "PLAYER")]
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    stats = fa.movement_stats[("steam", "PLAYER")]
     assert stats["avg_speed"] > 0
     # 1 second of supersonic out of 60s duration = ~1.7%
     assert stats["time_supersonic_pct"] > 0
@@ -490,9 +526,10 @@ def test_match_events_handler_emits_goal_event_with_game_time():
     ctx.frame_time = 10.0
     h.on_update(ctx, {"actor_id": 5, "object_id": GOALS_OID, "attribute": {"Int": 1}})
 
-    events = h.finalize(ctx)
-    assert len(events) == 1
-    event_type, _gs, platform, platform_id, team = events[0]
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert len(fa.match_events) == 1
+    event_type, _gs, platform, platform_id, team = fa.match_events[0]
     assert event_type == "goal"
     assert platform == "steam"
     assert platform_id == "TRACKED"
@@ -511,7 +548,9 @@ def test_match_events_handler_emits_nothing_without_clock():
     ctx.resolver.set_identity(5, "steam", "TRACKED")
     h.on_update(ctx, {"actor_id": 5, "object_id": GOALS_OID, "attribute": {"Int": 1}})
 
-    assert h.finalize(ctx) == []
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.match_events == []
 
 
 def test_match_events_handler_emits_multiple_when_counter_jumps():
@@ -535,6 +574,7 @@ def test_match_events_handler_emits_multiple_when_counter_jumps():
     )
     ctx.frame_time = 10.0
     h.on_update(ctx, {"actor_id": 5, "object_id": GOALS_OID, "attribute": {"Int": 3}})
-    events = h.finalize(ctx)
-    assert len(events) == 3
-    assert all(e[0] == "goal" for e in events)
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert len(fa.match_events) == 3
+    assert all(e[0] == "goal" for e in fa.match_events)

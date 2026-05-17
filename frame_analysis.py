@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
-from typing import Any, NamedTuple
+from typing import Any
 
 from player_identity import from_network_frame
 
@@ -98,20 +98,29 @@ class IdentityResolver:
         return [aid for aid, ident in self._pri_identity.items() if ident in identities]
 
 
-class FrameAnalysis(NamedTuple):
-    team_possession_seconds: float | None
-    opponent_possession_seconds: float | None
-    defensive_third_seconds: float | None
-    neutral_third_seconds: float | None
-    offensive_third_seconds: float | None
-    demolitions: dict[tuple[str, str], int]
-    team_boost_collected: int | None
-    opponent_boost_collected: int | None
-    team_boost_stolen: int | None
-    opponent_boost_stolen: int | None
-    movement_stats: dict[tuple[str, str], dict[str, float | int]]
-    demos_received: dict[tuple[str, str], int]
-    match_events: list[tuple[str, float, str, str, int]]
+@dataclass
+class FrameAnalysis:
+    team_possession_seconds: float | None = None
+    opponent_possession_seconds: float | None = None
+    defensive_third_seconds: float | None = None
+    neutral_third_seconds: float | None = None
+    offensive_third_seconds: float | None = None
+    demolitions: dict[tuple[str, str], int] = field(
+        default_factory=dict[tuple[str, str], int]
+    )
+    team_boost_collected: int | None = None
+    opponent_boost_collected: int | None = None
+    team_boost_stolen: int | None = None
+    opponent_boost_stolen: int | None = None
+    movement_stats: dict[tuple[str, str], dict[str, float | int]] = field(
+        default_factory=dict[tuple[str, str], dict[str, float | int]]
+    )
+    demos_received: dict[tuple[str, str], int] = field(
+        default_factory=dict[tuple[str, str], int]
+    )
+    match_events: list[tuple[str, float, str, str, int]] = field(
+        default_factory=list[tuple[str, float, str, str, int]]
+    )
 
 
 @dataclass
@@ -167,7 +176,7 @@ class FrameHandler(ABC):
         del ctx, aid
 
     @abstractmethod
-    def finalize(self, ctx: FrameContext) -> Any: ...
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None: ...
 
 
 def _parse_pickup(
@@ -265,9 +274,9 @@ class PossessionHandler(FrameHandler):
         if team_num is not None:
             self.touches.append((ctx.frame_time, team_num))
 
-    def finalize(self, ctx: FrameContext) -> tuple[float | None, float | None]:
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if not self.touches:
-            return None, None
+            return
 
         possession = {0: 0.0, 1: 0.0}
         for (t_start, team_num), (t_end, _) in pairwise(self.touches):
@@ -278,7 +287,8 @@ class PossessionHandler(FrameHandler):
 
         team_poss = possession.get(self.tracked_team, 0.0)
         opp_poss = possession.get(1 - self.tracked_team, 0.0)
-        return round(team_poss, 2), round(opp_poss, 2)
+        result.team_possession_seconds = round(team_poss, 2)
+        result.opponent_possession_seconds = round(opp_poss, 2)
 
 
 class BallThirdsHandler(FrameHandler):
@@ -308,11 +318,9 @@ class BallThirdsHandler(FrameHandler):
         if loc and "y" in loc:
             self.samples.append((ctx.frame_time, loc["y"]))
 
-    def finalize(
-        self, ctx: FrameContext
-    ) -> tuple[float | None, float | None, float | None]:
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if len(self.samples) < 2:
-            return None, None, None
+            return
 
         THIRD_BOUNDARY = 1707  # field is ±5120 uu from center; one third ≈ 5120 / 3
         zones = {"negative": 0.0, "neutral": 0.0, "positive": 0.0}
@@ -334,7 +342,9 @@ class BallThirdsHandler(FrameHandler):
             defensive = zones["positive"]
             offensive = zones["negative"]
 
-        return round(defensive, 2), round(zones["neutral"], 2), round(offensive, 2)
+        result.defensive_third_seconds = round(defensive, 2)
+        result.neutral_third_seconds = round(zones["neutral"], 2)
+        result.offensive_third_seconds = round(offensive, 2)
 
 
 class DemolitionsHandler(FrameHandler):
@@ -356,13 +366,11 @@ class DemolitionsHandler(FrameHandler):
         aid = actor["actor_id"]
         self.actor_demos[aid] = max(self.actor_demos.get(aid, 0), val)
 
-    def finalize(self, ctx: FrameContext) -> dict[tuple[str, str], int]:
-        result: dict[tuple[str, str], int] = {}
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         for aid, count in self.actor_demos.items():
             identity = ctx.resolver.resolve_pri(aid)
             if identity:
-                result[identity] = count
-        return result
+                result.demolitions[identity] = count
 
 
 class DemosReceivedHandler(FrameHandler):
@@ -406,8 +414,8 @@ class DemosReceivedHandler(FrameHandler):
                 self.demos_received.get(victim_identity, 0) + 1
             )
 
-    def finalize(self, ctx: FrameContext) -> dict[tuple[str, str], int]:
-        return self.demos_received
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
+        result.demos_received = self.demos_received
 
 
 class BoostStatsHandler(FrameHandler):
@@ -459,17 +467,14 @@ class BoostStatsHandler(FrameHandler):
         if is_stolen:
             self.stolen[team] += boost_value
 
-    def finalize(
-        self, ctx: FrameContext
-    ) -> tuple[int | None, int | None, int | None, int | None]:
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if self.collected[0] == 0 and self.collected[1] == 0:
-            return None, None, None, None
+            return
 
-        team_collected = self.collected[self.tracked_team]
-        opp_collected = self.collected[1 - self.tracked_team]
-        team_stolen = self.stolen[self.tracked_team]
-        opp_stolen = self.stolen[1 - self.tracked_team]
-        return team_collected, opp_collected, team_stolen, opp_stolen
+        result.team_boost_collected = self.collected[self.tracked_team]
+        result.opponent_boost_collected = self.collected[1 - self.tracked_team]
+        result.team_boost_stolen = self.stolen[self.tracked_team]
+        result.opponent_boost_stolen = self.stolen[1 - self.tracked_team]
 
 
 class MovementHandler(FrameHandler):
@@ -606,9 +611,7 @@ class MovementHandler(FrameHandler):
                 if is_stolen:
                     pads["stolen_small_pads"] += 1
 
-    def finalize(
-        self, ctx: FrameContext
-    ) -> dict[tuple[str, str], dict[str, float | int]]:
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         # Deleted-actor data already accumulated; handle remaining live actors
         for comp_id, consumed in self.comp_boost_consumed.items():
             self._flush_boost_comp(ctx, comp_id, consumed)
@@ -616,13 +619,11 @@ class MovementHandler(FrameHandler):
         for car_id, samples in self.car_speed_samples.items():
             self._flush_speed_samples(ctx, car_id, samples)
 
-        # Build results
         all_identities = (
             set(self.identity_boost_consumed.keys())
             | set(self.identity_speeds.keys())
             | set(self.identity_pads.keys())
         )
-        result: dict[tuple[str, str], dict[str, float | int]] = {}
 
         for identity in all_identities:
             stats: dict[str, float] = {}
@@ -663,9 +664,7 @@ class MovementHandler(FrameHandler):
             stats["stolen_small_pads"] = pad.get("stolen_small_pads", 0)
             stats["stolen_large_pads"] = pad.get("stolen_large_pads", 0)
 
-            result[identity] = stats
-
-        return result
+            result.movement_stats[identity] = stats
 
 
 class MatchEventsHandler(FrameHandler):
@@ -749,9 +748,9 @@ class MatchEventsHandler(FrameHandler):
                     self.raw_events.append((event_type, ctx.frame_time, aid))
             self.actor_counters[aid][event_type] = val
 
-    def finalize(self, ctx: FrameContext) -> list[tuple[str, float, str, str, int]]:
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if not self.clock_updates or not self.raw_events:
-            return []
+            return
 
         game_start = self.clock_updates[0][1]
 
@@ -783,7 +782,7 @@ class MatchEventsHandler(FrameHandler):
                 break
 
         if tracked_team_actor is None:
-            return []
+            return
 
         def resolve_team(aid: int) -> int | None:
             ta = self.actor_team_actor.get(aid)
@@ -795,16 +794,13 @@ class MatchEventsHandler(FrameHandler):
                 else (1 - self.tracked_team)
             )
 
-        events: list[tuple[str, float, str, str, int]] = []
         for event_type, ft, aid in self.raw_events:
             identity = ctx.resolver.resolve_pri(aid)
             team = resolve_team(aid)
             if identity is None or team is None:
                 continue
             gs = frame_to_game_seconds(ft)
-            events.append((event_type, gs, identity[0], identity[1], team))
-
-        return events
+            result.match_events.append((event_type, gs, identity[0], identity[1], team))
 
 
 # -- Orchestrator --
@@ -821,25 +817,8 @@ def analyze_frames(
     objects = replay.get("objects")
     frames = replay.get("network_frames", {}).get("frames")
 
-    # Default empty result
-    empty = FrameAnalysis(
-        team_possession_seconds=None,
-        opponent_possession_seconds=None,
-        defensive_third_seconds=None,
-        neutral_third_seconds=None,
-        offensive_third_seconds=None,
-        demolitions={},
-        team_boost_collected=None,
-        opponent_boost_collected=None,
-        team_boost_stolen=None,
-        opponent_boost_stolen=None,
-        movement_stats={},
-        demos_received={},
-        match_events=[],
-    )
-
     if not objects or not frames:
-        return empty
+        return FrameAnalysis()
 
     obj_ids = _resolve_obj_ids(objects)
 
@@ -859,27 +838,16 @@ def analyze_frames(
 
     big_pads = BIG_PAD_POSITIONS["hoops" if game_mode == "hoops" else "standard"]
 
-    # Create handlers
-    possession_h = PossessionHandler.create(obj_ids, tracked_team)
-    ball_thirds_h = BallThirdsHandler.create(obj_ids, tracked_team)
-    demolitions_h = DemolitionsHandler.create(obj_ids)
-    boost_stats_h = BoostStatsHandler.create(obj_ids, tracked_team, big_pads)
-    movement_h = MovementHandler.create(obj_ids, duration, big_pads)
-    demos_received_h = DemosReceivedHandler.create(obj_ids)
-    match_events_h = MatchEventsHandler.create(
-        obj_ids, tracked_team, tracked_identities
-    )
-
     handlers: list[FrameHandler] = [
         h
         for h in [
-            possession_h,
-            ball_thirds_h,
-            demolitions_h,
-            boost_stats_h,
-            movement_h,
-            demos_received_h,
-            match_events_h,
+            PossessionHandler.create(obj_ids, tracked_team),
+            BallThirdsHandler.create(obj_ids, tracked_team),
+            DemolitionsHandler.create(obj_ids),
+            BoostStatsHandler.create(obj_ids, tracked_team, big_pads),
+            MovementHandler.create(obj_ids, duration, big_pads),
+            DemosReceivedHandler.create(obj_ids),
+            MatchEventsHandler.create(obj_ids, tracked_team, tracked_identities),
         ]
         if h is not None
     ]
@@ -978,29 +946,7 @@ def analyze_frames(
             ctx.actor_team.pop(aid, None)
             ctx.actor_position.pop(aid, None)
 
-    # Finalize all handlers
-    poss_result = possession_h.finalize(ctx) if possession_h else (None, None)
-    thirds_result = ball_thirds_h.finalize(ctx) if ball_thirds_h else (None, None, None)
-    demo_result: Any = demolitions_h.finalize(ctx) if demolitions_h else {}
-    boost_result = (
-        boost_stats_h.finalize(ctx) if boost_stats_h else (None, None, None, None)
-    )
-    movement_result: Any = movement_h.finalize(ctx) if movement_h else {}
-    demos_recv_result: Any = demos_received_h.finalize(ctx) if demos_received_h else {}
-    events_result: Any = match_events_h.finalize(ctx) if match_events_h else []
-
-    return FrameAnalysis(
-        team_possession_seconds=poss_result[0],
-        opponent_possession_seconds=poss_result[1],
-        defensive_third_seconds=thirds_result[0],
-        neutral_third_seconds=thirds_result[1],
-        offensive_third_seconds=thirds_result[2],
-        demolitions=demo_result,
-        team_boost_collected=boost_result[0],
-        opponent_boost_collected=boost_result[1],
-        team_boost_stolen=boost_result[2],
-        opponent_boost_stolen=boost_result[3],
-        movement_stats=movement_result,
-        demos_received=demos_recv_result,
-        match_events=events_result,
-    )
+    fa = FrameAnalysis()
+    for h in handlers:
+        h.finalize(ctx, fa)
+    return fa
