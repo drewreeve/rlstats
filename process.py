@@ -195,7 +195,7 @@ def process_unprocessed(
         ingested: list[Path] = []
         for path, analysis in zip(replay_paths, results, strict=True):
             if analysis is not None:
-                write_match(conn, analysis, tracked_players)
+                write_match(conn, analysis)
                 ingested.append(path)
         conn.commit()
         for replay_path in ingested:

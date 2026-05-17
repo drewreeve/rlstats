@@ -39,6 +39,7 @@ class ReplayAnalysis:
     movement_stats: dict[tuple[str, str], dict[str, float | int]]
     match_events: list[tuple[str, float, str, str, int]]
     tracked_player_stats: list[dict[str, Any]]
+    tracked_names: dict[PlayerIdentity, str]
     all_players: list[dict[str, Any]]
 
 
@@ -180,7 +181,7 @@ def _resolve_result(team_score: Any, opponent_score: Any) -> str | None:
 def _resolve_mvp_player_id(
     conn: sqlite3.Connection,
     tracked_player_stats: list[dict[str, Any]],
-    tracked_players: dict[PlayerIdentity, str],
+    tracked_names: dict[PlayerIdentity, str],
 ) -> int | None:
     if not tracked_player_stats:
         return None
@@ -189,7 +190,7 @@ def _resolve_mvp_player_id(
     if not identity:
         return None
     platform, platform_id = identity
-    mvp_name = tracked_players[identity]
+    mvp_name = tracked_names[identity]
     return get_or_create_player(conn, platform, platform_id, mvp_name, True)
 
 
@@ -288,7 +289,7 @@ def _upsert_match_players(
     demolitions: dict[tuple[str, str], int],
     demos_received: dict[tuple[str, str], int],
     movement_stats: dict[tuple[str, str], dict[str, float]],
-    tracked_players: dict[PlayerIdentity, str],
+    tracked_names: dict[PlayerIdentity, str],
 ):
     for player in all_players:
         if player.get("bBot"):
@@ -298,11 +299,11 @@ def _upsert_match_players(
             continue
         platform, platform_id = identity
         name = player.get("Name", "Unknown")
-        tracked_name = tracked_players.get(identity)
-        if tracked_name:
-            name = tracked_name
+        display_name = tracked_names.get(identity)
+        if display_name:
+            name = display_name
         player_id = get_or_create_player(
-            conn, platform, platform_id, name, tracked_name is not None
+            conn, platform, platform_id, name, display_name is not None
         )
         demos = demolitions.get(identity, 0)
         demos_recv = demos_received.get(identity, 0)
@@ -389,6 +390,12 @@ def analyze_replay(
 
     fa = analyze_frames(replay, team, set(tracked_players.keys()), duration, game_mode)
 
+    tracked_names = {
+        identity: tracked_players[identity]
+        for p in tracked
+        if (identity := from_player_stats(p)) and identity in tracked_players
+    }
+
     return ReplayAnalysis(
         replay_hash=replay_hash,
         played_at_sql=played_at_sql,
@@ -415,17 +422,14 @@ def analyze_replay(
         movement_stats=fa.movement_stats,
         match_events=fa.match_events,
         tracked_player_stats=tracked,
+        tracked_names=tracked_names,
         all_players=props.get("PlayerStats", []),
     )
 
 
-def write_match(
-    conn: sqlite3.Connection,
-    analysis: ReplayAnalysis,
-    tracked_players: dict[PlayerIdentity, str],
-):
+def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
     mvp_player_id = _resolve_mvp_player_id(
-        conn, analysis.tracked_player_stats, tracked_players
+        conn, analysis.tracked_player_stats, analysis.tracked_names
     )
 
     match_id = _upsert_match(
@@ -461,7 +465,7 @@ def write_match(
         analysis.demolitions,
         analysis.demos_received,
         analysis.movement_stats,
-        tracked_players,
+        analysis.tracked_names,
     )
 
     # Build identity -> player_id map (players were just upserted above)
@@ -492,7 +496,7 @@ def write_match(
             (match_id, event_type, game_seconds, player_id, ev_team),
         )
 
-    tracked_identities = set(tracked_players.keys())
+    tracked_identities = set(analysis.tracked_names.keys())
     pairings = [
         p
         for p in correlate_pairings(analysis.match_events)
@@ -518,4 +522,4 @@ def ingest_match(
     analysis = analyze_replay(replay, tracked_players)
     if analysis is None:
         raise ValueError("Replay could not be analyzed")
-    write_match(conn, analysis, tracked_players)
+    write_match(conn, analysis)

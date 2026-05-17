@@ -14,6 +14,13 @@ A player identity is stable for the lifetime of a player's account on a given pl
 
 **Platform ID** is the platform's own identifier for the account (e.g. a Steam64 ID for Steam players, an Epic Account ID for Epic players).
 
+## Display Name
+
+A **display name** is the short, human-readable label configured for a tracked player in
+`players.toml` (e.g. `"Drew"` instead of a full in-game handle). Display names are
+preferred over in-game names when writing player records to the DB, to keep graph labels
+concise. They are resolved at analysis time and carried in `ReplayAnalysis.tracked_names`.
+
 ## Offensive Pairing
 
 An **offensive pairing** is a matched (scorer, assister) pair within a single match: a goal and an assist by different players on the same team, where the assist occurred within `PAIRING_WINDOW` seconds of the goal. Only pairings where both players are tracked are recorded. The pairing algorithm is greedy: for each goal (processed in order), it claims the temporally nearest unclaimed assist within the window.
