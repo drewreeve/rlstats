@@ -2,12 +2,24 @@
 # rrrocket JSON -> SQLite
 
 import datetime
+import logging
 import sqlite3
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from frame_analysis import FrameAnalysis, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
+
+logger = logging.getLogger(__name__)
+
+
+class SkipReason(Enum):
+    NO_MATCH_GUID = "no_match_guid"
+    MISSING_DATE = "missing_date"
+    NO_TRACKED_PLAYERS = "no_tracked_players"
+    DRAW = "draw"
+
 
 PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
 
@@ -316,22 +328,58 @@ def _insert_match_players(
         )
 
 
+def validate_replay(
+    replay: dict[str, Any], tracked_players: dict[PlayerIdentity, str]
+) -> SkipReason | None:
+    props = replay.get("properties", {})
+
+    if not (props.get("MatchGUID") or props.get("MatchGuid")):
+        return SkipReason.NO_MATCH_GUID
+
+    if not (
+        _epoch_to_played_at(props.get("MatchStartEpoch"))
+        or _bakkesmod_played_at(replay)
+    ):
+        return SkipReason.MISSING_DATE
+
+    player_stats = {
+        identity: p
+        for p in props.get("PlayerStats", [])
+        if not p.get("bBot") and (identity := from_player_stats(p))
+    }
+    tracked_raw = [v for k, v in player_stats.items() if k in tracked_players]
+    if not tracked_raw:
+        return SkipReason.NO_TRACKED_PLAYERS
+
+    team0_score = props.get("Team0Score", 0)
+    team1_score = props.get("Team1Score", 0)
+    _, team_score, opponent_score = _resolve_team_scores(
+        tracked_raw, team0_score, team1_score
+    )
+    if _resolve_result(team_score, opponent_score) is None:
+        return SkipReason.DRAW
+
+    return None
+
+
 def analyze_replay(
     replay: dict[str, Any], tracked_players: dict[PlayerIdentity, str]
 ) -> ReplayAnalysis | None:
+    skip = validate_replay(replay, tracked_players)
+    if skip is not None:
+        if skip is not SkipReason.DRAW:
+            logger.debug("Skipping replay: %s", skip.value)
+        return None
+
     props = replay.get("properties", {})
 
     replay_hash = props.get("MatchGUID") or props.get("MatchGuid")
-    if not replay_hash:
-        return None
-
     # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43 replays fall back to
     # BakkesMod's GameStartTime in debug_info (absent on replays saved manually from match history)
     played_at_sql = _epoch_to_played_at(
         props.get("MatchStartEpoch")
     ) or _bakkesmod_played_at(replay)
-    if not played_at_sql:
-        return None
+    assert played_at_sql is not None
     duration = props.get("TotalSecondsPlayed")
     forfeit = 1 if props.get("bForfeit") else 0
     team_size = props.get("TeamSize")
@@ -350,8 +398,7 @@ def analyze_replay(
         tracked_raw, team0_score, team1_score
     )
     result = _resolve_result(team_score, opponent_score)
-    if result is None:
-        return None
+    assert result is not None
 
     fa = analyze_frames(replay, team, set(tracked_players.keys()), duration, game_mode)
 

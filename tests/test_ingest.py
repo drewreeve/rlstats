@@ -7,10 +7,12 @@ import pytest
 from frame_analysis import analyze_frames
 from ingest import (
     OffensivePairing,
+    SkipReason,
     analyze_replay,
     correlate_pairings,
     get_or_create_player,
     ingest_match,
+    validate_replay,
 )
 from player_identity import PlayerIdentity
 from tests.fixtures import TRACKED_PLAYERS, cached_db, in_memory_db, load_replay
@@ -913,3 +915,42 @@ def test_match_start_epoch_takes_precedence_over_bakkesmod():
     analysis = analyze_replay(replay, TRACKED_PLAYERS)
     assert analysis is not None
     assert analysis.played_at_sql == "2026-02-08 23:27:57"
+
+
+# -- validate_replay --
+
+
+def test_validate_replay_passes():
+    assert validate_replay(load_replay("match.json"), TRACKED_PLAYERS) is None
+
+
+def test_validate_replay_missing_guid():
+    assert (
+        validate_replay({"properties": {}}, TRACKED_PLAYERS) == SkipReason.NO_MATCH_GUID
+    )
+
+
+def test_validate_replay_missing_date():
+    replay: dict[str, Any] = {"properties": {"MatchGUID": "x"}}
+    assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.MISSING_DATE
+
+
+def test_validate_replay_no_tracked_players():
+    replay: dict[str, Any] = {
+        "properties": {
+            "MatchGUID": "x",
+            "MatchStartEpoch": 1000000,
+            "PlayerStats": [],
+            "Team0Score": 2,
+            "Team1Score": 1,
+        }
+    }
+    assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.NO_TRACKED_PLAYERS
+
+
+def test_validate_replay_draw():
+    replay = copy.deepcopy(load_replay("match.json"))
+    props = replay["properties"]
+    props["Team0Score"] = 3
+    props["Team1Score"] = 3
+    assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.DRAW
