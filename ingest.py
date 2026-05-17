@@ -26,9 +26,9 @@ class ReplayAnalysis:
     map_name: str | None
     game_mode: str | None
     frame_analysis: FrameAnalysis
-    tracked_player_stats: list[dict[str, Any]]
+    player_stats: dict[PlayerIdentity, dict[str, Any]]
+    mvp_identity: PlayerIdentity | None
     tracked_names: dict[PlayerIdentity, str]
-    all_players: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -133,16 +133,6 @@ def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
     return None
 
 
-def _tracked_player_stats(
-    props: dict[str, Any], tracked_players: dict[PlayerIdentity, str]
-) -> list[dict[str, Any]]:
-    return [
-        p
-        for p in props.get("PlayerStats", [])
-        if (identity := from_player_stats(p)) and identity in tracked_players
-    ]
-
-
 def _resolve_team_scores(
     tracked_players: list[dict[str, Any]], team0_score: Any, team1_score: Any
 ) -> tuple[Any, Any, Any]:
@@ -164,15 +154,6 @@ def _resolve_result(team_score: Any, opponent_score: Any) -> str | None:
     if team_score < opponent_score:
         return "loss"
     return None
-
-
-def _find_mvp_identity(
-    tracked_player_stats: list[dict[str, Any]],
-) -> PlayerIdentity | None:
-    if not tracked_player_stats:
-        return None
-    mvp_stats = max(tracked_player_stats, key=lambda p: p.get("Score", 0))
-    return from_player_stats(mvp_stats)
 
 
 def _upsert_match(
@@ -258,16 +239,11 @@ def _upsert_match(
 
 def _upsert_players(
     conn: sqlite3.Connection,
-    all_players: list[dict[str, Any]],
+    player_stats: dict[PlayerIdentity, dict[str, Any]],
     tracked_names: dict[PlayerIdentity, str],
 ) -> dict[PlayerIdentity, int]:
     player_id_map: dict[PlayerIdentity, int] = {}
-    for player in all_players:
-        if player.get("bBot"):
-            continue
-        identity = from_player_stats(player)
-        if not identity:
-            continue
+    for identity, player in player_stats.items():
         platform, platform_id = identity
         name = player.get("Name", "Unknown")
         display_name = tracked_names.get(identity)
@@ -282,16 +258,11 @@ def _upsert_players(
 def _insert_match_players(
     conn: sqlite3.Connection,
     match_id: int,
-    all_players: list[dict[str, Any]],
+    player_stats: dict[PlayerIdentity, dict[str, Any]],
     player_id_map: dict[PlayerIdentity, int],
     frame_analysis: FrameAnalysis,
 ):
-    for player in all_players:
-        if player.get("bBot"):
-            continue
-        identity = from_player_stats(player)
-        if not identity:
-            continue
+    for identity, player in player_stats.items():
         player_id = player_id_map.get(identity)
         if player_id is None:
             continue
@@ -369,9 +340,14 @@ def analyze_replay(
 
     team0_score = props.get("Team0Score", 0)
     team1_score = props.get("Team1Score", 0)
-    tracked = _tracked_player_stats(props, tracked_players)
+    player_stats: dict[PlayerIdentity, dict[str, Any]] = {
+        identity: p
+        for p in props.get("PlayerStats", [])
+        if not p.get("bBot") and (identity := from_player_stats(p))
+    }
+    tracked_raw = [v for k, v in player_stats.items() if k in tracked_players]
     team, team_score, opponent_score = _resolve_team_scores(
-        tracked, team0_score, team1_score
+        tracked_raw, team0_score, team1_score
     )
     result = _resolve_result(team_score, opponent_score)
     if result is None:
@@ -380,10 +356,13 @@ def analyze_replay(
     fa = analyze_frames(replay, team, set(tracked_players.keys()), duration, game_mode)
 
     tracked_names = {
-        identity: tracked_players[identity]
-        for p in tracked
-        if (identity := from_player_stats(p))
+        k: tracked_players[k] for k in player_stats if k in tracked_players
     }
+    mvp_identity = (
+        max(tracked_names, key=lambda k: player_stats[k].get("Score", 0))
+        if tracked_names
+        else None
+    )
 
     return ReplayAnalysis(
         replay_hash=replay_hash,
@@ -398,16 +377,17 @@ def analyze_replay(
         map_name=map_name,
         game_mode=game_mode,
         frame_analysis=fa,
-        tracked_player_stats=tracked,
+        player_stats=player_stats,
+        mvp_identity=mvp_identity,
         tracked_names=tracked_names,
-        all_players=props.get("PlayerStats", []),
     )
 
 
 def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
-    player_id_map = _upsert_players(conn, analysis.all_players, analysis.tracked_names)
-    mvp_identity = _find_mvp_identity(analysis.tracked_player_stats)
-    mvp_player_id = player_id_map.get(mvp_identity) if mvp_identity else None
+    player_id_map = _upsert_players(conn, analysis.player_stats, analysis.tracked_names)
+    mvp_player_id = (
+        player_id_map.get(analysis.mvp_identity) if analysis.mvp_identity else None
+    )
 
     match_id = _upsert_match(
         conn,
@@ -429,7 +409,7 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
     _insert_match_players(
         conn,
         match_id,
-        analysis.all_players,
+        analysis.player_stats,
         player_id_map,
         analysis.frame_analysis,
     )
