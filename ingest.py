@@ -45,8 +45,8 @@ class ReplayAnalysis:
 
 @dataclass(frozen=True)
 class OffensivePairing:
-    scorer: tuple[str, str]  # (platform, platform_id)
-    assister: tuple[str, str]  # (platform, platform_id)
+    scorer: PlayerIdentity
+    assister: PlayerIdentity
     game_seconds: float
     team: int
 
@@ -55,10 +55,10 @@ def correlate_pairings(
     events: list[tuple[str, float, str, str, int]],
     window: float = PAIRING_WINDOW,
 ) -> list[OffensivePairing]:
-    goal_events: list[tuple[float, tuple[str, str], int]] = []
-    assist_events: list[tuple[float, tuple[str, str], int]] = []
+    goal_events: list[tuple[float, PlayerIdentity, int]] = []
+    assist_events: list[tuple[float, PlayerIdentity, int]] = []
     for event_type, game_seconds, platform, platform_id, team in events:
-        identity = (platform, platform_id)
+        identity = PlayerIdentity(platform, platform_id)
         if event_type == "goal":
             goal_events.append((game_seconds, identity, team))
         elif event_type == "assist":
@@ -178,20 +178,13 @@ def _resolve_result(team_score: Any, opponent_score: Any) -> str | None:
     return None
 
 
-def _resolve_mvp_player_id(
-    conn: sqlite3.Connection,
+def _find_mvp_identity(
     tracked_player_stats: list[dict[str, Any]],
-    tracked_names: dict[PlayerIdentity, str],
-) -> int | None:
+) -> PlayerIdentity | None:
     if not tracked_player_stats:
         return None
     mvp_stats = max(tracked_player_stats, key=lambda p: p.get("Score", 0))
-    identity = from_player_stats(mvp_stats)
-    if not identity:
-        return None
-    platform, platform_id = identity
-    mvp_name = tracked_names[identity]
-    return get_or_create_player(conn, platform, platform_id, mvp_name, True)
+    return from_player_stats(mvp_stats)
 
 
 def _upsert_match(
@@ -282,15 +275,12 @@ def _upsert_match(
     )
 
 
-def _upsert_match_players(
+def _upsert_players(
     conn: sqlite3.Connection,
-    match_id: int,
     all_players: list[dict[str, Any]],
-    demolitions: dict[tuple[str, str], int],
-    demos_received: dict[tuple[str, str], int],
-    movement_stats: dict[tuple[str, str], dict[str, float]],
     tracked_names: dict[PlayerIdentity, str],
-):
+) -> dict[PlayerIdentity, int]:
+    player_id_map: dict[PlayerIdentity, int] = {}
     for player in all_players:
         if player.get("bBot"):
             continue
@@ -302,13 +292,33 @@ def _upsert_match_players(
         display_name = tracked_names.get(identity)
         if display_name:
             name = display_name
-        player_id = get_or_create_player(
+        player_id_map[identity] = get_or_create_player(
             conn, platform, platform_id, name, display_name is not None
         )
+    return player_id_map
+
+
+def _insert_match_players(
+    conn: sqlite3.Connection,
+    match_id: int,
+    all_players: list[dict[str, Any]],
+    player_id_map: dict[PlayerIdentity, int],
+    demolitions: dict[tuple[str, str], int],
+    demos_received: dict[tuple[str, str], int],
+    movement_stats: dict[tuple[str, str], dict[str, float]],
+):
+    for player in all_players:
+        if player.get("bBot"):
+            continue
+        identity = from_player_stats(player)
+        if not identity:
+            continue
+        player_id = player_id_map.get(identity)
+        if player_id is None:
+            continue
         demos = demolitions.get(identity, 0)
         demos_recv = demos_received.get(identity, 0)
         mv = movement_stats.get(identity, {})
-
         conn.execute(
             """
             INSERT INTO match_players (
@@ -393,7 +403,7 @@ def analyze_replay(
     tracked_names = {
         identity: tracked_players[identity]
         for p in tracked
-        if (identity := from_player_stats(p)) and identity in tracked_players
+        if (identity := from_player_stats(p))
     }
 
     return ReplayAnalysis(
@@ -428,9 +438,9 @@ def analyze_replay(
 
 
 def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
-    mvp_player_id = _resolve_mvp_player_id(
-        conn, analysis.tracked_player_stats, analysis.tracked_names
-    )
+    player_id_map = _upsert_players(conn, analysis.all_players, analysis.tracked_names)
+    mvp_identity = _find_mvp_identity(analysis.tracked_player_stats)
+    mvp_player_id = player_id_map.get(mvp_identity) if mvp_identity else None
 
     match_id = _upsert_match(
         conn,
@@ -457,28 +467,15 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
         opponent_boost_stolen=analysis.opponent_boost_stolen,
     )
 
-    all_players = analysis.all_players
-    _upsert_match_players(
+    _insert_match_players(
         conn,
         match_id,
-        all_players,
+        analysis.all_players,
+        player_id_map,
         analysis.demolitions,
         analysis.demos_received,
         analysis.movement_stats,
-        analysis.tracked_names,
     )
-
-    # Build identity -> player_id map (players were just upserted above)
-    player_id_map: dict[tuple[str, str], int] = {}
-    for player in all_players:
-        identity = from_player_stats(player)
-        if identity:
-            row = conn.execute(
-                "SELECT id FROM players WHERE platform = ? AND platform_id = ?",
-                identity,
-            ).fetchone()
-            if row:
-                player_id_map[identity] = row[0]
 
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
     for (
@@ -488,7 +485,7 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
         platform_id,
         ev_team,
     ) in analysis.match_events:
-        player_id = player_id_map.get((platform, platform_id))
+        player_id = player_id_map.get(PlayerIdentity(platform, platform_id))
         if player_id is None:
             continue
         conn.execute(

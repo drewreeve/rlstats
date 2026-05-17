@@ -12,6 +12,7 @@ from ingest import (
     get_or_create_player,
     ingest_match,
 )
+from player_identity import PlayerIdentity
 from tests.fixtures import TRACKED_PLAYERS, cached_db, in_memory_db, load_replay
 
 ALL_FIXTURES = [
@@ -367,7 +368,10 @@ def test_correlate_pairings_basic():
     result = correlate_pairings(events)
     assert result == [
         OffensivePairing(
-            scorer=("steam", "A"), assister=("steam", "B"), game_seconds=10.0, team=0
+            scorer=PlayerIdentity("steam", "A"),
+            assister=PlayerIdentity("steam", "B"),
+            game_seconds=10.0,
+            team=0,
         )
     ]
 
