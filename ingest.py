@@ -109,6 +109,32 @@ def get_or_create_player(
     )
 
 
+def sync_tracked_players(
+    conn: sqlite3.Connection,
+    tracked_players: dict[PlayerIdentity, str],
+) -> None:
+    for identity, name in tracked_players.items():
+        conn.execute(
+            """INSERT INTO players (platform, platform_id, name, is_tracked)
+               VALUES (?, ?, ?, 1)
+               ON CONFLICT(platform, platform_id) DO UPDATE SET
+                 name = excluded.name,
+                 is_tracked = 1""",
+            (identity.platform, identity.platform_id, name),
+        )
+    if tracked_players:
+        placeholders = ",".join("(?,?)" for _ in tracked_players)
+        params = [v for k in tracked_players for v in (k.platform, k.platform_id)]
+        conn.execute(
+            f"""UPDATE players SET is_tracked = 0
+                WHERE is_tracked = 1
+                AND (platform, platform_id) NOT IN ({placeholders})""",
+            params,
+        )
+    else:
+        conn.execute("UPDATE players SET is_tracked = 0 WHERE is_tracked = 1")
+
+
 _SQL_DT_FMT = "%Y-%m-%d %H:%M:%S"
 
 

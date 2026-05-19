@@ -11,7 +11,13 @@ from typing import Any
 import orjson
 
 from config import load_tracked_players
-from ingest import ReplayAnalysis, analyze_replay, ingest_match, write_match
+from ingest import (
+    ReplayAnalysis,
+    analyze_replay,
+    ingest_match,
+    sync_tracked_players,
+    write_match,
+)
 from player_identity import PlayerIdentity
 
 logger = logging.getLogger(__name__)
@@ -192,6 +198,7 @@ def process_unprocessed(
 
     conn = _open_write_conn(db_path)
     try:
+        sync_tracked_players(conn, tracked_players)
         ingested: list[Path] = []
         for path, analysis in zip(replay_paths, results, strict=True):
             if analysis is not None:

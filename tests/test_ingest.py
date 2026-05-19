@@ -12,6 +12,7 @@ from ingest import (
     correlate_pairings,
     get_or_create_player,
     ingest_match,
+    sync_tracked_players,
     validate_replay,
 )
 from player_identity import PlayerIdentity
@@ -954,3 +955,39 @@ def test_validate_replay_draw():
     props["Team0Score"] = 3
     props["Team1Score"] = 3
     assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.DRAW
+
+
+def _fetch_player(
+    conn: sqlite3.Connection, identity: PlayerIdentity
+) -> tuple[str, int] | None:
+    row = conn.execute(
+        "SELECT name, is_tracked FROM players WHERE platform=? AND platform_id=?",
+        (identity.platform, identity.platform_id),
+    ).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def test_sync_tracked_players_creates_missing_player():
+    conn = in_memory_db()
+    identity = PlayerIdentity(platform="steam", platform_id="999")
+    sync_tracked_players(conn, {identity: "NewPlayer"})
+    assert _fetch_player(conn, identity) == ("NewPlayer", 1)
+
+
+def test_sync_tracked_players_removes_stale_tracked_player():
+    conn = in_memory_db()
+    identity = PlayerIdentity(platform="steam", platform_id="999")
+    sync_tracked_players(conn, {identity: "NewPlayer"})
+    sync_tracked_players(conn, {})
+    assert _fetch_player(conn, identity) == ("NewPlayer", 0)
+
+
+def test_sync_tracked_players_promotes_untracked_player():
+    conn = in_memory_db()
+    identity = PlayerIdentity(platform="steam", platform_id="999")
+    conn.execute(
+        "INSERT INTO players (platform, platform_id, name, is_tracked) VALUES (?, ?, ?, 0)",
+        (identity.platform, identity.platform_id, "OldName"),
+    )
+    sync_tracked_players(conn, {identity: "NewName"})
+    assert _fetch_player(conn, identity) == ("NewName", 1)

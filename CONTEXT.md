@@ -21,6 +21,10 @@ A **display name** is the short, human-readable label configured for a tracked p
 preferred over in-game names when writing player records to the DB, to keep graph labels
 concise. They are resolved at analysis time and carried in `ReplayAnalysis.tracked_names`.
 
+## Tracked Player
+
+A **tracked player** is a player explicitly listed in `players.toml`. The config is the sole source of truth for tracked status — the `is_tracked` flag in the `players` table is a derived cache of config state, not an independent record. A player is tracked if and only if they appear in the config; removal from the config means they are no longer tracked, regardless of DB state.
+
 ## Offensive Pairing
 
 An **offensive pairing** is a matched (scorer, assister) pair within a single match: a goal and an assist by different players on the same team, where the assist occurred within `PAIRING_WINDOW` seconds of the goal. Only pairings where both players are tracked are recorded. The pairing algorithm is greedy: for each goal (processed in order), it claims the temporally nearest unclaimed assist within the window.
