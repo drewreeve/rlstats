@@ -12,9 +12,9 @@ SELECT
     m.team,
     m.team_possession_seconds,
     m.opponent_possession_seconds,
-    m.defensive_third_seconds,
-    m.neutral_third_seconds,
-    m.offensive_third_seconds,
+    m.defensive_zone_seconds,
+    m.neutral_zone_seconds,
+    m.offensive_zone_seconds,
     m.team_boost_collected,
     m.opponent_boost_collected,
     m.team_boost_stolen,
@@ -51,7 +51,10 @@ SELECT
     mp.small_pads,
     mp.large_pads,
     mp.stolen_small_pads,
-    mp.stolen_large_pads
+    mp.stolen_large_pads,
+    mp.defensive_zone_seconds,
+    mp.neutral_zone_seconds,
+    mp.offensive_zone_seconds
 FROM match_players mp
 JOIN players p ON mp.player_id = p.id
 WHERE mp.match_id = :match_id

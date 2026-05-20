@@ -11,7 +11,7 @@ frame-loop ordering invariants; these tests cover handler logic.
 from typing import Any
 
 from frame_analysis import (
-    BallThirdsHandler,
+    BallZonesHandler,
     BoostStatsHandler,
     DemolitionsHandler,
     DemosReceivedHandler,
@@ -20,6 +20,7 @@ from frame_analysis import (
     IdentityResolver,
     MatchEventsHandler,
     MovementHandler,
+    PlayerZonesHandler,
     PossessionHandler,
 )
 
@@ -153,7 +154,7 @@ def test_possession_handler_inverts_for_team_1():
     assert fa.opponent_possession_seconds == 6.0  # team 0
 
 
-# -- BallThirdsHandler --
+# -- BallZonesHandler --
 
 
 def _ball_update(actor_id: int, y: float) -> dict[str, Any]:
@@ -164,10 +165,11 @@ def _ball_update(actor_id: int, y: float) -> dict[str, Any]:
     }
 
 
-def test_ball_thirds_handler_ignores_non_ball_actors():
-    h = BallThirdsHandler(RB_OID, tracked_team=0)
+def test_ball_zones_handler_ignores_non_ball_actors():
+    h = BallZonesHandler(RB_OID, tracked_team=0)
     ctx = FrameContext()
     ctx.ball_actors.add(99)
+    ctx.is_playing = True
 
     ctx.frame_time = 0.0
     h.on_update(ctx, _ball_update(actor_id=42, y=-2500.0))  # not in ball_actors
@@ -176,31 +178,211 @@ def test_ball_thirds_handler_ignores_non_ball_actors():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.defensive_third_seconds is None
-    assert fa.neutral_third_seconds is None
-    assert fa.offensive_third_seconds is None
+    assert fa.defensive_zone_seconds is None
+    assert fa.neutral_zone_seconds is None
+    assert fa.offensive_zone_seconds is None
 
 
-def test_ball_thirds_handler_buckets_time_by_zone():
-    h = BallThirdsHandler(RB_OID, tracked_team=0)
+def test_ball_zones_handler_ignores_frames_not_playing():
+    h = BallZonesHandler(RB_OID, tracked_team=0)
     ctx = FrameContext()
     ctx.ball_actors.add(7)
+    ctx.is_playing = False
 
-    # 0.0 .. 3.0 in defensive third (y < -1707 for team 0)
     ctx.frame_time = 0.0
     h.on_update(ctx, _ball_update(7, -2500.0))
-    ctx.frame_time = 3.0
-    h.on_update(ctx, _ball_update(7, 0.0))  # neutral
     ctx.frame_time = 5.0
-    h.on_update(ctx, _ball_update(7, 2500.0))  # offensive
-    ctx.frame_time = 9.0
     h.on_update(ctx, _ball_update(7, 2500.0))
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.defensive_third_seconds == 3.0
-    assert fa.neutral_third_seconds == 2.0
-    assert fa.offensive_third_seconds == 4.0
+    assert fa.defensive_zone_seconds is None
+    assert fa.neutral_zone_seconds is None
+    assert fa.offensive_zone_seconds is None
+
+
+def test_ball_zones_handler_buckets_time_by_zone():
+    h = BallZonesHandler(RB_OID, tracked_team=0)
+    ctx = FrameContext()
+    ctx.ball_actors.add(7)
+    ctx.is_playing = True
+
+    # dt values kept < 2.0s so they pass the cross-period gap threshold
+    ctx.frame_time = 0.0
+    h.on_update(ctx, _ball_update(7, -2500.0))  # defensive (y < -1707 for team 0)
+    ctx.frame_time = 1.5
+    h.on_update(ctx, _ball_update(7, 0.0))  # neutral; 1.5s in defensive
+    ctx.frame_time = 2.5
+    h.on_update(ctx, _ball_update(7, 2500.0))  # offensive; 1.0s in neutral
+    ctx.frame_time = 4.0
+    h.on_update(ctx, _ball_update(7, 2500.0))  # 1.5s in offensive
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.defensive_zone_seconds == 1.5
+    assert fa.neutral_zone_seconds == 1.0
+    assert fa.offensive_zone_seconds == 1.5
+
+
+def test_ball_zones_handler_skips_cross_period_gap():
+    # A dt >= 2.0s between samples means the is_playing gate stopped collecting
+    # (kickoff countdown gap) — that interval must not be counted.
+    h = BallZonesHandler(RB_OID, tracked_team=0)
+    ctx = FrameContext()
+    ctx.ball_actors.add(7)
+    ctx.is_playing = True
+
+    ctx.frame_time = 0.0
+    h.on_update(ctx, _ball_update(7, -2500.0))  # defensive
+    ctx.frame_time = 1.0
+    h.on_update(ctx, _ball_update(7, -2500.0))  # 1.0s in defensive
+    # Simulated kickoff gap: no sample at t=1.0 to t=4.0 (is_playing was False)
+    ctx.frame_time = 4.0
+    h.on_update(ctx, _ball_update(7, 2500.0))  # gap dt=3.0 → skipped; now offensive
+    ctx.frame_time = 5.0
+    h.on_update(ctx, _ball_update(7, 2500.0))  # 1.0s in offensive
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.defensive_zone_seconds == 1.0
+    assert fa.offensive_zone_seconds == 1.0
+    # The 3s kickoff gap is NOT counted anywhere
+    assert (fa.defensive_zone_seconds or 0) + (fa.neutral_zone_seconds or 0) + (
+        fa.offensive_zone_seconds or 0
+    ) == 2.0
+
+
+# -- PlayerZonesHandler --
+
+
+def _car_rb_update(actor_id: int, y: float) -> dict[str, Any]:
+    return {
+        "actor_id": actor_id,
+        "object_id": RB_OID,
+        "attribute": {"RigidBody": {"location": {"x": 0.0, "y": y, "z": 0.0}}},
+    }
+
+
+def test_player_zones_handler_ignores_non_car_actors():
+    h = PlayerZonesHandler(RB_OID, tracked_team=0)
+    ctx = FrameContext()
+    ctx.car_actors.add(10)
+    ctx.is_playing = True
+
+    ctx.frame_time = 0.0
+    h.on_update(ctx, _car_rb_update(actor_id=99, y=-2500.0))  # not in car_actors
+    ctx.frame_time = 5.0
+    h.on_update(ctx, _car_rb_update(actor_id=99, y=2500.0))
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.player_zone_seconds == {}
+
+
+def test_player_zones_handler_ignores_frames_not_playing():
+    h = PlayerZonesHandler(RB_OID, tracked_team=0)
+    ctx = FrameContext()
+    ctx.car_actors.add(10)
+    ctx.resolver.set_identity(20, "steam", "AAA")
+    ctx.resolver.link_car_to_pri(10, 20)
+    ctx.is_playing = False
+
+    ctx.frame_time = 0.0
+    h.on_update(ctx, _car_rb_update(10, -2500.0))
+    ctx.frame_time = 5.0
+    h.on_update(ctx, _car_rb_update(10, 2500.0))
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.player_zone_seconds == {}
+
+
+def test_player_zones_handler_buckets_time_team0():
+    h = PlayerZonesHandler(RB_OID, tracked_team=0)
+    ctx = FrameContext()
+    ctx.car_actors.add(10)
+    ctx.resolver.set_identity(20, "steam", "AAA")
+    ctx.resolver.link_car_to_pri(10, 20)
+    ctx.is_playing = True
+
+    # dt values kept < 2.0s so they pass the cross-period gap threshold
+    ctx.frame_time = 0.0
+    h.on_update(ctx, _car_rb_update(10, -2500.0))  # defensive
+    ctx.frame_time = 1.5
+    h.on_update(ctx, _car_rb_update(10, 0.0))  # neutral; 1.5s defensive
+    ctx.frame_time = 2.5
+    h.on_update(ctx, _car_rb_update(10, 2500.0))  # offensive; 1.0s neutral
+    ctx.frame_time = 4.0
+    h.on_update(ctx, _car_rb_update(10, 2500.0))  # 1.5s offensive
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    zones = fa.player_zone_seconds[("steam", "AAA")]
+    assert zones["defensive"] == 1.5
+    assert zones["neutral"] == 1.0
+    assert zones["offensive"] == 1.5
+
+
+def test_player_zones_handler_reversed_for_team1():
+    h = PlayerZonesHandler(RB_OID, tracked_team=1)
+    ctx = FrameContext()
+    ctx.car_actors.add(10)
+    ctx.resolver.set_identity(20, "steam", "BBB")
+    ctx.resolver.link_car_to_pri(10, 20)
+    ctx.is_playing = True
+
+    # For team 1: y > 1707 is defensive, y < -1707 is offensive
+    # dt values kept < 2.0s
+    ctx.frame_time = 0.0
+    h.on_update(ctx, _car_rb_update(10, 2500.0))  # defensive for team 1
+    ctx.frame_time = 1.5
+    h.on_update(
+        ctx, _car_rb_update(10, -2500.0)
+    )  # offensive for team 1; 1.5s defensive
+    ctx.frame_time = 3.0
+    h.on_update(ctx, _car_rb_update(10, -2500.0))  # 1.5s offensive
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    zones = fa.player_zone_seconds[("steam", "BBB")]
+    assert zones["defensive"] == 1.5
+    assert zones["offensive"] == 1.5
+    assert zones["neutral"] == 0.0
+
+
+def test_player_zones_handler_accumulates_across_respawn():
+    h = PlayerZonesHandler(RB_OID, tracked_team=0)
+    ctx = FrameContext()
+    ctx.resolver.set_identity(20, "steam", "AAA")
+
+    # First life: car_id=10, two samples 1.5s apart in defensive zone
+    ctx.car_actors.add(10)
+    ctx.resolver.link_car_to_pri(10, 20)
+    ctx.is_playing = True
+    ctx.frame_time = 0.0
+    h.on_update(ctx, _car_rb_update(10, -2500.0))
+    ctx.frame_time = 1.5
+    h.on_update(ctx, _car_rb_update(10, -2500.0))  # 1.5s defensive
+
+    # Car deleted (demo'd), re-spawns as car_id=11
+    h.on_deleted_actor(ctx, 10)
+    ctx.car_actors.discard(10)
+    ctx.resolver.remove_actor(10)
+
+    # Second life: two samples 1.5s apart in offensive zone
+    ctx.car_actors.add(11)
+    ctx.resolver.link_car_to_pri(11, 20)
+    ctx.frame_time = 5.0
+    h.on_update(ctx, _car_rb_update(11, 2500.0))  # offensive
+    ctx.frame_time = 6.5
+    h.on_update(ctx, _car_rb_update(11, 2500.0))  # 1.5s offensive
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    zones = fa.player_zone_seconds[("steam", "AAA")]
+    assert zones["defensive"] == 1.5
+    assert zones["offensive"] == 1.5
+    assert zones["neutral"] == 0.0
 
 
 # -- DemolitionsHandler --

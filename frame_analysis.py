@@ -102,9 +102,9 @@ class IdentityResolver:
 class FrameAnalysis:
     team_possession_seconds: float | None = None
     opponent_possession_seconds: float | None = None
-    defensive_third_seconds: float | None = None
-    neutral_third_seconds: float | None = None
-    offensive_third_seconds: float | None = None
+    defensive_zone_seconds: float | None = None
+    neutral_zone_seconds: float | None = None
+    offensive_zone_seconds: float | None = None
     demolitions: dict[tuple[str, str], int] = field(
         default_factory=dict[tuple[str, str], int]
     )
@@ -120,6 +120,9 @@ class FrameAnalysis:
     )
     match_events: list[tuple[str, float, str, str, int]] = field(
         default_factory=list[tuple[str, float, str, str, int]]
+    )
+    player_zone_seconds: dict[tuple[str, str], dict[str, float]] = field(
+        default_factory=dict[tuple[str, str], dict[str, float]]
     )
 
 
@@ -291,13 +294,16 @@ class PossessionHandler(FrameHandler):
         result.opponent_possession_seconds = round(opp_poss, 2)
 
 
-class BallThirdsHandler(FrameHandler):
-    """Tracks time the ball spent in each third of the field."""
+_ZONE_BOUNDARY = 1707  # field is ±5120 uu from center; one zone ≈ 5120 / 3
+
+
+class BallZonesHandler(FrameHandler):
+    """Tracks time the ball spent in each zone of the field."""
 
     @classmethod
     def create(
         cls, obj_ids: dict[str, int | None], tracked_team: int | None
-    ) -> "BallThirdsHandler | None":
+    ) -> "BallZonesHandler | None":
         if tracked_team is None:
             return None
         rb_obj_id = obj_ids.get("TAGame.RBActor_TA:ReplicatedRBState")
@@ -312,6 +318,8 @@ class BallThirdsHandler(FrameHandler):
         self.samples: list[tuple[float, float]] = []
 
     def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+        if not ctx.is_playing:
+            return
         if actor["actor_id"] not in ctx.ball_actors:
             return
         loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
@@ -322,15 +330,16 @@ class BallThirdsHandler(FrameHandler):
         if len(self.samples) < 2:
             return
 
-        THIRD_BOUNDARY = 1707  # field is ±5120 uu from center; one third ≈ 5120 / 3
         zones = {"negative": 0.0, "neutral": 0.0, "positive": 0.0}
         for (t_start, y), (t_end, _) in pairwise(self.samples):
             dt = t_end - t_start
-            if dt <= 0:
+            # Skip large gaps: kickoff countdowns (~3s) and any replay pauses appear
+            # as gaps here because is_playing-gated sample collection stops during them.
+            if not 0 < dt < 2.0:
                 continue
-            if y < -THIRD_BOUNDARY:
+            if y < -_ZONE_BOUNDARY:
                 zones["negative"] += dt
-            elif y > THIRD_BOUNDARY:
+            elif y > _ZONE_BOUNDARY:
                 zones["positive"] += dt
             else:
                 zones["neutral"] += dt
@@ -342,9 +351,86 @@ class BallThirdsHandler(FrameHandler):
             defensive = zones["positive"]
             offensive = zones["negative"]
 
-        result.defensive_third_seconds = round(defensive, 2)
-        result.neutral_third_seconds = round(zones["neutral"], 2)
-        result.offensive_third_seconds = round(offensive, 2)
+        result.defensive_zone_seconds = round(defensive, 2)
+        result.neutral_zone_seconds = round(zones["neutral"], 2)
+        result.offensive_zone_seconds = round(offensive, 2)
+
+
+class PlayerZonesHandler(FrameHandler):
+    """Tracks time each player spent in each zone of the field."""
+
+    @classmethod
+    def create(
+        cls, obj_ids: dict[str, int | None], tracked_team: int | None
+    ) -> "PlayerZonesHandler | None":
+        if tracked_team is None:
+            return None
+        rb_obj_id = obj_ids.get("TAGame.RBActor_TA:ReplicatedRBState")
+        if rb_obj_id is None:
+            return None
+        return cls(rb_obj_id, tracked_team)
+
+    def __init__(self, rb_obj_id: int, tracked_team: int) -> None:
+        self.update_obj_ids = frozenset({rb_obj_id})
+        self.tracked_team = tracked_team
+        self.car_samples: dict[int, list[tuple[float, float]]] = {}
+        self.identity_zone_times: dict[tuple[str, str], dict[str, float]] = {}
+
+    def _accumulate(
+        self, identity: tuple[str, str], samples: list[tuple[float, float]]
+    ) -> None:
+        zones = self.identity_zone_times.setdefault(
+            identity, {"defensive": 0.0, "neutral": 0.0, "offensive": 0.0}
+        )
+        for (t_start, y), (t_end, _) in pairwise(samples):
+            dt = t_end - t_start
+            # Skip large gaps: kickoff countdowns (~3s) appear as gaps because
+            # is_playing-gated collection stops during them.
+            if not 0 < dt < 2.0:
+                continue
+            if self.tracked_team == 0:
+                if y < -_ZONE_BOUNDARY:
+                    zones["defensive"] += dt
+                elif y > _ZONE_BOUNDARY:
+                    zones["offensive"] += dt
+                else:
+                    zones["neutral"] += dt
+            else:
+                if y > _ZONE_BOUNDARY:
+                    zones["defensive"] += dt
+                elif y < -_ZONE_BOUNDARY:
+                    zones["offensive"] += dt
+                else:
+                    zones["neutral"] += dt
+
+    def _flush_car(self, ctx: FrameContext, car_id: int) -> None:
+        samples = self.car_samples.pop(car_id, None)
+        if not samples:
+            return
+        identity = ctx.resolver.resolve_car(car_id)
+        if identity:
+            self._accumulate(identity, samples)
+
+    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+        if not ctx.is_playing:
+            return
+        aid = actor["actor_id"]
+        if aid not in ctx.car_actors:
+            return
+        loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
+        if loc and "y" in loc:
+            self.car_samples.setdefault(aid, []).append((ctx.frame_time, loc["y"]))
+
+    def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
+        self._flush_car(ctx, aid)
+
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
+        for car_id in list(self.car_samples):
+            self._flush_car(ctx, car_id)
+        result.player_zone_seconds = {
+            identity: {k: round(v, 2) for k, v in zones.items()}
+            for identity, zones in self.identity_zone_times.items()
+        }
 
 
 class DemolitionsHandler(FrameHandler):
@@ -842,7 +928,8 @@ def analyze_frames(
         h
         for h in [
             PossessionHandler.create(obj_ids, tracked_team),
-            BallThirdsHandler.create(obj_ids, tracked_team),
+            BallZonesHandler.create(obj_ids, tracked_team),
+            PlayerZonesHandler.create(obj_ids, tracked_team),
             DemolitionsHandler.create(obj_ids),
             BoostStatsHandler.create(obj_ids, tracked_team, big_pads),
             MovementHandler.create(obj_ids, duration, big_pads),

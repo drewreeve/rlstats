@@ -234,12 +234,12 @@ def test_demos_received_stored_in_match_players():
     assert recv_counts["BLM_SCAM"] == 0
 
 
-def test_ball_thirds_tracking():
+def test_ball_zones_tracking():
     conn = ingest_fixture("match.json")
     row = conn.execute(
-        "SELECT defensive_third_seconds, neutral_third_seconds, offensive_third_seconds FROM matches"
+        "SELECT defensive_zone_seconds, neutral_zone_seconds, offensive_zone_seconds, duration_seconds FROM matches"
     ).fetchone()
-    def_s, neu_s, off_s = row
+    def_s, neu_s, off_s, duration = row
 
     assert def_s is not None
     assert neu_s is not None
@@ -250,19 +250,22 @@ def test_ball_thirds_tracking():
     assert neu_s > 0
     assert off_s > 0
 
-    # Total should be in a tighter range for a ~5-minute match
+    # Total ball zone time should closely track match duration: the ball is
+    # always in some zone during play, and kickoff dead time is excluded via
+    # the is_playing gate + dt threshold. A large deviation here indicates
+    # the gate is broken (e.g. counting pre/post-match frame time).
     total = def_s + neu_s + off_s
-    assert 200 < total < 450
+    assert abs(total - duration) / duration < 0.05
 
-    # No single zone should implausibly dominate (>90% of total)
-    assert def_s < total * 0.9
-    assert neu_s < total * 0.9
-    assert off_s < total * 0.9
+    # No single zone should implausibly dominate (>80% of total)
+    assert def_s < total * 0.8
+    assert neu_s < total * 0.8
+    assert off_s < total * 0.8
 
 
-def test_ball_thirds_none_without_network_data(conn_no_network: sqlite3.Connection):
+def test_ball_zones_none_without_network_data(conn_no_network: sqlite3.Connection):
     row = conn_no_network.execute(
-        "SELECT defensive_third_seconds, neutral_third_seconds, offensive_third_seconds FROM matches"
+        "SELECT defensive_zone_seconds, neutral_zone_seconds, offensive_zone_seconds FROM matches"
     ).fetchone()
     assert row == (None, None, None)
 

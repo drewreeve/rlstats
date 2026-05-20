@@ -25,6 +25,18 @@ concise. They are resolved at analysis time and carried in `ReplayAnalysis.track
 
 A **tracked player** is a player explicitly listed in `players.toml`. The config is the sole source of truth for tracked status — the `is_tracked` flag in the `players` table is a derived cache of config state, not an independent record. A player is tracked if and only if they appear in the config; removal from the config means they are no longer tracked, regardless of DB state.
 
+## Zone
+
+A **zone** is one of three longitudinal regions of the Rocket League pitch, divided at ±1707 units along the y-axis (one-third of ±5120 uu). Zones are named from the perspective of the tracked team:
+
+- **Defensive zone** — the third containing the tracked team's own goal.
+- **Neutral zone** — the middle third.
+- **Offensive zone** — the third containing the opponent's goal.
+
+Zone membership is determined by y-coordinate: for team 0, the defensive zone is y < −1707 and the offensive zone is y > +1707; for team 1, the mapping is reversed.
+
+Zone time is tracked both for the ball (on `matches`) and per-player (on `match_players`), measured in seconds.
+
 ## Offensive Pairing
 
 An **offensive pairing** is a matched (scorer, assister) pair within a single match: a goal and an assist by different players on the same team, where the assist occurred within `PAIRING_WINDOW` seconds of the goal. Only pairings where both players are tracked are recorded. The pairing algorithm is greedy: for each goal (processed in order), it claims the temporally nearest unclaimed assist within the window.

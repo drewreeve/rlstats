@@ -221,7 +221,7 @@ def _upsert_match(
             team, team_score, opponent_score, result, team_mvp_player_id,
             map_name, game_mode,
             team_possession_seconds, opponent_possession_seconds,
-            defensive_third_seconds, neutral_third_seconds, offensive_third_seconds,
+            defensive_zone_seconds, neutral_zone_seconds, offensive_zone_seconds,
             team_boost_collected, opponent_boost_collected,
             team_boost_stolen, opponent_boost_stolen
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -239,9 +239,9 @@ def _upsert_match(
             game_mode = excluded.game_mode,
             team_possession_seconds = excluded.team_possession_seconds,
             opponent_possession_seconds = excluded.opponent_possession_seconds,
-            defensive_third_seconds = excluded.defensive_third_seconds,
-            neutral_third_seconds = excluded.neutral_third_seconds,
-            offensive_third_seconds = excluded.offensive_third_seconds,
+            defensive_zone_seconds = excluded.defensive_zone_seconds,
+            neutral_zone_seconds = excluded.neutral_zone_seconds,
+            offensive_zone_seconds = excluded.offensive_zone_seconds,
             team_boost_collected = excluded.team_boost_collected,
             opponent_boost_collected = excluded.opponent_boost_collected,
             team_boost_stolen = excluded.team_boost_stolen,
@@ -263,9 +263,9 @@ def _upsert_match(
                 game_mode,
                 fa.team_possession_seconds,
                 fa.opponent_possession_seconds,
-                fa.defensive_third_seconds,
-                fa.neutral_third_seconds,
-                fa.offensive_third_seconds,
+                fa.defensive_zone_seconds,
+                fa.neutral_zone_seconds,
+                fa.offensive_zone_seconds,
                 fa.team_boost_collected,
                 fa.opponent_boost_collected,
                 fa.team_boost_stolen,
@@ -307,14 +307,16 @@ def _insert_match_players(
         demos = frame_analysis.demolitions.get(identity, 0)
         demos_recv = frame_analysis.demos_received.get(identity, 0)
         mv = frame_analysis.movement_stats.get(identity, {})
+        pz = frame_analysis.player_zone_seconds.get(identity, {})
         conn.execute(
             """
             INSERT INTO match_players (
                 match_id, player_id, team,
                 goals, assists, saves, shots, score, demos, demos_received,
                 boost_per_minute, avg_speed, time_supersonic_pct,
-                small_pads, large_pads, stolen_small_pads, stolen_large_pads
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                small_pads, large_pads, stolen_small_pads, stolen_large_pads,
+                defensive_zone_seconds, neutral_zone_seconds, offensive_zone_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id, player_id) DO UPDATE SET
                 team = excluded.team,
                 goals = excluded.goals,
@@ -330,7 +332,10 @@ def _insert_match_players(
                 small_pads = excluded.small_pads,
                 large_pads = excluded.large_pads,
                 stolen_small_pads = excluded.stolen_small_pads,
-                stolen_large_pads = excluded.stolen_large_pads
+                stolen_large_pads = excluded.stolen_large_pads,
+                defensive_zone_seconds = excluded.defensive_zone_seconds,
+                neutral_zone_seconds = excluded.neutral_zone_seconds,
+                offensive_zone_seconds = excluded.offensive_zone_seconds
             """,
             (
                 match_id,
@@ -350,6 +355,9 @@ def _insert_match_players(
                 mv.get("large_pads"),
                 mv.get("stolen_small_pads"),
                 mv.get("stolen_large_pads"),
+                pz.get("defensive"),
+                pz.get("neutral"),
+                pz.get("offensive"),
             ),
         )
 
