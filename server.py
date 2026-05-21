@@ -521,6 +521,9 @@ def create_app(
                 "avg_supersonic_pct": None,
                 "avg_demos": None,
                 "avg_demos_received": None,
+                "avg_defensive_zone_seconds": None,
+                "avg_neutral_zone_seconds": None,
+                "avg_offensive_zone_seconds": None,
             }
         return dict(row)
 

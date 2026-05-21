@@ -219,6 +219,16 @@ function renderBoostSpeedCard(career) {
     career.avg_supersonic_pct != null ? career.avg_supersonic_pct + "%" : "—";
 }
 
+function renderZoneCard(career) {
+  const el = document.getElementById("player-zone-display");
+  if (!el) return;
+  const { avg_defensive_zone_seconds: d, avg_neutral_zone_seconds: n, avg_offensive_zone_seconds: o } = career;
+  el.innerHTML =
+    d != null && n != null && o != null
+      ? pitchDiagram(d, n, o)
+      : '<p style="padding:1rem;color:var(--text-dim)">—</p>';
+}
+
 async function renderAll() {
   destroyCharts();
 
@@ -230,6 +240,7 @@ async function renderAll() {
   renderCareerBar(career);
   renderDemosCard(career);
   renderBoostSpeedCard(career);
+  renderZoneCard(career);
   renderGAS(timeSeries);
   renderAvgScore(timeSeries);
   renderMVP(timeSeries);

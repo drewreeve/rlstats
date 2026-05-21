@@ -38,7 +38,10 @@ SELECT
     ROUND(AVG(mp.boost_per_minute), 1) AS avg_boost_per_minute,
     ROUND(AVG(mp.time_supersonic_pct), 1) AS avg_supersonic_pct,
     ROUND(AVG(CAST(mp.demos AS REAL)), 2) AS avg_demos,
-    ROUND(AVG(CAST(mp.demos_received AS REAL)), 2) AS avg_demos_received
+    ROUND(AVG(CAST(mp.demos_received AS REAL)), 2) AS avg_demos_received,
+    ROUND(AVG(mp.defensive_zone_seconds), 1) AS avg_defensive_zone_seconds,
+    ROUND(AVG(mp.neutral_zone_seconds), 1) AS avg_neutral_zone_seconds,
+    ROUND(AVG(mp.offensive_zone_seconds), 1) AS avg_offensive_zone_seconds
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id
 JOIN matches m ON m.id = mp.match_id
