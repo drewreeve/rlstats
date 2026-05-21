@@ -14,7 +14,6 @@ from config import load_tracked_players
 from ingest import (
     ReplayAnalysis,
     analyze_replay,
-    ingest_match,
     sync_tracked_players,
     write_match,
 )
@@ -79,8 +78,12 @@ def process_replay(
     if replay is None:
         return False, error
 
+    analysis = analyze_replay(replay, tracked_players)
+    if analysis is None:
+        return False, "Replay skipped: no tracked players or missing data"
+
     try:
-        ingest_match(conn, replay, tracked_players)
+        write_match(conn, analysis)
     except Exception as exc:
         msg = f"Ingest failed: {exc}"
         logger.warning("Ingest failed for %s: %s", replay_path.name, exc)

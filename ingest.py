@@ -527,14 +527,3 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
                 "INSERT INTO offensive_pairings (match_id, game_seconds, scorer_player_id, assister_player_id, team) VALUES (?, ?, ?, ?, ?)",
                 (match_id, p.game_seconds, scorer_id, assister_id, p.team),
             )
-
-
-def ingest_match(
-    conn: sqlite3.Connection,
-    replay: dict[str, Any],
-    tracked_players: dict[PlayerIdentity, str],
-):
-    analysis = analyze_replay(replay, tracked_players)
-    if analysis is None:
-        raise ValueError("Replay could not be analyzed")
-    write_match(conn, analysis)

@@ -11,9 +11,9 @@ from ingest import (
     analyze_replay,
     correlate_pairings,
     get_or_create_player,
-    ingest_match,
     sync_tracked_players,
     validate_replay,
+    write_match,
 )
 from player_identity import PlayerIdentity
 from tests.fixtures import TRACKED_PLAYERS, cached_db, in_memory_db, load_replay
@@ -36,7 +36,9 @@ def conn_no_network() -> sqlite3.Connection:
     conn = in_memory_db()
     replay = load_replay("match.json")
     replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
-    ingest_match(conn, replay, TRACKED_PLAYERS)
+    analysis = analyze_replay(replay, TRACKED_PLAYERS)
+    assert analysis is not None
+    write_match(conn, analysis)
     return conn
 
 
@@ -353,9 +355,11 @@ def test_offensive_pairings_only_tracked_players():
 def test_offensive_pairings_idempotent():
     conn = in_memory_db()
     replay = load_replay("match.json")
-    ingest_match(conn, replay, TRACKED_PLAYERS)
+    analysis = analyze_replay(replay, TRACKED_PLAYERS)
+    assert analysis is not None
+    write_match(conn, analysis)
     count1 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
-    ingest_match(conn, replay, TRACKED_PLAYERS)
+    write_match(conn, analysis)
     count2 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
     assert count1 == count2
 

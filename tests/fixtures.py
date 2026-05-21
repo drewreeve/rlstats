@@ -5,7 +5,7 @@ from pathlib import Path
 
 from config import load_settings
 from db import apply_migrations
-from ingest import ingest_match
+from ingest import analyze_replay, write_match
 
 TEST_DATA_DIR = Path(__file__).parent / "data"
 
@@ -31,7 +31,9 @@ def _cached_ingested_db(replay_names: tuple[str, ...]) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     apply_migrations(conn)
     for name in replay_names:
-        ingest_match(conn, load_replay(name), TRACKED_PLAYERS)
+        analysis = analyze_replay(load_replay(name), TRACKED_PLAYERS)
+        assert analysis is not None
+        write_match(conn, analysis)
     conn.commit()
     return conn
 

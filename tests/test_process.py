@@ -4,7 +4,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from process import UploadProcessor, parse_replay, process_batch, process_replay
 from tests.fixtures import TRACKED_PLAYERS, file_db, in_memory_db, load_replay
@@ -85,10 +85,10 @@ def test_process_replay_ingest_failure(tmp_path: Path):
         stdout = b'{"properties": {}}'
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
-    # Force ingest_match to raise
     with (
         patch("process.subprocess.run", side_effect=fake_rrrocket),
-        patch("process.ingest_match", side_effect=RuntimeError("ingest broke")),
+        patch("process.analyze_replay", return_value=MagicMock()),
+        patch("process.write_match", side_effect=RuntimeError("ingest broke")),
     ):
         success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
 
