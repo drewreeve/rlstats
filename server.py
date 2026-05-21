@@ -18,10 +18,31 @@ from starlette.middleware.sessions import SessionMiddleware
 import config
 from db import apply_migrations, queries
 from process import UploadProcessor, process_unprocessed
-from replay_validator import secure_filename
-from replay_validator import validate as validate_replay
 
 logger = logging.getLogger(__name__)
+
+_SECURE_RE = re.compile(r"[^\w.-]")
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+def secure_filename(filename: str) -> str:
+    name = os.path.basename(filename)
+    name = _SECURE_RE.sub("_", name)
+    name = name.lstrip(".")
+    return name
+
+
+def validate_upload(filename: str, size: int) -> tuple[str, str | None, int]:
+    """Validate a replay upload. Returns (safe_name, error, status_code)."""
+    if not filename or not filename.lower().endswith(".replay"):
+        return "", "Only .replay files are accepted", 400
+    safe_name = secure_filename(filename)
+    if not safe_name.lower().endswith(".replay") or safe_name == ".replay":
+        return "", "Invalid filename", 400
+    if size > MAX_UPLOAD_BYTES:
+        return "", "File too large (maximum 5MB)", 413
+    return safe_name, None, 200
+
 
 DB_PATH = Path("db/rl_stats.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -352,7 +373,7 @@ def create_app(
         if file is None:
             return JSONResponse({"error": "No file provided"}, status_code=400)
         content = await file.read()
-        safe_name, error, status_code = validate_replay(
+        safe_name, error, status_code = validate_upload(
             file.filename or "", len(content)
         )
         if error:
