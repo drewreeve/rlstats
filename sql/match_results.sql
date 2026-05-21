@@ -184,7 +184,7 @@ SELECT
 FROM islands;
 
 -- name: goal_events_for_mode(game_mode)
--- All goal events with match context for Python lead-duration computation.
+-- Raw goal events per match, used for debugging and downstream analysis.
 SELECT
     e.match_id,
     e.game_seconds,
@@ -195,3 +195,59 @@ JOIN matches m ON m.id = e.match_id
 WHERE e.event_type = 'goal'
   AND m.game_mode = :game_mode
 ORDER BY e.match_id, e.game_seconds;
+
+-- name: goal_timing(game_mode)
+-- Avg seconds to concede after scoring, and avg duration we hold the lead per lead period.
+WITH events AS (
+    SELECT
+        e.match_id,
+        e.game_seconds,
+        (e.team = m.team) AS is_ours,
+        m.duration_seconds,
+        SUM(CASE WHEN e.team = m.team THEN 1 ELSE 0 END)
+            OVER (PARTITION BY e.match_id ORDER BY e.game_seconds
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS our_score,
+        SUM(CASE WHEN e.team != m.team THEN 1 ELSE 0 END)
+            OVER (PARTITION BY e.match_id ORDER BY e.game_seconds
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS opp_score
+    FROM match_events e
+    JOIN matches m ON m.id = e.match_id
+    WHERE e.event_type = 'goal'
+      AND m.game_mode = :game_mode
+),
+scored AS (
+    SELECT *,
+        LAG(game_seconds) OVER (PARTITION BY match_id ORDER BY game_seconds) AS prev_time,
+        LAG(is_ours)      OVER (PARTITION BY match_id ORDER BY game_seconds) AS prev_is_ours,
+        LAG(our_score > opp_score, 1, 0)
+                          OVER (PARTITION BY match_id ORDER BY game_seconds) AS was_leading,
+        (our_score > opp_score) AS is_leading
+    FROM events
+),
+concede_delays AS (
+    SELECT AVG(CAST(game_seconds - prev_time AS REAL)) AS avg_concede_delay
+    FROM scored
+    WHERE is_ours = 0 AND prev_is_ours = 1
+),
+lead_starts AS (
+    SELECT match_id, game_seconds AS start_time, duration_seconds,
+           ROW_NUMBER() OVER (PARTITION BY match_id ORDER BY game_seconds) AS rn
+    FROM scored
+    WHERE is_leading = 1 AND was_leading = 0
+),
+lead_ends AS (
+    SELECT match_id, game_seconds AS end_time,
+           ROW_NUMBER() OVER (PARTITION BY match_id ORDER BY game_seconds) AS rn
+    FROM scored
+    WHERE is_leading = 0 AND was_leading = 1
+),
+lead_durations AS (
+    SELECT AVG(CAST(COALESCE(e.end_time, s.duration_seconds) - s.start_time AS REAL))
+               AS avg_lead_duration
+    FROM lead_starts s
+    LEFT JOIN lead_ends e ON s.match_id = e.match_id AND e.rn = s.rn
+)
+SELECT
+    concede_delays.avg_concede_delay,
+    lead_durations.avg_lead_duration
+FROM concede_delays, lead_durations;

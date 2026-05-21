@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from db import queries
-from tests.fixtures import cached_db
+from tests.fixtures import cached_db, in_memory_db
 
 
 def _all_modes_db():
@@ -619,3 +619,147 @@ def test_goal_events_for_mode_empty_for_missing_mode():
     conn = _match_db()
     events = list(queries.goal_events_for_mode(conn, game_mode="2v2"))
     assert events == []
+
+
+# -- goal_timing --
+
+
+def _goal_timing_db(match_specs: list[dict[str, Any]]) -> sqlite3.Connection:
+    """Build an in-memory DB with specific matches and goal events."""
+    conn = in_memory_db()
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "INSERT INTO players (platform, platform_id, name) VALUES (?,?,?)",
+        ("steam", "test-player", "Tester"),
+    )
+    player_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    for i, spec in enumerate(match_specs):
+        team = spec.get("team", 0)
+        conn.execute(
+            "INSERT INTO matches"
+            " (replay_hash, played_at, team, game_mode, result,"
+            "  team_score, opponent_score, duration_seconds, forfeit)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                f"hash-{i}",
+                "2024-01-01",
+                team,
+                spec["game_mode"],
+                "win",
+                1,
+                0,
+                spec["duration"],
+                0,
+            ),
+        )
+        match_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for g in spec["goals"]:
+            ev_team = team if g["is_ours"] else (1 - team)
+            conn.execute(
+                "INSERT INTO match_events"
+                " (match_id, event_type, game_seconds, player_id, team)"
+                " VALUES (?,?,?,?,?)",
+                (match_id, "goal", g["time"], player_id, ev_team),
+            )
+    conn.commit()
+    return conn
+
+
+def test_goal_timing_basic():
+    # our@60, opp@120, our@180, opp@300 → avg_concede=90, avg_lead=90
+    conn = _goal_timing_db(
+        [
+            {
+                "game_mode": "3v3",
+                "duration": 330,
+                "goals": [
+                    {"time": 60, "is_ours": True},
+                    {"time": 120, "is_ours": False},
+                    {"time": 180, "is_ours": True},
+                    {"time": 300, "is_ours": False},
+                ],
+            }
+        ]
+    )
+    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    assert row["avg_concede_delay"] == 90.0
+    assert row["avg_lead_duration"] == 90.0
+
+
+def test_goal_timing_hold_to_end():
+    # score at 60, match ends at 180 → lead=120s, no concede
+    conn = _goal_timing_db(
+        [
+            {
+                "game_mode": "3v3",
+                "duration": 180,
+                "goals": [{"time": 60, "is_ours": True}],
+            }
+        ]
+    )
+    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    assert row["avg_concede_delay"] is None
+    assert row["avg_lead_duration"] == 120.0
+
+
+def test_goal_timing_no_lead():
+    # only opponent scored
+    conn = _goal_timing_db(
+        [
+            {
+                "game_mode": "3v3",
+                "duration": 180,
+                "goals": [{"time": 60, "is_ours": False}],
+            }
+        ]
+    )
+    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    assert row["avg_concede_delay"] is None
+    assert row["avg_lead_duration"] is None
+
+
+def test_goal_timing_no_events():
+    conn = _goal_timing_db([])
+    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    assert row["avg_concede_delay"] is None
+    assert row["avg_lead_duration"] is None
+
+
+def test_goal_timing_multiple_matches():
+    # Match 1: our@0, opp@60 → lead=60s, concede=60s
+    # Match 2: our@30, end=120 → lead=90s, no concede
+    # avg_lead=(60+90)/2=75, avg_concede=60
+    conn = _goal_timing_db(
+        [
+            {
+                "game_mode": "3v3",
+                "duration": 180,
+                "goals": [{"time": 0, "is_ours": True}, {"time": 60, "is_ours": False}],
+            },
+            {
+                "game_mode": "3v3",
+                "duration": 120,
+                "goals": [{"time": 30, "is_ours": True}],
+            },
+        ]
+    )
+    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    assert row["avg_concede_delay"] == 60.0
+    assert row["avg_lead_duration"] == 75.0
+
+
+def test_goal_timing_fixture_returns_values():
+    # Smoke test: real match data gives positive values
+    conn = _match_db()
+    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    assert row["avg_concede_delay"] is not None
+    assert row["avg_lead_duration"] is not None
+    assert row["avg_concede_delay"] > 0
+    assert row["avg_lead_duration"] > 0
+
+
+def test_goal_timing_missing_mode_returns_nulls():
+    conn = _match_db()
+    row = dict(next(queries.goal_timing(conn, game_mode="hoops")))
+    assert row["avg_concede_delay"] is None
+    assert row["avg_lead_duration"] is None

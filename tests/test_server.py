@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 from server import (
     STAT_ROUTES,
-    compute_goal_timing,
     create_app,
     query_match_players,
     query_matches,
@@ -289,60 +288,3 @@ def test_match_players_include_is_tracked(match_client: TestClient) -> None:
     data: Any = response.json()
     for player in data["team_players"] + data["opponent_players"]:
         assert "is_tracked" in player
-
-
-# -- compute_goal_timing --
-
-
-def test_compute_goal_timing_basic() -> None:
-    # our@60, opp@120, our@180, opp@300
-    # concede delays: 60-120=60s, 180-300=120s → avg=90s
-    # lead intervals: 60-120=60s, 180-300=120s → avg=90s
-    events = [
-        {"match_id": 1, "game_seconds": 60, "is_ours": 1, "duration_seconds": 330},
-        {"match_id": 1, "game_seconds": 120, "is_ours": 0, "duration_seconds": 330},
-        {"match_id": 1, "game_seconds": 180, "is_ours": 1, "duration_seconds": 330},
-        {"match_id": 1, "game_seconds": 300, "is_ours": 0, "duration_seconds": 330},
-    ]
-    avg_concede, avg_lead = compute_goal_timing(events)
-    assert avg_concede == 90.0
-    assert avg_lead == 90.0
-
-
-def test_compute_goal_timing_hold_to_end() -> None:
-    # we score at 60s, match ends at 180s → lead = 120s, no concede
-    events = [
-        {"match_id": 1, "game_seconds": 60, "is_ours": 1, "duration_seconds": 180},
-    ]
-    avg_concede, avg_lead = compute_goal_timing(events)
-    assert avg_concede is None
-    assert avg_lead == 120.0
-
-
-def test_compute_goal_timing_no_lead() -> None:
-    events = [
-        {"match_id": 1, "game_seconds": 60, "is_ours": 0, "duration_seconds": 180},
-    ]
-    avg_concede, avg_lead = compute_goal_timing(events)
-    assert avg_concede is None
-    assert avg_lead is None
-
-
-def test_compute_goal_timing_empty() -> None:
-    avg_concede, avg_lead = compute_goal_timing([])
-    assert avg_concede is None
-    assert avg_lead is None
-
-
-def test_compute_goal_timing_multiple_matches() -> None:
-    # Match 1: our@0, opp@60 → lead 0-60=60s, concede 0→60=60s
-    # Match 2: our@30, end=120 → lead 30-120=90s, no concede
-    # avg_lead = (60+90)/2 = 75s, avg_concede = 60s
-    events = [
-        {"match_id": 1, "game_seconds": 0, "is_ours": 1, "duration_seconds": 180},
-        {"match_id": 1, "game_seconds": 60, "is_ours": 0, "duration_seconds": 180},
-        {"match_id": 2, "game_seconds": 30, "is_ours": 1, "duration_seconds": 120},
-    ]
-    avg_concede, avg_lead = compute_goal_timing(events)
-    assert avg_concede == 60.0
-    assert avg_lead == 75.0
