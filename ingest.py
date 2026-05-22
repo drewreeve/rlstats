@@ -18,7 +18,6 @@ class SkipReason(Enum):
     NO_MATCH_GUID = "no_match_guid"
     MISSING_DATE = "missing_date"
     NO_TRACKED_PLAYERS = "no_tracked_players"
-    DRAW = "draw"
 
 
 PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
@@ -385,14 +384,6 @@ def validate_replay(
     if not tracked_raw:
         return SkipReason.NO_TRACKED_PLAYERS
 
-    team0_score = props.get("Team0Score", 0)
-    team1_score = props.get("Team1Score", 0)
-    _, team_score, opponent_score = _resolve_team_scores(
-        tracked_raw, team0_score, team1_score
-    )
-    if _resolve_result(team_score, opponent_score) is None:
-        return SkipReason.DRAW
-
     return None
 
 
@@ -401,8 +392,7 @@ def analyze_replay(
 ) -> ReplayAnalysis | None:
     skip = validate_replay(replay, tracked_players)
     if skip is not None:
-        if skip is not SkipReason.DRAW:
-            logger.debug("Skipping replay: %s", skip.value)
+        logger.debug("Skipping replay: %s", skip.value)
         return None
 
     props = replay.get("properties", {})

@@ -76,7 +76,7 @@ def test_process_replay_success(tmp_path: Path):
 
 
 def test_process_replay_ingest_failure(tmp_path: Path):
-    """When ingest fails, .replay is removed and no marker is written."""
+    """When ingest fails, the .replay is kept for retry and no marker is written."""
     conn = _make_conn()
     replay_path = tmp_path / "bad.replay"
     replay_path.write_bytes(b"\x00" * 1024)
@@ -95,8 +95,31 @@ def test_process_replay_ingest_failure(tmp_path: Path):
     assert success is False
     assert error is not None
     assert "Ingest failed" in error
-    assert not replay_path.exists()
+    assert replay_path.exists()
     assert not (tmp_path / "bad.replay.ingested").exists()
+
+
+def test_process_replay_skipped(tmp_path: Path):
+    """When analyze_replay returns None, returns True (sentinel will be written)."""
+    conn = _make_conn()
+    replay_path = tmp_path / "skip.replay"
+    replay_path.write_bytes(b"\x00" * 1024)
+
+    def fake_rrrocket(args: Any, **kwargs: Any):
+        stdout = b'{"properties": {}}'
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    with (
+        patch("process.subprocess.run", side_effect=fake_rrrocket),
+        patch("process.analyze_replay", return_value=None),
+    ):
+        success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
+
+    assert success is True
+    assert error is None
+    assert replay_path.exists()
+    row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
+    assert row[0] == 0
 
 
 def test_process_batch_commits(tmp_path: Path):

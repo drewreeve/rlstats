@@ -956,14 +956,6 @@ def test_validate_replay_no_tracked_players():
     assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.NO_TRACKED_PLAYERS
 
 
-def test_validate_replay_draw():
-    replay = copy.deepcopy(load_replay("match.json"))
-    props = replay["properties"]
-    props["Team0Score"] = 3
-    props["Team1Score"] = 3
-    assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.DRAW
-
-
 def _fetch_player(
     conn: sqlite3.Connection, identity: PlayerIdentity
 ) -> tuple[str, int] | None:

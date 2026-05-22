@@ -71,8 +71,10 @@ def process_replay(
 ) -> tuple[bool, str | None]:
     """Run rrrocket on a .replay file, then ingest the parsed data.
 
-    Returns (True, None) on success. On failure, removes corrupt files and
-    returns (False, error_message).
+    Returns (True, None) when the file is resolved and a sentinel should be written:
+    either successfully ingested, or skipped (no tracked players, missing metadata).
+    Returns (False, error_message) on unexpected failure; the sentinel is not written
+    so the next run retries. Corrupt files that fail rrrocket parsing are deleted.
     """
     replay, error = parse_replay(replay_path)
     if replay is None:
@@ -80,14 +82,13 @@ def process_replay(
 
     analysis = analyze_replay(replay, tracked_players)
     if analysis is None:
-        return False, "Replay skipped: no tracked players or missing data"
+        return True, None
 
     try:
         write_match(conn, analysis)
     except Exception as exc:
         msg = f"Ingest failed: {exc}"
         logger.warning("Ingest failed for %s: %s", replay_path.name, exc)
-        replay_path.unlink(missing_ok=True)
         return False, msg
 
     return True, None
@@ -163,9 +164,8 @@ def _parse_and_analyze(
         return None
     analysis = analyze_replay(replay, tracked_players)
     if analysis is None:
-        logger.warning(
-            "Skipping %s: replay could not be analyzed",
-            replay_path.name,
+        logger.debug(
+            "Skipping %s: no tracked players or missing metadata", replay_path.name
         )
     return analysis
 
@@ -203,12 +203,15 @@ def process_unprocessed(
     try:
         sync_tracked_players(conn, tracked_players)
         ingested: list[Path] = []
+        to_sentinel: list[Path] = []
         for path, analysis in zip(replay_paths, results, strict=True):
             if analysis is not None:
                 write_match(conn, analysis)
                 ingested.append(path)
+            elif path.exists():
+                to_sentinel.append(path)
         conn.commit()
-        for replay_path in ingested:
+        for replay_path in ingested + to_sentinel:
             replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
     finally:
         conn.close()
