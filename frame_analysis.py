@@ -297,6 +297,31 @@ class PossessionHandler(FrameHandler):
 _ZONE_BOUNDARY = 1707  # field is ±5120 uu from center; one zone ≈ 5120 / 3
 
 
+def _accumulate_zone_seconds(
+    samples: list[tuple[float, float]], tracked_team: int
+) -> dict[str, float]:
+    zones = {"defensive": 0.0, "neutral": 0.0, "offensive": 0.0}
+    for (t_start, y), (t_end, _) in pairwise(samples):
+        dt = t_end - t_start
+        if not 0 < dt < 2.0:
+            continue
+        if tracked_team == 0:
+            if y < -_ZONE_BOUNDARY:
+                zones["defensive"] += dt
+            elif y > _ZONE_BOUNDARY:
+                zones["offensive"] += dt
+            else:
+                zones["neutral"] += dt
+        else:
+            if y > _ZONE_BOUNDARY:
+                zones["defensive"] += dt
+            elif y < -_ZONE_BOUNDARY:
+                zones["offensive"] += dt
+            else:
+                zones["neutral"] += dt
+    return zones
+
+
 class BallZonesHandler(FrameHandler):
     """Tracks time the ball spent in each zone of the field."""
 
@@ -329,31 +354,10 @@ class BallZonesHandler(FrameHandler):
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if len(self.samples) < 2:
             return
-
-        zones = {"negative": 0.0, "neutral": 0.0, "positive": 0.0}
-        for (t_start, y), (t_end, _) in pairwise(self.samples):
-            dt = t_end - t_start
-            # Skip large gaps: kickoff countdowns (~3s) and any replay pauses appear
-            # as gaps here because is_playing-gated sample collection stops during them.
-            if not 0 < dt < 2.0:
-                continue
-            if y < -_ZONE_BOUNDARY:
-                zones["negative"] += dt
-            elif y > _ZONE_BOUNDARY:
-                zones["positive"] += dt
-            else:
-                zones["neutral"] += dt
-
-        if self.tracked_team == 0:
-            defensive = zones["negative"]
-            offensive = zones["positive"]
-        else:
-            defensive = zones["positive"]
-            offensive = zones["negative"]
-
-        result.defensive_zone_seconds = round(defensive, 2)
+        zones = _accumulate_zone_seconds(self.samples, self.tracked_team)
+        result.defensive_zone_seconds = round(zones["defensive"], 2)
         result.neutral_zone_seconds = round(zones["neutral"], 2)
-        result.offensive_zone_seconds = round(offensive, 2)
+        result.offensive_zone_seconds = round(zones["offensive"], 2)
 
 
 class PlayerZonesHandler(FrameHandler):
@@ -379,29 +383,12 @@ class PlayerZonesHandler(FrameHandler):
     def _accumulate(
         self, identity: tuple[str, str], samples: list[tuple[float, float]]
     ) -> None:
-        zones = self.identity_zone_times.setdefault(
+        new_zones = _accumulate_zone_seconds(samples, self.tracked_team)
+        existing = self.identity_zone_times.setdefault(
             identity, {"defensive": 0.0, "neutral": 0.0, "offensive": 0.0}
         )
-        for (t_start, y), (t_end, _) in pairwise(samples):
-            dt = t_end - t_start
-            # Skip large gaps: kickoff countdowns (~3s) appear as gaps because
-            # is_playing-gated collection stops during them.
-            if not 0 < dt < 2.0:
-                continue
-            if self.tracked_team == 0:
-                if y < -_ZONE_BOUNDARY:
-                    zones["defensive"] += dt
-                elif y > _ZONE_BOUNDARY:
-                    zones["offensive"] += dt
-                else:
-                    zones["neutral"] += dt
-            else:
-                if y > _ZONE_BOUNDARY:
-                    zones["defensive"] += dt
-                elif y < -_ZONE_BOUNDARY:
-                    zones["offensive"] += dt
-                else:
-                    zones["neutral"] += dt
+        for k in new_zones:
+            existing[k] += new_zones[k]
 
     def _flush_car(self, ctx: FrameContext, car_id: int) -> None:
         samples = self.car_samples.pop(car_id, None)
