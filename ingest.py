@@ -10,7 +10,7 @@ from typing import Any
 
 from frame_analysis import FrameAnalysis, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
-from rrrocket_schema import DebugInfoEntry, PlayerStatEntry, ReplayJSON
+from rrrocket_schema import PlayerStatEntry, ReplayJSON
 
 logger = logging.getLogger(__name__)
 
@@ -138,20 +138,18 @@ def sync_tracked_players(
 _SQL_DT_FMT = "%Y-%m-%d %H:%M:%S"
 
 
-def _epoch_to_played_at(epoch: Any) -> str | None:
-    if not epoch:
-        return None
-    try:
-        return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC).strftime(
-            _SQL_DT_FMT
-        )
-    except ValueError, TypeError:
-        return None
-
-
-def _bakkesmod_played_at(replay: ReplayJSON) -> str | None:
-    debug_info: list[DebugInfoEntry] = replay.get("debug_info") or []
-    for entry in debug_info:
+def _resolve_played_at(replay: ReplayJSON) -> str | None:
+    # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43
+    # replays fall back to BakkesMod's GameStartTime in debug_info.
+    epoch = (replay.get("properties") or {}).get("MatchStartEpoch")
+    if epoch:
+        try:
+            return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC).strftime(
+                _SQL_DT_FMT
+            )
+        except ValueError, TypeError:
+            pass
+    for entry in replay.get("debug_info") or []:
         if entry.get("user") == "GameStartTime":
             try:
                 dt = datetime.datetime.fromisoformat(entry["text"])
@@ -370,10 +368,7 @@ def validate_replay(
     if not (props.get("MatchGUID") or props.get("MatchGuid")):
         return SkipReason.NO_MATCH_GUID
 
-    if not (
-        _epoch_to_played_at(props.get("MatchStartEpoch"))
-        or _bakkesmod_played_at(replay)
-    ):
+    if not _resolve_played_at(replay):
         return SkipReason.MISSING_DATE
 
     player_stats = {
@@ -402,9 +397,7 @@ def analyze_replay(
     assert replay_hash is not None  # guaranteed by validate_replay
     # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43 replays fall back to
     # BakkesMod's GameStartTime in debug_info (absent on replays saved manually from match history)
-    played_at_sql = _epoch_to_played_at(
-        props.get("MatchStartEpoch")
-    ) or _bakkesmod_played_at(replay)
+    played_at_sql = _resolve_played_at(replay)
     assert played_at_sql is not None
     duration = props.get("TotalSecondsPlayed")
     forfeit = 1 if props.get("bForfeit") else 0
