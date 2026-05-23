@@ -1,6 +1,6 @@
 import copy
 import sqlite3
-from typing import Any
+from typing import cast
 
 import pytest
 
@@ -16,6 +16,7 @@ from ingest import (
     write_match,
 )
 from player_identity import PlayerIdentity
+from rrrocket_schema import ReplayJSON, ReplayProperties
 from tests.fixtures import TRACKED_PLAYERS, cached_db, in_memory_db, load_replay
 
 ALL_FIXTURES = [
@@ -34,8 +35,14 @@ def ingest_fixture(fixture: str) -> sqlite3.Connection:
 @pytest.fixture()
 def conn_no_network() -> sqlite3.Connection:
     conn = in_memory_db()
-    replay = load_replay("match.json")
-    replay = {k: v for k, v in replay.items() if k not in ("network_frames", "objects")}
+    replay = cast(
+        ReplayJSON,
+        {
+            k: v
+            for k, v in load_replay("match.json").items()
+            if k not in ("network_frames", "objects")
+        },
+    )
     analysis = analyze_replay(replay, TRACKED_PLAYERS)
     assert analysis is not None
     write_match(conn, analysis)
@@ -661,10 +668,9 @@ def test_actor_id_recycling_separates_boost_consumption():
         },
     ]
 
-    replay = {
-        "objects": objects,
-        "network_frames": {"frames": frames},
-    }
+    replay = cast(
+        ReplayJSON, {"objects": objects, "network_frames": {"frames": frames}}
+    )
     fa = analyze_frames(
         replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
     )
@@ -772,10 +778,9 @@ def test_boost_attributed_when_car_and_boost_comp_deleted_same_frame():
         },
     ]
 
-    replay = {
-        "objects": objects,
-        "network_frames": {"frames": frames},
-    }
+    replay = cast(
+        ReplayJSON, {"objects": objects, "network_frames": {"frames": frames}}
+    )
     fa = analyze_frames(
         replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
     )
@@ -858,10 +863,9 @@ def test_demos_received_when_demolish_and_deletion_same_frame():
         },
     ]
 
-    replay = {
-        "objects": objects,
-        "network_frames": {"frames": frames},
-    }
+    replay = cast(
+        ReplayJSON, {"objects": objects, "network_frames": {"frames": frames}}
+    )
     fa = analyze_frames(
         replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
     )
@@ -893,14 +897,14 @@ def test_played_at_derived_from_match_start_epoch():
 
 def test_analyze_replay_rejects_when_no_date_source_available():
     replay = copy.deepcopy(load_replay("match.json"))
-    del replay["properties"]["MatchStartEpoch"]
+    del cast(ReplayProperties, replay.get("properties"))["MatchStartEpoch"]
     replay["debug_info"] = []
     assert analyze_replay(replay, TRACKED_PLAYERS) is None
 
 
-def _replay_with_bakkesmod_time(game_start_time: str) -> dict[str, Any]:
-    replay: dict[str, Any] = copy.deepcopy(load_replay("match.json"))
-    del replay["properties"]["MatchStartEpoch"]
+def _replay_with_bakkesmod_time(game_start_time: str) -> ReplayJSON:
+    replay = copy.deepcopy(load_replay("match.json"))
+    del cast(ReplayProperties, replay.get("properties"))["MatchStartEpoch"]
     replay["debug_info"] = [
         {"frame": 0, "user": "GameStartTime", "text": game_start_time}
     ]
@@ -939,12 +943,12 @@ def test_validate_replay_missing_guid():
 
 
 def test_validate_replay_missing_date():
-    replay: dict[str, Any] = {"properties": {"MatchGUID": "x"}}
+    replay: ReplayJSON = {"properties": {"MatchGUID": "x"}}
     assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.MISSING_DATE
 
 
 def test_validate_replay_no_tracked_players():
-    replay: dict[str, Any] = {
+    replay: ReplayJSON = {
         "properties": {
             "MatchGUID": "x",
             "MatchStartEpoch": 1000000,

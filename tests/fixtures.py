@@ -2,10 +2,12 @@ import functools
 import json
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 from config import load_settings
 from db import apply_migrations
 from ingest import analyze_replay, write_match
+from rrrocket_schema import ReplayJSON
 
 TEST_DATA_DIR = Path(__file__).parent / "data"
 
@@ -13,10 +15,10 @@ TRACKED_PLAYERS = load_settings(TEST_DATA_DIR).players
 
 
 @functools.cache
-def load_replay(name: str):
+def load_replay(name: str) -> ReplayJSON:
     path = TEST_DATA_DIR / name
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return cast(ReplayJSON, json.load(f))
 
 
 def in_memory_db() -> sqlite3.Connection:

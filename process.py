@@ -6,7 +6,7 @@ import subprocess
 import threading
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import orjson
 
@@ -18,6 +18,7 @@ from ingest import (
     write_match,
 )
 from player_identity import PlayerIdentity
+from rrrocket_schema import ReplayJSON
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ def _open_write_conn(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def parse_replay(replay_path: Path) -> tuple[dict[str, Any] | None, str | None]:
+def parse_replay(replay_path: Path) -> tuple[ReplayJSON | None, str | None]:
     """Run rrrocket on a .replay file and return the parsed JSON.
 
     Returns (parsed_dict, None) on success. On failure, removes the corrupt
@@ -61,7 +62,7 @@ def parse_replay(replay_path: Path) -> tuple[dict[str, Any] | None, str | None]:
         replay_path.unlink(missing_ok=True)
         return None, msg
 
-    return orjson.loads(result.stdout), None
+    return cast(ReplayJSON, orjson.loads(result.stdout)), None
 
 
 def process_replay(

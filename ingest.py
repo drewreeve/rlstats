@@ -10,6 +10,7 @@ from typing import Any
 
 from frame_analysis import FrameAnalysis, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
+from rrrocket_schema import DebugInfoEntry, PlayerStatEntry, ReplayJSON
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class ReplayAnalysis:
     map_name: str | None
     game_mode: str | None
     frame_analysis: FrameAnalysis
-    player_stats: dict[PlayerIdentity, dict[str, Any]]
+    player_stats: dict[PlayerIdentity, PlayerStatEntry]
     mvp_identity: PlayerIdentity | None
     tracked_names: dict[PlayerIdentity, str]
 
@@ -148,8 +149,8 @@ def _epoch_to_played_at(epoch: Any) -> str | None:
         return None
 
 
-def _bakkesmod_played_at(replay: dict[str, Any]) -> str | None:
-    debug_info: list[dict[str, str]] = replay.get("debug_info", []) or []
+def _bakkesmod_played_at(replay: ReplayJSON) -> str | None:
+    debug_info: list[DebugInfoEntry] = replay.get("debug_info") or []
     for entry in debug_info:
         if entry.get("user") == "GameStartTime":
             try:
@@ -171,7 +172,7 @@ def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
 
 
 def _resolve_team_scores(
-    tracked_players: list[dict[str, Any]], team0_score: Any, team1_score: Any
+    tracked_players: list[PlayerStatEntry], team0_score: Any, team1_score: Any
 ) -> tuple[Any, Any, Any]:
     tracked_teams = {p.get("Team") for p in tracked_players}
     team = tracked_teams.pop() if tracked_teams else None
@@ -276,7 +277,7 @@ def _upsert_match(
 
 def _upsert_players(
     conn: sqlite3.Connection,
-    player_stats: dict[PlayerIdentity, dict[str, Any]],
+    player_stats: dict[PlayerIdentity, PlayerStatEntry],
     tracked_names: dict[PlayerIdentity, str],
 ) -> dict[PlayerIdentity, int]:
     player_id_map: dict[PlayerIdentity, int] = {}
@@ -295,7 +296,7 @@ def _upsert_players(
 def _insert_match_players(
     conn: sqlite3.Connection,
     match_id: int,
-    player_stats: dict[PlayerIdentity, dict[str, Any]],
+    player_stats: dict[PlayerIdentity, PlayerStatEntry],
     player_id_map: dict[PlayerIdentity, int],
     frame_analysis: FrameAnalysis,
 ):
@@ -362,7 +363,7 @@ def _insert_match_players(
 
 
 def validate_replay(
-    replay: dict[str, Any], tracked_players: dict[PlayerIdentity, str]
+    replay: ReplayJSON, tracked_players: dict[PlayerIdentity, str]
 ) -> SkipReason | None:
     props = replay.get("properties", {})
 
@@ -388,7 +389,7 @@ def validate_replay(
 
 
 def analyze_replay(
-    replay: dict[str, Any], tracked_players: dict[PlayerIdentity, str]
+    replay: ReplayJSON, tracked_players: dict[PlayerIdentity, str]
 ) -> ReplayAnalysis | None:
     skip = validate_replay(replay, tracked_players)
     if skip is not None:
@@ -398,6 +399,7 @@ def analyze_replay(
     props = replay.get("properties", {})
 
     replay_hash = props.get("MatchGUID") or props.get("MatchGuid")
+    assert replay_hash is not None  # guaranteed by validate_replay
     # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43 replays fall back to
     # BakkesMod's GameStartTime in debug_info (absent on replays saved manually from match history)
     played_at_sql = _epoch_to_played_at(
@@ -412,7 +414,7 @@ def analyze_replay(
 
     team0_score = props.get("Team0Score", 0)
     team1_score = props.get("Team1Score", 0)
-    player_stats: dict[PlayerIdentity, dict[str, Any]] = {
+    player_stats: dict[PlayerIdentity, PlayerStatEntry] = {
         identity: p
         for p in props.get("PlayerStats", [])
         if not p.get("bBot") and (identity := from_player_stats(p))

@@ -22,9 +22,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
-from typing import Any
 
 from player_identity import from_network_frame
+from rrrocket_schema import ReplayJSON, UpdatedActor
 
 # Coordinates are taken from wiki.rlbot.org
 # https://wiki.rlbot.org/v4/botmaking/useful-game-values/
@@ -173,7 +173,7 @@ class FrameHandler(ABC):
     update_obj_ids: frozenset[int]
 
     @abstractmethod
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None: ...
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None: ...
 
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         del ctx, aid
@@ -183,7 +183,7 @@ class FrameHandler(ABC):
 
 
 def _parse_pickup(
-    actor: dict[str, Any],
+    actor: UpdatedActor,
     last_pickup_state: dict[int, int],
     actor_team: dict[int, int],
     actor_position: dict[int, tuple[float, float]],
@@ -272,7 +272,7 @@ class PossessionHandler(FrameHandler):
         self.tracked_team = tracked_team
         self.touches: list[tuple[float, int]] = []
 
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         team_num = actor.get("attribute", {}).get("Byte")
         if team_num is not None:
             self.touches.append((ctx.frame_time, team_num))
@@ -342,7 +342,7 @@ class BallZonesHandler(FrameHandler):
         self.tracked_team = tracked_team
         self.samples: list[tuple[float, float]] = []
 
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         if not ctx.is_playing:
             return
         if actor["actor_id"] not in ctx.ball_actors:
@@ -398,7 +398,7 @@ class PlayerZonesHandler(FrameHandler):
         if identity:
             self._accumulate(identity, samples)
 
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         if not ctx.is_playing:
             return
         aid = actor["actor_id"]
@@ -434,7 +434,7 @@ class DemolitionsHandler(FrameHandler):
         self.update_obj_ids = frozenset({demo_obj_id})
         self.actor_demos: dict[int, int] = {}
 
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         val = actor.get("attribute", {}).get("Int", 0)
         aid = actor["actor_id"]
         self.actor_demos[aid] = max(self.actor_demos.get(aid, 0), val)
@@ -464,7 +464,7 @@ class DemosReceivedHandler(FrameHandler):
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         self.demolish_last_active.pop(aid, None)
 
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         demolish = actor.get("attribute", {}).get("DemolishExtended", {})
         victim = demolish.get("victim", {})
         currently_active = bool(victim.get("active"))
@@ -524,7 +524,7 @@ class BoostStatsHandler(FrameHandler):
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         self.last_pickup_state.pop(aid, None)
 
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         result = _parse_pickup(
             actor,
             self.last_pickup_state,
@@ -620,7 +620,7 @@ class MovementHandler(FrameHandler):
         if samples:
             self._flush_speed_samples(ctx, aid, samples)
 
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         oid = actor.get("object_id")
         aid = actor["actor_id"]
 
@@ -798,7 +798,7 @@ class MatchEventsHandler(FrameHandler):
         self.actor_counters: dict[int, dict[str, int]] = {}
         self.raw_events: list[tuple[str, float, int]] = []
 
-    def on_update(self, ctx: FrameContext, actor: dict[str, Any]) -> None:
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         obj_id = actor.get("object_id")
         aid = actor["actor_id"]
 
@@ -880,7 +880,7 @@ class MatchEventsHandler(FrameHandler):
 
 
 def analyze_frames(
-    replay: dict[str, Any],
+    replay: ReplayJSON,
     tracked_team: int | None,
     tracked_identities: set[tuple[str, str]],
     duration: int | None,
@@ -929,8 +929,8 @@ def analyze_frames(
     # Build dispatch table: object_id -> list of handlers interested in that obj_id
     update_dispatch: dict[int, list[FrameHandler]] = {}
     for h in handlers:
-        for oid in h.update_obj_ids:
-            update_dispatch.setdefault(oid, []).append(h)
+        for obj_id in h.update_obj_ids:
+            update_dispatch.setdefault(obj_id, []).append(h)
 
     # Only handlers that override on_deleted_actor need to be called on deletions
     deleted_actor_handlers = [
@@ -999,7 +999,7 @@ def analyze_frames(
                     ctx.actor_position[aid] = (loc["x"], loc["y"])
 
             # Handler dispatch
-            subscribers = update_dispatch.get(oid)
+            subscribers = update_dispatch.get(oid) if oid is not None else None
             if subscribers:
                 for h in subscribers:
                     h.on_update(ctx, actor)

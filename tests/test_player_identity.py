@@ -1,8 +1,7 @@
-from typing import Any
-
 import pytest
 
 from player_identity import PlayerIdentity, from_network_frame, from_player_stats
+from rrrocket_schema import PlayerStatEntry
 
 # --- from_player_stats ---
 
@@ -34,7 +33,7 @@ from player_identity import PlayerIdentity, from_network_frame, from_player_stat
     ],
 )
 def test_from_player_stats_known_platforms(
-    player: dict[str, Any], expected: PlayerIdentity
+    player: PlayerStatEntry, expected: PlayerIdentity
 ):
     assert from_player_stats(player) == expected
 
@@ -58,7 +57,7 @@ def test_from_player_stats_steam_zero_online_id_returns_none():
 
 
 def test_from_player_stats_epic_missing_account_id_returns_none():
-    player = {
+    player: PlayerStatEntry = {
         "Platform": {"value": "OnlinePlatform_Epic"},
         "OnlineID": "0",
         "PlayerID": {"fields": {"EpicAccountId": ""}},
@@ -95,7 +94,7 @@ def test_from_player_stats_epic_missing_account_id_returns_none():
     ],
 )
 def test_from_network_frame_known_platforms(
-    uid: dict[str, Any], expected: PlayerIdentity
+    uid: dict[str, object], expected: PlayerIdentity
 ):
     assert from_network_frame(uid) == expected
 
@@ -117,7 +116,7 @@ def test_from_network_frame_missing_remote_id_returns_none():
 
 
 def test_join_invariant_steam_player():
-    player_stats = {
+    player_stats: PlayerStatEntry = {
         "Platform": {"value": "OnlinePlatform_Steam"},
         "OnlineID": "76561197969365901",
     }
@@ -126,7 +125,7 @@ def test_join_invariant_steam_player():
 
 
 def test_join_invariant_epic_player():
-    player_stats = {
+    player_stats: PlayerStatEntry = {
         "Platform": {"value": "OnlinePlatform_Epic"},
         "OnlineID": "0",
         "PlayerID": {"fields": {"EpicAccountId": "23ce79e90944478599a96ed5402a99e6"}},

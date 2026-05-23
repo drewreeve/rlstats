@@ -9,6 +9,8 @@ See CONTEXT.md for the full definition.
 
 from typing import Any, NamedTuple, cast
 
+from rrrocket_schema import PlayerStatEntry
+
 
 class PlayerIdentity(NamedTuple):
     platform: str
@@ -37,7 +39,7 @@ _NETWORK_PLATFORM_MAP: dict[str, str] = {
 }
 
 
-def from_player_stats(player: dict[str, Any]) -> PlayerIdentity | None:
+def from_player_stats(player: PlayerStatEntry) -> PlayerIdentity | None:
     """Resolve a PlayerStats entry from the rrrocket JSON to a PlayerIdentity."""
     platform_value = player.get("Platform", {}).get("value", "")
 

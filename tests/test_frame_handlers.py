@@ -8,8 +8,6 @@ The integration tests in test_ingest.py exercise the orchestrator and
 frame-loop ordering invariants; these tests cover handler logic.
 """
 
-from typing import Any
-
 from frame_analysis import (
     BallZonesHandler,
     BoostStatsHandler,
@@ -23,6 +21,7 @@ from frame_analysis import (
     PlayerZonesHandler,
     PossessionHandler,
 )
+from rrrocket_schema import UpdatedActor
 
 HIT_TEAM_OID = 100
 RB_OID = 101
@@ -37,7 +36,7 @@ GOALS_OID = 108
 BIG_PADS = [(-3072.0, -4096.0), (3072.0, 4096.0)]
 
 
-def _hit(team_num: int) -> dict[str, Any]:
+def _hit(team_num: int) -> UpdatedActor:
     return {"actor_id": 1, "object_id": HIT_TEAM_OID, "attribute": {"Byte": team_num}}
 
 
@@ -157,7 +156,7 @@ def test_possession_handler_inverts_for_team_1():
 # -- BallZonesHandler --
 
 
-def _ball_update(actor_id: int, y: float) -> dict[str, Any]:
+def _ball_update(actor_id: int, y: float) -> UpdatedActor:
     return {
         "actor_id": actor_id,
         "object_id": RB_OID,
@@ -255,7 +254,7 @@ def test_ball_zones_handler_skips_cross_period_gap():
 # -- PlayerZonesHandler --
 
 
-def _car_rb_update(actor_id: int, y: float) -> dict[str, Any]:
+def _car_rb_update(actor_id: int, y: float) -> UpdatedActor:
     return {
         "actor_id": actor_id,
         "object_id": RB_OID,
@@ -424,7 +423,7 @@ def _demolish(
     victim_actor: int,
     attacker_active: bool = True,
     self_demolish: bool = False,
-) -> dict[str, Any]:
+) -> UpdatedActor:
     return {
         "actor_id": actor_id,
         "object_id": DEMOLISH_OID,
@@ -516,7 +515,7 @@ def _pickup(
     pickup_actor_id: int,
     instigator: int,
     picked_up_state: int,
-) -> dict[str, Any]:
+) -> UpdatedActor:
     return {
         "actor_id": pickup_actor_id,
         "object_id": PICKUP_OID,
@@ -601,7 +600,7 @@ def test_boost_stats_handler_returns_none_when_nothing_collected():
 # -- MovementHandler --
 
 
-def _boost_amount(comp_id: int, amount: int) -> dict[str, Any]:
+def _boost_amount(comp_id: int, amount: int) -> UpdatedActor:
     return {
         "actor_id": comp_id,
         "object_id": BOOST_OID,
@@ -611,7 +610,7 @@ def _boost_amount(comp_id: int, amount: int) -> dict[str, Any]:
 
 def _car_velocity(
     car_id: int, x: float = 0.0, y: float = 0.0, z: float = 0.0
-) -> dict[str, Any]:
+) -> UpdatedActor:
     return {
         "actor_id": car_id,
         "object_id": RB_OID,
