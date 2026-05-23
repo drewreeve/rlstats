@@ -72,6 +72,10 @@ def _versioned_html(path: Path, version: str) -> str:
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
 
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def query_matches(
     conn: sqlite3.Connection,
     *,
@@ -84,51 +88,32 @@ def query_matches(
     date_to: str,
 ) -> dict[str, Any]:
     offset = (page - 1) * per_page
-
-    where: list[str] = []
-    bindings: dict[str, Any] = {}
-    if game_mode:
-        where.append("m.game_mode = :game_mode")
-        bindings["game_mode"] = game_mode
-    if result:
-        where.append("m.result = :result")
-        bindings["result"] = result
-    if search:
-        where.append("p.name LIKE :search ESCAPE '\\'")
-        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        bindings["search"] = f"%{escaped}%"
-    if date_from:
-        where.append("m.played_at >= :date_from")
-        bindings["date_from"] = date_from
-    if date_to:
-        where.append("m.played_at < :date_to")
-        bindings["date_to"] = date_to
-
-    where_clause = (" AND " + " AND ".join(where)) if where else ""
-
-    count_sql = f"""
-        SELECT COUNT(*) FROM matches m
-        LEFT JOIN players p ON m.team_mvp_player_id = p.id
-        WHERE 1=1{where_clause}
-    """
-    total = conn.execute(count_sql, bindings).fetchone()[0]
-
-    query_sql = f"""
-        SELECT m.id, m.game_mode, m.result, m.forfeit,
-               m.team_score || '-' || m.opponent_score AS score,
-               m.played_at, p.name AS mvp
-        FROM matches m
-        LEFT JOIN players p ON m.team_mvp_player_id = p.id
-        WHERE 1=1{where_clause}
-        ORDER BY m.played_at DESC
-        LIMIT :per_page OFFSET :offset
-    """
-    bindings["per_page"] = per_page
-    bindings["offset"] = offset
-
-    rows = conn.execute(query_sql, bindings).fetchall()
-    matches = [dict(r) for r in rows]
-    return {"matches": matches, "total": total, "page": page, "per_page": per_page}
+    search_param = f"%{_escape_like(search)}%" if search else None
+    count_row = queries.count_matches(
+        conn,
+        game_mode=game_mode or None,
+        result=result or None,
+        search=search_param,
+        date_from=date_from or None,
+        date_to=date_to or None,
+    )
+    total = count_row[0]
+    rows = queries.list_matches(
+        conn,
+        game_mode=game_mode or None,
+        result=result or None,
+        search=search_param,
+        date_from=date_from or None,
+        date_to=date_to or None,
+        per_page=per_page,
+        offset=offset,
+    )
+    return {
+        "matches": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    }
 
 
 def query_match_players(
