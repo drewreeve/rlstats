@@ -17,6 +17,7 @@ from ingest import (
 )
 from player_identity import PlayerIdentity
 from rrrocket_schema import ReplayJSON, ReplayProperties
+from rrrocket_schema import parse as parse_replay
 from tests.fixtures import TRACKED_PLAYERS, cached_db, in_memory_db, load_replay
 
 ALL_FIXTURES = [
@@ -43,7 +44,7 @@ def conn_no_network() -> sqlite3.Connection:
             if k not in ("network_frames", "objects")
         },
     )
-    analysis = analyze_replay(replay, TRACKED_PLAYERS)
+    analysis = analyze_replay(parse_replay(replay), TRACKED_PLAYERS)
     assert analysis is not None
     write_match(conn, analysis)
     return conn
@@ -307,8 +308,13 @@ def test_match_events_have_valid_players():
 
 
 def test_overtime_goals_positioned_after_regulation():
-    replay = load_replay("overtime.json")
-    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
+    fa = analyze_frames(
+        parse_replay(load_replay("overtime.json")),
+        0,
+        set(TRACKED_PLAYERS.keys()),
+        300,
+        "3v3",
+    )
     events = fa.match_events
 
     goals = [e for e in events if e[0] == "goal"]
@@ -323,8 +329,13 @@ def test_overtime_goals_positioned_after_regulation():
 
 
 def test_assist_events_in_frame_analysis():
-    replay = load_replay("match.json")
-    fa = analyze_frames(replay, 0, set(TRACKED_PLAYERS.keys()), 300, "3v3")
+    fa = analyze_frames(
+        parse_replay(load_replay("match.json")),
+        0,
+        set(TRACKED_PLAYERS.keys()),
+        300,
+        "3v3",
+    )
     assists = [e for e in fa.match_events if e[0] == "assist"]
     assert len(assists) == 6
 
@@ -361,8 +372,7 @@ def test_offensive_pairings_only_tracked_players():
 
 def test_offensive_pairings_idempotent():
     conn = in_memory_db()
-    replay = load_replay("match.json")
-    analysis = analyze_replay(replay, TRACKED_PLAYERS)
+    analysis = analyze_replay(parse_replay(load_replay("match.json")), TRACKED_PLAYERS)
     assert analysis is not None
     write_match(conn, analysis)
     count1 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
@@ -672,7 +682,11 @@ def test_actor_id_recycling_separates_boost_consumption():
         ReplayJSON, {"objects": objects, "network_frames": {"frames": frames}}
     )
     fa = analyze_frames(
-        replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
+        parse_replay(replay),
+        tracked_team=0,
+        tracked_identities=set(),
+        duration=300,
+        game_mode="3v3",
     )
     stats = fa.movement_stats
 
@@ -782,7 +796,11 @@ def test_boost_attributed_when_car_and_boost_comp_deleted_same_frame():
         ReplayJSON, {"objects": objects, "network_frames": {"frames": frames}}
     )
     fa = analyze_frames(
-        replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
+        parse_replay(replay),
+        tracked_team=0,
+        tracked_identities=set(),
+        duration=300,
+        game_mode="3v3",
     )
     stats = fa.movement_stats
 
@@ -868,7 +886,11 @@ def test_demos_received_when_demolish_and_deletion_same_frame():
         ReplayJSON, {"objects": objects, "network_frames": {"frames": frames}}
     )
     fa = analyze_frames(
-        replay, tracked_team=0, tracked_identities=set(), duration=300, game_mode="3v3"
+        parse_replay(replay),
+        tracked_team=0,
+        tracked_identities=set(),
+        duration=300,
+        game_mode="3v3",
     )
 
     assert fa.demos_received.get(("steam", "VICTIM")) == 1, (
@@ -891,7 +913,7 @@ def test_player_name_updates_on_change():
 
 
 def test_played_at_derived_from_match_start_epoch():
-    analysis = analyze_replay(load_replay("match.json"), TRACKED_PLAYERS)
+    analysis = analyze_replay(parse_replay(load_replay("match.json")), TRACKED_PLAYERS)
     assert analysis is not None
     assert analysis.played_at_sql == "2026-02-08 23:27:57"
 
@@ -900,7 +922,7 @@ def test_analyze_replay_rejects_when_no_date_source_available():
     replay = copy.deepcopy(load_replay("match.json"))
     del cast(ReplayProperties, replay.get("properties"))["MatchStartEpoch"]
     replay["debug_info"] = []
-    assert analyze_replay(replay, TRACKED_PLAYERS) is None
+    assert analyze_replay(parse_replay(replay), TRACKED_PLAYERS) is None
 
 
 def _replay_with_bakkesmod_time(game_start_time: str) -> ReplayJSON:
@@ -914,7 +936,8 @@ def _replay_with_bakkesmod_time(game_start_time: str) -> ReplayJSON:
 
 def test_played_at_falls_back_to_bakkesmod_game_start_time():
     analysis = analyze_replay(
-        _replay_with_bakkesmod_time("2024-08-10T02:37:59-0400"), TRACKED_PLAYERS
+        parse_replay(_replay_with_bakkesmod_time("2024-08-10T02:37:59-0400")),
+        TRACKED_PLAYERS,
     )
     assert analysis is not None
     assert analysis.played_at_sql == "2024-08-10 06:37:59"
@@ -925,7 +948,7 @@ def test_match_start_epoch_takes_precedence_over_bakkesmod():
     replay["debug_info"] = [
         {"frame": 0, "user": "GameStartTime", "text": "2020-01-01T00:00:00+0000"}
     ]
-    analysis = analyze_replay(replay, TRACKED_PLAYERS)
+    analysis = analyze_replay(parse_replay(replay), TRACKED_PLAYERS)
     assert analysis is not None
     assert analysis.played_at_sql == "2026-02-08 23:27:57"
 
@@ -934,18 +957,27 @@ def test_match_start_epoch_takes_precedence_over_bakkesmod():
 
 
 def test_validate_replay_passes():
-    assert validate_replay(load_replay("match.json"), TRACKED_PLAYERS) is None
+    assert (
+        validate_replay(parse_replay(load_replay("match.json")), TRACKED_PLAYERS)
+        is None
+    )
 
 
 def test_validate_replay_missing_guid():
     assert (
-        validate_replay({"properties": {}}, TRACKED_PLAYERS) == SkipReason.NO_MATCH_GUID
+        validate_replay(
+            parse_replay(cast(ReplayJSON, {"properties": {}})), TRACKED_PLAYERS
+        )
+        == SkipReason.NO_MATCH_GUID
     )
 
 
 def test_validate_replay_missing_date():
     replay: ReplayJSON = {"properties": {"MatchGUID": "x"}}
-    assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.MISSING_DATE
+    assert (
+        validate_replay(parse_replay(replay), TRACKED_PLAYERS)
+        == SkipReason.MISSING_DATE
+    )
 
 
 def test_validate_replay_no_tracked_players():
@@ -958,7 +990,10 @@ def test_validate_replay_no_tracked_players():
             "Team1Score": 1,
         }
     }
-    assert validate_replay(replay, TRACKED_PLAYERS) == SkipReason.NO_TRACKED_PLAYERS
+    assert (
+        validate_replay(parse_replay(replay), TRACKED_PLAYERS)
+        == SkipReason.NO_TRACKED_PLAYERS
+    )
 
 
 def _fetch_player(

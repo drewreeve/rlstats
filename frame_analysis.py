@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 
 from player_identity import from_network_frame
-from rrrocket_schema import FrameData, ReplayJSON, UpdatedActor
+from rrrocket_schema import FrameData, ParsedReplay, UpdatedActor
 
 # Coordinates are taken from wiki.rlbot.org
 # https://wiki.rlbot.org/v4/botmaking/useful-game-values/
@@ -986,15 +986,15 @@ def _process_frame(
 
 
 def analyze_frames(
-    replay: ReplayJSON,
+    replay: ParsedReplay,
     tracked_team: int | None,
     tracked_identities: set[tuple[str, str]],
     duration: int | None,
     game_mode: str | None,
 ) -> FrameAnalysis:
 
-    objects = replay.get("objects")
-    frames = replay.get("network_frames", {}).get("frames")
+    objects = replay.objects
+    frames = replay.frames
 
     if not objects or not frames:
         return FrameAnalysis()

@@ -8,8 +8,14 @@ The `attribute` field on UpdatedActor is intentionally left as dict[str, Any]:
 it's a discriminated union keyed on rrrocket attribute type names ("Byte",
 "Int", "RigidBody", etc.) dispatched at runtime by object_id, and is too
 polymorphic to type exhaustively without a full discriminated union.
+
+Call `parse(raw)` to convert a raw `ReplayJSON` dict into a `ParsedReplay`
+dataclass. All downstream consumers (ingest.py, frame_analysis.py) accept
+`ParsedReplay`; `ReplayJSON` is only used at the boundary where rrrocket JSON
+is first read.
 """
 
+from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
 
 
@@ -74,3 +80,23 @@ class ReplayJSON(TypedDict, total=False):
     network_frames: NetworkFrames
     debug_info: list[DebugInfoEntry]
     objects: list[str]
+
+
+@dataclass(frozen=True)
+class ParsedReplay:
+    match_guid: str | None
+    properties: ReplayProperties
+    objects: list[str]
+    frames: list[FrameData]
+    debug_info: list[DebugInfoEntry]
+
+
+def parse(raw: ReplayJSON) -> ParsedReplay:
+    props: ReplayProperties = raw.get("properties") or {}
+    return ParsedReplay(
+        match_guid=props.get("MatchGUID") or props.get("MatchGuid"),
+        properties=props,
+        objects=raw.get("objects") or [],
+        frames=(raw.get("network_frames") or {}).get("frames") or [],
+        debug_info=raw.get("debug_info") or [],
+    )

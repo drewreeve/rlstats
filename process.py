@@ -18,7 +18,8 @@ from ingest import (
     write_match,
 )
 from player_identity import PlayerIdentity
-from rrrocket_schema import ReplayJSON
+from rrrocket_schema import ParsedReplay, ReplayJSON
+from rrrocket_schema import parse as _parse_rrrocket
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def _open_write_conn(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def parse_replay(replay_path: Path) -> tuple[ReplayJSON | None, str | None]:
+def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
     """Run rrrocket on a .replay file and return the parsed JSON.
 
     Returns (parsed_dict, None) on success. On failure, removes the corrupt
@@ -62,7 +63,7 @@ def parse_replay(replay_path: Path) -> tuple[ReplayJSON | None, str | None]:
         replay_path.unlink(missing_ok=True)
         return None, msg
 
-    return cast(ReplayJSON, orjson.loads(result.stdout)), None
+    return _parse_rrrocket(cast(ReplayJSON, orjson.loads(result.stdout))), None
 
 
 def process_replay(

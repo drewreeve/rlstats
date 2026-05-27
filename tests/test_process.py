@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from process import UploadProcessor, parse_replay, process_batch, process_replay
+from rrrocket_schema import parse as parse_rrrocket
 from tests.fixtures import TRACKED_PLAYERS, file_db, in_memory_db, load_replay
 
 
@@ -29,7 +30,7 @@ def test_parse_replay_success(tmp_path: Path):
     with patch("process.subprocess.run", side_effect=fake_rrrocket):
         result, error = parse_replay(replay_path)
 
-    assert result == replay_data
+    assert result == parse_rrrocket(replay_data)
     assert error is None
     # No .json sidecar should be written
     assert not (tmp_path / "test.replay.json").exists()

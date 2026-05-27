@@ -10,7 +10,7 @@ from typing import Any
 
 from frame_analysis import FrameAnalysis, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
-from rrrocket_schema import PlayerStatEntry, ReplayJSON
+from rrrocket_schema import ParsedReplay, PlayerStatEntry
 
 logger = logging.getLogger(__name__)
 
@@ -138,10 +138,10 @@ def sync_tracked_players(
 _SQL_DT_FMT = "%Y-%m-%d %H:%M:%S"
 
 
-def _resolve_played_at(replay: ReplayJSON) -> str | None:
+def _resolve_played_at(replay: ParsedReplay) -> str | None:
     # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43
     # replays fall back to BakkesMod's GameStartTime in debug_info.
-    epoch = (replay.get("properties") or {}).get("MatchStartEpoch")
+    epoch = replay.properties.get("MatchStartEpoch")
     if epoch:
         try:
             return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC).strftime(
@@ -149,7 +149,7 @@ def _resolve_played_at(replay: ReplayJSON) -> str | None:
             )
         except ValueError, TypeError:
             pass
-    for entry in replay.get("debug_info") or []:
+    for entry in replay.debug_info:
         if entry.get("user") == "GameStartTime":
             try:
                 dt = datetime.datetime.fromisoformat(entry["text"])
@@ -361,11 +361,9 @@ def _insert_match_players(
 
 
 def validate_replay(
-    replay: ReplayJSON, tracked_players: dict[PlayerIdentity, str]
+    replay: ParsedReplay, tracked_players: dict[PlayerIdentity, str]
 ) -> SkipReason | None:
-    props = replay.get("properties", {})
-
-    if not (props.get("MatchGUID") or props.get("MatchGuid")):
+    if not replay.match_guid:
         return SkipReason.NO_MATCH_GUID
 
     if not _resolve_played_at(replay):
@@ -373,7 +371,7 @@ def validate_replay(
 
     player_stats = {
         identity: p
-        for p in props.get("PlayerStats", [])
+        for p in replay.properties.get("PlayerStats", [])
         if not p.get("bBot") and (identity := from_player_stats(p))
     }
     tracked_raw = [v for k, v in player_stats.items() if k in tracked_players]
@@ -384,16 +382,16 @@ def validate_replay(
 
 
 def analyze_replay(
-    replay: ReplayJSON, tracked_players: dict[PlayerIdentity, str]
+    replay: ParsedReplay, tracked_players: dict[PlayerIdentity, str]
 ) -> ReplayAnalysis | None:
     skip = validate_replay(replay, tracked_players)
     if skip is not None:
         logger.debug("Skipping replay: %s", skip.value)
         return None
 
-    props = replay.get("properties", {})
+    props = replay.properties
 
-    replay_hash = props.get("MatchGUID") or props.get("MatchGuid")
+    replay_hash = replay.match_guid
     assert replay_hash is not None  # guaranteed by validate_replay
     # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43 replays fall back to
     # BakkesMod's GameStartTime in debug_info (absent on replays saved manually from match history)
