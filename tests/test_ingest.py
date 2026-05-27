@@ -795,7 +795,8 @@ def test_boost_attributed_when_car_and_boost_comp_deleted_same_frame():
 
 def test_demos_received_when_demolish_and_deletion_same_frame():
     """ReplicatedDemolishExtended update and victim car deletion in the same frame must
-    still count as a demo, even though deleted_actors is processed before updated_actors."""
+    still count as a demo, because updated_actors are processed before deleted_actors
+    in the same frame."""
     objects = [
         "Archetypes.Car.Car_Default",  # 0 - car archetype
         "Engine.Pawn:PlayerReplicationInfo",  # 1 - car->PRI link

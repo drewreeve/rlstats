@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 
 from player_identity import from_network_frame
-from rrrocket_schema import ReplayJSON, UpdatedActor
+from rrrocket_schema import FrameData, ReplayJSON, UpdatedActor
 
 # Coordinates are taken from wiki.rlbot.org
 # https://wiki.rlbot.org/v4/botmaking/useful-game-values/
@@ -879,6 +879,112 @@ class MatchEventsHandler(FrameHandler):
 # -- Orchestrator --
 
 
+@dataclass(frozen=True)
+class _FrameLoopObjectIds:
+    """Object IDs resolved from the replay's objects list, used by _process_frame."""
+
+    car_archetype: int | None
+    ball_archetype: int | None
+    boost_comp_archetype: int | None
+    scored_obj_id: int | None
+    countdown_obj_id: int | None
+    vehicle_obj_id: int | None
+    pri_obj_id: int | None
+    uid_obj_id: int | None
+    team_paint_obj_id: int | None
+    rb_obj_id: int | None
+
+
+def _process_frame(
+    ctx: FrameContext,
+    frame: FrameData,
+    obj_ids: _FrameLoopObjectIds,
+    update_dispatch: dict[int, list[FrameHandler]],
+    deleted_actor_handlers: list[FrameHandler],
+) -> None:
+    """Apply one frame to ctx, enforcing the three-phase ordering contract:
+
+    1. new_actors    — register archetypes into FrameContext
+    2. updated_actors — shared state first, then handler dispatch
+    3. deleted_actors — notify ALL handlers (two-pass), then purge ALL actor state
+    """
+    ctx.frame_time = frame["time"]
+
+    # 1. Process new_actors -> update shared archetype sets
+    for new_actor in frame.get("new_actors", []):
+        oid = new_actor.get("object_id")
+        aid = new_actor["actor_id"]
+        if oid == obj_ids.car_archetype:
+            ctx.car_actors.add(aid)
+        elif oid == obj_ids.ball_archetype:
+            ctx.ball_actors.add(aid)
+        elif oid == obj_ids.boost_comp_archetype:
+            ctx.boost_comp_actors.add(aid)
+
+    # 2. Process updated_actors -> shared state first, then handler dispatch.
+    #    Updates run before deletions so that handlers processing demolish
+    #    notifications can still resolve victim identity via car_actors
+    #    even when the victim's car is deleted in the same frame.
+    for actor in frame.get("updated_actors", []):
+        oid = actor.get("object_id")
+        aid = actor["actor_id"]
+
+        # Shared state updates (mutually exclusive obj_ids)
+        if oid == obj_ids.scored_obj_id:
+            team = actor.get("attribute", {}).get("Byte")
+            if team in (0, 1):
+                ctx.is_playing = False
+        elif oid == obj_ids.countdown_obj_id:
+            val = actor.get("attribute", {}).get("Int")
+            if val == 0:
+                ctx.is_playing = True
+        elif oid == obj_ids.vehicle_obj_id:
+            car_id = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
+            if car_id is not None and car_id >= 0:
+                ctx.resolver.link_component_to_car(aid, car_id)
+        elif oid == obj_ids.pri_obj_id:
+            pri_actor = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
+            if pri_actor is not None and pri_actor >= 0 and aid in ctx.car_actors:
+                ctx.resolver.link_car_to_pri(aid, pri_actor)
+        elif oid == obj_ids.uid_obj_id:
+            uid = actor.get("attribute", {}).get("UniqueId", {})
+            identity = from_network_frame(uid)
+            if identity:
+                ctx.resolver.set_identity(aid, *identity)
+        elif oid == obj_ids.team_paint_obj_id:
+            team = actor.get("attribute", {}).get("TeamPaint", {}).get("team")
+            if team is not None:
+                ctx.actor_team[aid] = team
+
+        # Position tracking (non-exclusive — runs for any RigidBody update)
+        if oid == obj_ids.rb_obj_id:
+            loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
+            if loc and "x" in loc and "y" in loc:
+                ctx.actor_position[aid] = (loc["x"], loc["y"])
+
+        # Handler dispatch
+        subscribers = update_dispatch.get(oid) if oid is not None else None
+        if subscribers:
+            for h in subscribers:
+                h.on_update(ctx, actor)
+
+    # 3. Process deleted_actors -> notify ALL handlers for ALL actors first,
+    #    then clean shared state for all. This ensures that if a car and its
+    #    boost component are deleted in the same frame, the boost component's
+    #    handler can still resolve identity via the car mapping.
+    deleted_actors = frame.get("deleted_actors", [])
+    for aid in deleted_actors:
+        for h in deleted_actor_handlers:
+            h.on_deleted_actor(ctx, aid)
+    for aid in deleted_actors:
+        ctx.car_actors.discard(aid)
+        ctx.ball_actors.discard(aid)
+        ctx.boost_comp_actors.discard(aid)
+        ctx.resolver.remove_actor(aid)
+        ctx.actor_team.pop(aid, None)
+        ctx.actor_position.pop(aid, None)
+
+
 def analyze_frames(
     replay: ReplayJSON,
     tracked_team: int | None,
@@ -895,19 +1001,20 @@ def analyze_frames(
 
     obj_ids = _resolve_obj_ids(objects)
 
-    # Archetype IDs for new_actor processing
-    car_archetype = obj_ids.get("Archetypes.Car.Car_Default")
-    ball_archetype = obj_ids.get("Archetypes.Ball.Ball_Default")
-    boost_comp_archetype = obj_ids.get("Archetypes.CarComponents.CarComponent_Boost")
-
-    # Shared state object IDs
-    scored_obj_id = obj_ids.get("TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam")
-    countdown_obj_id = obj_ids.get("TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber")
-    vehicle_obj_id = obj_ids.get("TAGame.CarComponent_TA:Vehicle")
-    pri_obj_id = obj_ids.get("Engine.Pawn:PlayerReplicationInfo")
-    uid_obj_id = obj_ids.get("Engine.PlayerReplicationInfo:UniqueId")
-    team_paint_obj_id = obj_ids.get("TAGame.Car_TA:TeamPaint")
-    rb_obj_id = obj_ids.get("TAGame.RBActor_TA:ReplicatedRBState")
+    loop_obj_ids = _FrameLoopObjectIds(
+        car_archetype=obj_ids.get("Archetypes.Car.Car_Default"),
+        ball_archetype=obj_ids.get("Archetypes.Ball.Ball_Default"),
+        boost_comp_archetype=obj_ids.get("Archetypes.CarComponents.CarComponent_Boost"),
+        scored_obj_id=obj_ids.get("TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam"),
+        countdown_obj_id=obj_ids.get(
+            "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber"
+        ),
+        vehicle_obj_id=obj_ids.get("TAGame.CarComponent_TA:Vehicle"),
+        pri_obj_id=obj_ids.get("Engine.Pawn:PlayerReplicationInfo"),
+        uid_obj_id=obj_ids.get("Engine.PlayerReplicationInfo:UniqueId"),
+        team_paint_obj_id=obj_ids.get("TAGame.Car_TA:TeamPaint"),
+        rb_obj_id=obj_ids.get("TAGame.RBActor_TA:ReplicatedRBState"),
+    )
 
     big_pads = BIG_PAD_POSITIONS["hoops" if game_mode == "hoops" else "standard"]
 
@@ -942,83 +1049,9 @@ def analyze_frames(
     ctx = FrameContext()
 
     for frame in frames:
-        ctx.frame_time = frame["time"]
-
-        # 1. Process new_actors -> update shared archetype sets
-        for new_actor in frame.get("new_actors", []):
-            oid = new_actor.get("object_id")
-            aid = new_actor["actor_id"]
-            if oid == car_archetype:
-                ctx.car_actors.add(aid)
-            elif oid == ball_archetype:
-                ctx.ball_actors.add(aid)
-            elif oid == boost_comp_archetype:
-                ctx.boost_comp_actors.add(aid)
-
-        # 2. Process updated_actors -> shared state first, then handler dispatch
-        #    Updates run before deletions so that handlers processing demolish
-        #    notifications can still resolve victim identity via car_actors
-        #    even when the victim's car is deleted in the same frame.
-        for actor in frame.get("updated_actors", []):
-            oid = actor.get("object_id")
-            aid = actor["actor_id"]
-
-            # Shared state updates (mutually exclusive obj_ids)
-            if oid == scored_obj_id:
-                team = actor.get("attribute", {}).get("Byte")
-                if team in (0, 1):
-                    ctx.is_playing = False
-            elif oid == countdown_obj_id:
-                val = actor.get("attribute", {}).get("Int")
-                if val == 0:
-                    ctx.is_playing = True
-            elif oid == vehicle_obj_id:
-                car_id = actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
-                if car_id is not None and car_id >= 0:
-                    ctx.resolver.link_component_to_car(aid, car_id)
-            elif oid == pri_obj_id:
-                pri_actor = (
-                    actor.get("attribute", {}).get("ActiveActor", {}).get("actor")
-                )
-                if pri_actor is not None and pri_actor >= 0 and aid in ctx.car_actors:
-                    ctx.resolver.link_car_to_pri(aid, pri_actor)
-            elif oid == uid_obj_id:
-                uid = actor.get("attribute", {}).get("UniqueId", {})
-                identity = from_network_frame(uid)
-                if identity:
-                    ctx.resolver.set_identity(aid, *identity)
-            elif oid == team_paint_obj_id:
-                team = actor.get("attribute", {}).get("TeamPaint", {}).get("team")
-                if team is not None:
-                    ctx.actor_team[aid] = team
-
-            # Position tracking (non-exclusive — runs for any RigidBody update)
-            if oid == rb_obj_id:
-                loc = actor.get("attribute", {}).get("RigidBody", {}).get("location")
-                if loc and "x" in loc and "y" in loc:
-                    ctx.actor_position[aid] = (loc["x"], loc["y"])
-
-            # Handler dispatch
-            subscribers = update_dispatch.get(oid) if oid is not None else None
-            if subscribers:
-                for h in subscribers:
-                    h.on_update(ctx, actor)
-
-        # 3. Process deleted_actors -> notify ALL handlers for ALL actors first,
-        #    then clean shared state for all. This ensures that if a car and its
-        #    boost component are deleted in the same frame, the boost component's
-        #    handler can still resolve identity via the car mapping.
-        deleted_actors = frame.get("deleted_actors", [])
-        for aid in deleted_actors:
-            for h in deleted_actor_handlers:
-                h.on_deleted_actor(ctx, aid)
-        for aid in deleted_actors:
-            ctx.car_actors.discard(aid)
-            ctx.ball_actors.discard(aid)
-            ctx.boost_comp_actors.discard(aid)
-            ctx.resolver.remove_actor(aid)
-            ctx.actor_team.pop(aid, None)
-            ctx.actor_position.pop(aid, None)
+        _process_frame(
+            ctx, frame, loop_obj_ids, update_dispatch, deleted_actor_handlers
+        )
 
     fa = FrameAnalysis()
     for h in handlers:
