@@ -98,6 +98,24 @@ class IdentityResolver:
         return [aid for aid, ident in self._pri_identity.items() if ident in identities]
 
 
+@dataclass(frozen=True)
+class PlayerMovementStats:
+    boost_per_minute: float
+    avg_speed: float
+    time_supersonic_pct: float
+    small_pads: int
+    large_pads: int
+    stolen_small_pads: int
+    stolen_large_pads: int
+
+
+@dataclass(frozen=True)
+class PlayerZoneSeconds:
+    defensive: float
+    neutral: float
+    offensive: float
+
+
 @dataclass
 class FrameAnalysis:
     team_possession_seconds: float | None = None
@@ -112,8 +130,8 @@ class FrameAnalysis:
     opponent_boost_collected: int | None = None
     team_boost_stolen: int | None = None
     opponent_boost_stolen: int | None = None
-    movement_stats: dict[tuple[str, str], dict[str, float | int]] = field(
-        default_factory=dict[tuple[str, str], dict[str, float | int]]
+    movement_stats: dict[tuple[str, str], PlayerMovementStats] = field(
+        default_factory=dict[tuple[str, str], PlayerMovementStats]
     )
     demos_received: dict[tuple[str, str], int] = field(
         default_factory=dict[tuple[str, str], int]
@@ -121,8 +139,8 @@ class FrameAnalysis:
     match_events: list[tuple[str, float, str, str, int]] = field(
         default_factory=list[tuple[str, float, str, str, int]]
     )
-    player_zone_seconds: dict[tuple[str, str], dict[str, float]] = field(
-        default_factory=dict[tuple[str, str], dict[str, float]]
+    player_zone_seconds: dict[tuple[str, str], PlayerZoneSeconds] = field(
+        default_factory=dict[tuple[str, str], PlayerZoneSeconds]
     )
 
 
@@ -415,7 +433,11 @@ class PlayerZonesHandler(FrameHandler):
         for car_id in list(self.car_samples):
             self._flush_car(ctx, car_id)
         result.player_zone_seconds = {
-            identity: {k: round(v, 2) for k, v in zones.items()}
+            identity: PlayerZoneSeconds(
+                defensive=round(zones["defensive"], 2),
+                neutral=round(zones["neutral"], 2),
+                offensive=round(zones["offensive"], 2),
+            )
             for identity, zones in self.identity_zone_times.items()
         }
 
@@ -699,12 +721,8 @@ class MovementHandler(FrameHandler):
         )
 
         for identity in all_identities:
-            stats: dict[str, float] = {}
-
             consumed = self.identity_boost_consumed.get(identity, 0.0)
-            stats["boost_per_minute"] = round(
-                (consumed / 255 * 100) / (self.duration / 60), 1
-            )
+            boost_per_minute = round((consumed / 255 * 100) / (self.duration / 60), 1)
 
             speeds = self.identity_speeds.get(identity, [])
             if speeds:
@@ -721,23 +739,24 @@ class MovementHandler(FrameHandler):
                         total_weight += dt
                         if s1 >= 2200:
                             supersonic_time += dt
-                stats["avg_speed"] = (
+                avg_speed = (
                     round(weighted_sum / total_weight) if total_weight > 0 else 0
                 )
-                stats["time_supersonic_pct"] = round(
-                    supersonic_time / self.duration * 100, 1
-                )
+                time_supersonic_pct = round(supersonic_time / self.duration * 100, 1)
             else:
-                stats["avg_speed"] = 0
-                stats["time_supersonic_pct"] = 0.0
+                avg_speed = 0
+                time_supersonic_pct = 0.0
 
             pad = self.identity_pads.get(identity, {})
-            stats["small_pads"] = pad.get("small_pads", 0)
-            stats["large_pads"] = pad.get("large_pads", 0)
-            stats["stolen_small_pads"] = pad.get("stolen_small_pads", 0)
-            stats["stolen_large_pads"] = pad.get("stolen_large_pads", 0)
-
-            result.movement_stats[identity] = stats
+            result.movement_stats[identity] = PlayerMovementStats(
+                boost_per_minute=boost_per_minute,
+                avg_speed=avg_speed,
+                time_supersonic_pct=time_supersonic_pct,
+                small_pads=pad.get("small_pads", 0),
+                large_pads=pad.get("large_pads", 0),
+                stolen_small_pads=pad.get("stolen_small_pads", 0),
+                stolen_large_pads=pad.get("stolen_large_pads", 0),
+            )
 
 
 class MatchEventsHandler(FrameHandler):

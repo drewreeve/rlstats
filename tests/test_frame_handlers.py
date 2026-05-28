@@ -317,9 +317,9 @@ def test_player_zones_handler_buckets_time_team0():
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
     zones = fa.player_zone_seconds[("steam", "AAA")]
-    assert zones["defensive"] == 1.5
-    assert zones["neutral"] == 1.0
-    assert zones["offensive"] == 1.5
+    assert zones.defensive == 1.5
+    assert zones.neutral == 1.0
+    assert zones.offensive == 1.5
 
 
 def test_player_zones_handler_reversed_for_team1():
@@ -344,9 +344,9 @@ def test_player_zones_handler_reversed_for_team1():
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
     zones = fa.player_zone_seconds[("steam", "BBB")]
-    assert zones["defensive"] == 1.5
-    assert zones["offensive"] == 1.5
-    assert zones["neutral"] == 0.0
+    assert zones.defensive == 1.5
+    assert zones.offensive == 1.5
+    assert zones.neutral == 0.0
 
 
 def test_player_zones_handler_accumulates_across_respawn():
@@ -379,9 +379,9 @@ def test_player_zones_handler_accumulates_across_respawn():
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
     zones = fa.player_zone_seconds[("steam", "AAA")]
-    assert zones["defensive"] == 1.5
-    assert zones["offensive"] == 1.5
-    assert zones["neutral"] == 0.0
+    assert zones.defensive == 1.5
+    assert zones.offensive == 1.5
+    assert zones.neutral == 0.0
 
 
 # -- DemolitionsHandler --
@@ -638,7 +638,7 @@ def test_movement_handler_attributes_boost_consumption_on_delete():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    bpm = fa.movement_stats[("steam", "PLAYER")]["boost_per_minute"]
+    bpm = fa.movement_stats[("steam", "PLAYER")].boost_per_minute
     # 55 / 255 * 100 / (300 / 60) = ~4.3
     assert bpm == 4.3
 
@@ -673,9 +673,9 @@ def test_movement_handler_accumulates_speed_samples():
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
     stats = fa.movement_stats[("steam", "PLAYER")]
-    assert stats["avg_speed"] > 0
+    assert stats.avg_speed > 0
     # 1 second of supersonic out of 60s duration = ~1.7%
-    assert stats["time_supersonic_pct"] > 0
+    assert stats.time_supersonic_pct > 0
 
 
 # -- MatchEventsHandler --

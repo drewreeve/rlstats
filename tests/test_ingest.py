@@ -697,8 +697,8 @@ def test_actor_id_recycling_separates_boost_consumption():
 
     # Player A consumed 35 units, Player B consumed 80 units (0-255 scale).
     # Without the recycling fix, Player B would get 35+80=115.
-    a_bpm = player_a["boost_per_minute"]
-    b_bpm = player_b["boost_per_minute"]
+    a_bpm = player_a.boost_per_minute
+    b_bpm = player_b.boost_per_minute
     assert b_bpm > a_bpm, (
         f"Player B ({b_bpm}) should have higher boost/min than A ({a_bpm})"
     )
@@ -806,7 +806,7 @@ def test_boost_attributed_when_car_and_boost_comp_deleted_same_frame():
 
     player_a = stats.get(("steam", "AAA"))
     assert player_a is not None, "Player A missing from stats"
-    assert player_a["boost_per_minute"] > 0, (
+    assert player_a.boost_per_minute > 0, (
         "boost should be attributed even when car and boost comp deleted in same frame"
     )
 

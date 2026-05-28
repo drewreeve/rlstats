@@ -304,8 +304,8 @@ def _insert_match_players(
             continue
         demos = frame_analysis.demolitions.get(identity, 0)
         demos_recv = frame_analysis.demos_received.get(identity, 0)
-        mv = frame_analysis.movement_stats.get(identity, {})
-        pz = frame_analysis.player_zone_seconds.get(identity, {})
+        mv = frame_analysis.movement_stats.get(identity)
+        pz = frame_analysis.player_zone_seconds.get(identity)
         conn.execute(
             """
             INSERT INTO match_players (
@@ -346,16 +346,16 @@ def _insert_match_players(
                 player.get("Score", 0),
                 demos,
                 demos_recv,
-                mv.get("boost_per_minute"),
-                mv.get("avg_speed"),
-                mv.get("time_supersonic_pct"),
-                mv.get("small_pads"),
-                mv.get("large_pads"),
-                mv.get("stolen_small_pads"),
-                mv.get("stolen_large_pads"),
-                pz.get("defensive"),
-                pz.get("neutral"),
-                pz.get("offensive"),
+                mv.boost_per_minute if mv else None,
+                mv.avg_speed if mv else None,
+                mv.time_supersonic_pct if mv else None,
+                mv.small_pads if mv else None,
+                mv.large_pads if mv else None,
+                mv.stolen_small_pads if mv else None,
+                mv.stolen_large_pads if mv else None,
+                pz.defensive if pz else None,
+                pz.neutral if pz else None,
+                pz.offensive if pz else None,
             ),
         )
 
