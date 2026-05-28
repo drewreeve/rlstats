@@ -99,6 +99,15 @@ class IdentityResolver:
 
 
 @dataclass(frozen=True)
+class MatchEvent:
+    event_type: str
+    game_seconds: float
+    platform: str
+    platform_id: str
+    team: int
+
+
+@dataclass(frozen=True)
 class PlayerMovementStats:
     boost_per_minute: float
     avg_speed: float
@@ -136,9 +145,7 @@ class FrameAnalysis:
     demos_received: dict[tuple[str, str], int] = field(
         default_factory=dict[tuple[str, str], int]
     )
-    match_events: list[tuple[str, float, str, str, int]] = field(
-        default_factory=list[tuple[str, float, str, str, int]]
-    )
+    match_events: list[MatchEvent] = field(default_factory=list[MatchEvent])
     player_zone_seconds: dict[tuple[str, str], PlayerZoneSeconds] = field(
         default_factory=dict[tuple[str, str], PlayerZoneSeconds]
     )
@@ -892,7 +899,9 @@ class MatchEventsHandler(FrameHandler):
             if identity is None or team is None:
                 continue
             gs = frame_to_game_seconds(ft)
-            result.match_events.append((event_type, gs, identity[0], identity[1], team))
+            result.match_events.append(
+                MatchEvent(event_type, gs, identity[0], identity[1], team)
+            )
 
 
 # -- Orchestrator --

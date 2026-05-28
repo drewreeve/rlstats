@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 
-from frame_analysis import analyze_frames
+from frame_analysis import MatchEvent, analyze_frames
 from ingest import (
     OffensivePairing,
     SkipReason,
@@ -317,11 +317,11 @@ def test_overtime_goals_positioned_after_regulation():
     )
     events = fa.match_events
 
-    goals = [e for e in events if e[0] == "goal"]
+    goals = [e for e in events if e.event_type == "goal"]
     assert len(goals) == 3
 
     # Goals should be in chronological order
-    goal_times = [g[1] for g in goals]
+    goal_times = [g.game_seconds for g in goals]
     assert goal_times == sorted(goal_times)
 
     # The overtime goal must be past regulation (>300 game_seconds)
@@ -336,7 +336,7 @@ def test_assist_events_in_frame_analysis():
         300,
         "3v3",
     )
-    assists = [e for e in fa.match_events if e[0] == "assist"]
+    assists = [e for e in fa.match_events if e.event_type == "assist"]
     assert len(assists) == 6
 
 
@@ -383,8 +383,8 @@ def test_offensive_pairings_idempotent():
 
 def _ev(
     event_type: str, game_seconds: float, platform: str, platform_id: str, team: int
-) -> tuple[str, float, str, str, int]:
-    return (event_type, game_seconds, platform, platform_id, team)
+) -> MatchEvent:
+    return MatchEvent(event_type, game_seconds, platform, platform_id, team)
 
 
 def test_correlate_pairings_basic():

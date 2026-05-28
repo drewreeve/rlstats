@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from frame_analysis import FrameAnalysis, analyze_frames
+from frame_analysis import FrameAnalysis, MatchEvent, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
 from rrrocket_schema import ParsedReplay, PlayerStatEntry
 
@@ -52,17 +52,17 @@ class OffensivePairing:
 
 
 def correlate_pairings(
-    events: list[tuple[str, float, str, str, int]],
+    events: list[MatchEvent],
     window: float = PAIRING_WINDOW,
 ) -> list[OffensivePairing]:
     goal_events: list[tuple[float, PlayerIdentity, int]] = []
     assist_events: list[tuple[float, PlayerIdentity, int]] = []
-    for event_type, game_seconds, platform, platform_id, team in events:
-        identity = PlayerIdentity(platform, platform_id)
-        if event_type == "goal":
-            goal_events.append((game_seconds, identity, team))
-        elif event_type == "assist":
-            assist_events.append((game_seconds, identity, team))
+    for e in events:
+        identity = PlayerIdentity(e.platform, e.platform_id)
+        if e.event_type == "goal":
+            goal_events.append((e.game_seconds, identity, e.team))
+        elif e.event_type == "assist":
+            assist_events.append((e.game_seconds, identity, e.team))
 
     pairings: list[OffensivePairing] = []
     used_assists: set[int] = set()
@@ -479,19 +479,13 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
     )
 
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
-    for (
-        event_type,
-        game_seconds,
-        platform,
-        platform_id,
-        ev_team,
-    ) in analysis.frame_analysis.match_events:
-        player_id = player_id_map.get(PlayerIdentity(platform, platform_id))
+    for e in analysis.frame_analysis.match_events:
+        player_id = player_id_map.get(PlayerIdentity(e.platform, e.platform_id))
         if player_id is None:
             continue
         conn.execute(
             "INSERT INTO match_events (match_id, event_type, game_seconds, player_id, team) VALUES (?, ?, ?, ?, ?)",
-            (match_id, event_type, game_seconds, player_id, ev_team),
+            (match_id, e.event_type, e.game_seconds, player_id, e.team),
         )
 
     tracked_identities = set(analysis.tracked_names.keys())

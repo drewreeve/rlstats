@@ -710,11 +710,11 @@ def test_match_events_handler_emits_goal_event_with_game_time():
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
     assert len(fa.match_events) == 1
-    event_type, _gs, platform, platform_id, team = fa.match_events[0]
-    assert event_type == "goal"
-    assert platform == "steam"
-    assert platform_id == "TRACKED"
-    assert team == 0
+    ev = fa.match_events[0]
+    assert ev.event_type == "goal"
+    assert ev.platform == "steam"
+    assert ev.platform_id == "TRACKED"
+    assert ev.team == 0
 
 
 def test_match_events_handler_emits_nothing_without_clock():
@@ -758,4 +758,4 @@ def test_match_events_handler_emits_multiple_when_counter_jumps():
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
     assert len(fa.match_events) == 3
-    assert all(e[0] == "goal" for e in fa.match_events)
+    assert all(e.event_type == "goal" for e in fa.match_events)
