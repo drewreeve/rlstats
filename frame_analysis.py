@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
 
-from player_identity import from_network_frame
+from player_identity import PlayerIdentity, from_network_frame
 from rrrocket_schema import FrameData, ParsedReplay, UpdatedActor
 
 # Coordinates are taken from wiki.rlbot.org
@@ -125,6 +125,16 @@ class PlayerZoneSeconds:
     offensive: float
 
 
+@dataclass(frozen=True)
+class PlayerMatchStats:
+    """Per-player metrics computed from frame analysis. See CONTEXT.md: Player Match Stats."""
+
+    demos: int = 0
+    demos_received: int = 0
+    movement: PlayerMovementStats | None = None
+    zone_seconds: PlayerZoneSeconds | None = None
+
+
 @dataclass
 class FrameAnalysis:
     team_possession_seconds: float | None = None
@@ -149,6 +159,29 @@ class FrameAnalysis:
     player_zone_seconds: dict[tuple[str, str], PlayerZoneSeconds] = field(
         default_factory=dict[tuple[str, str], PlayerZoneSeconds]
     )
+
+    def per_player(self) -> dict[PlayerIdentity, PlayerMatchStats]:
+        """Assemble per-player match stats keyed by player identity.
+
+        This is the intended interface for external callers (e.g. ingest.py).
+        The raw per-player dicts above are populated by handlers and should not
+        be accessed outside this module.
+        """
+        identities = (
+            self.demolitions.keys()
+            | self.demos_received.keys()
+            | self.movement_stats.keys()
+            | self.player_zone_seconds.keys()
+        )
+        return {
+            PlayerIdentity(*identity): PlayerMatchStats(
+                demos=self.demolitions.get(identity, 0),
+                demos_received=self.demos_received.get(identity, 0),
+                movement=self.movement_stats.get(identity),
+                zone_seconds=self.player_zone_seconds.get(identity),
+            )
+            for identity in identities
+        }
 
 
 @dataclass

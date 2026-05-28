@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from frame_analysis import FrameAnalysis, MatchEvent, analyze_frames
+from frame_analysis import FrameAnalysis, MatchEvent, PlayerMatchStats, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
 from rrrocket_schema import ParsedReplay, PlayerStatEntry
 
@@ -296,16 +296,16 @@ def _insert_match_players(
     match_id: int,
     player_stats: dict[PlayerIdentity, PlayerStatEntry],
     player_id_map: dict[PlayerIdentity, int],
-    frame_analysis: FrameAnalysis,
+    per_player: dict[PlayerIdentity, PlayerMatchStats],
 ):
+    _empty = PlayerMatchStats()
     for identity, player in player_stats.items():
         player_id = player_id_map.get(identity)
         if player_id is None:
             continue
-        demos = frame_analysis.demolitions.get(identity, 0)
-        demos_recv = frame_analysis.demos_received.get(identity, 0)
-        mv = frame_analysis.movement_stats.get(identity)
-        pz = frame_analysis.player_zone_seconds.get(identity)
+        stats = per_player.get(identity, _empty)
+        mv = stats.movement
+        pz = stats.zone_seconds
         conn.execute(
             """
             INSERT INTO match_players (
@@ -344,8 +344,8 @@ def _insert_match_players(
                 player.get("Saves", 0),
                 player.get("Shots", 0),
                 player.get("Score", 0),
-                demos,
-                demos_recv,
+                stats.demos,
+                stats.demos_received,
                 mv.boost_per_minute if mv else None,
                 mv.avg_speed if mv else None,
                 mv.time_supersonic_pct if mv else None,
@@ -475,7 +475,7 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
         match_id,
         analysis.player_stats,
         player_id_map,
-        analysis.frame_analysis,
+        analysis.frame_analysis.per_player(),
     )
 
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))

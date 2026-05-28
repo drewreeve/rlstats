@@ -37,6 +37,10 @@ Zone membership is determined by y-coordinate: for team 0, the defensive zone is
 
 Zone time is tracked both for the ball (on `matches`) and per-player (on `match_players`), measured in seconds.
 
+## Player Match Stats
+
+**Player match stats** are the per-player metrics computed from replay frame analysis: demolitions dealt, demolitions received, movement data (boost per minute, average speed, supersonic percentage, pad pickups), and zone time. They complement the scoreboard stats sourced from the replay's properties blob (goals, assists, saves, shots, score) and are assembled by `FrameAnalysis.per_player()` keyed by player identity.
+
 ## Offensive Pairing
 
 An **offensive pairing** is a matched (scorer, assister) pair within a single match: a goal and an assist by different players on the same team, where the assist occurred within `PAIRING_WINDOW` seconds of the goal. Only pairings where both players are tracked are recorded. The pairing algorithm is greedy: for each goal (processed in order), it claims the temporally nearest unclaimed assist within the window.

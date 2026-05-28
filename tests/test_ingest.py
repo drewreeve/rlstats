@@ -688,17 +688,19 @@ def test_actor_id_recycling_separates_boost_consumption():
         duration=300,
         game_mode="3v3",
     )
-    stats = fa.movement_stats
+    pp = fa.per_player()
 
-    player_a = stats.get(("steam", "AAA"))
-    player_b = stats.get(("steam", "BBB"))
+    player_a = pp.get(PlayerIdentity("steam", "AAA"))
+    player_b = pp.get(PlayerIdentity("steam", "BBB"))
     assert player_a is not None, "Player A missing from stats"
     assert player_b is not None, "Player B missing from stats"
+    assert player_a.movement is not None, "Player A movement stats missing"
+    assert player_b.movement is not None, "Player B movement stats missing"
 
     # Player A consumed 35 units, Player B consumed 80 units (0-255 scale).
     # Without the recycling fix, Player B would get 35+80=115.
-    a_bpm = player_a.boost_per_minute
-    b_bpm = player_b.boost_per_minute
+    a_bpm = player_a.movement.boost_per_minute
+    b_bpm = player_b.movement.boost_per_minute
     assert b_bpm > a_bpm, (
         f"Player B ({b_bpm}) should have higher boost/min than A ({a_bpm})"
     )
@@ -802,11 +804,12 @@ def test_boost_attributed_when_car_and_boost_comp_deleted_same_frame():
         duration=300,
         game_mode="3v3",
     )
-    stats = fa.movement_stats
+    pp = fa.per_player()
 
-    player_a = stats.get(("steam", "AAA"))
+    player_a = pp.get(PlayerIdentity("steam", "AAA"))
     assert player_a is not None, "Player A missing from stats"
-    assert player_a.boost_per_minute > 0, (
+    assert player_a.movement is not None, "Player A movement stats missing"
+    assert player_a.movement.boost_per_minute > 0, (
         "boost should be attributed even when car and boost comp deleted in same frame"
     )
 
@@ -893,7 +896,8 @@ def test_demos_received_when_demolish_and_deletion_same_frame():
         game_mode="3v3",
     )
 
-    assert fa.demos_received.get(("steam", "VICTIM")) == 1, (
+    victim = fa.per_player().get(PlayerIdentity("steam", "VICTIM"))
+    assert victim is not None and victim.demos_received == 1, (
         "demo should be counted even when victim car is deleted in the same frame as the demolish notification"
     )
 

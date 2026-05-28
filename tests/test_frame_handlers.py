@@ -21,6 +21,7 @@ from frame_analysis import (
     PlayerZonesHandler,
     PossessionHandler,
 )
+from player_identity import PlayerIdentity
 from rrrocket_schema import UpdatedActor
 
 HIT_TEAM_OID = 100
@@ -275,7 +276,7 @@ def test_player_zones_handler_ignores_non_car_actors():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.player_zone_seconds == {}
+    assert fa.per_player() == {}
 
 
 def test_player_zones_handler_ignores_frames_not_playing():
@@ -293,7 +294,7 @@ def test_player_zones_handler_ignores_frames_not_playing():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.player_zone_seconds == {}
+    assert fa.per_player() == {}
 
 
 def test_player_zones_handler_buckets_time_team0():
@@ -316,7 +317,8 @@ def test_player_zones_handler_buckets_time_team0():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    zones = fa.player_zone_seconds[("steam", "AAA")]
+    zones = fa.per_player()[PlayerIdentity("steam", "AAA")].zone_seconds
+    assert zones is not None
     assert zones.defensive == 1.5
     assert zones.neutral == 1.0
     assert zones.offensive == 1.5
@@ -343,7 +345,8 @@ def test_player_zones_handler_reversed_for_team1():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    zones = fa.player_zone_seconds[("steam", "BBB")]
+    zones = fa.per_player()[PlayerIdentity("steam", "BBB")].zone_seconds
+    assert zones is not None
     assert zones.defensive == 1.5
     assert zones.offensive == 1.5
     assert zones.neutral == 0.0
@@ -378,7 +381,8 @@ def test_player_zones_handler_accumulates_across_respawn():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    zones = fa.player_zone_seconds[("steam", "AAA")]
+    zones = fa.per_player()[PlayerIdentity("steam", "AAA")].zone_seconds
+    assert zones is not None
     assert zones.defensive == 1.5
     assert zones.offensive == 1.5
     assert zones.neutral == 0.0
@@ -401,7 +405,9 @@ def test_demolitions_handler_maps_counter_max_to_identity():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.demolitions == {("steam", "AAA"): 2, ("steam", "BBB"): 3}
+    pp = fa.per_player()
+    assert pp[PlayerIdentity("steam", "AAA")].demos == 2
+    assert pp[PlayerIdentity("steam", "BBB")].demos == 3
 
 
 def test_demolitions_handler_skips_unknown_identities():
@@ -411,7 +417,7 @@ def test_demolitions_handler_skips_unknown_identities():
     h.on_update(ctx, {"actor_id": 9, "object_id": DEMO_OID, "attribute": {"Int": 4}})
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.demolitions == {}
+    assert fa.per_player() == {}
 
 
 # -- DemosReceivedHandler --
@@ -454,7 +460,7 @@ def test_demos_received_handler_counts_active_transitions():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.demos_received == {("steam", "VICTIM"): 2}
+    assert fa.per_player()[PlayerIdentity("steam", "VICTIM")].demos_received == 2
 
 
 def test_demos_received_handler_skips_self_demolish():
@@ -470,7 +476,7 @@ def test_demos_received_handler_skips_self_demolish():
     )
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.demos_received == {}
+    assert fa.per_player() == {}
 
 
 def test_demos_received_handler_skips_when_attacker_inactive():
@@ -488,7 +494,7 @@ def test_demos_received_handler_skips_when_attacker_inactive():
     )
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.demos_received == {}
+    assert fa.per_player() == {}
 
 
 def test_demos_received_handler_cleans_up_on_delete():
@@ -505,7 +511,7 @@ def test_demos_received_handler_cleans_up_on_delete():
     h.on_update(ctx, _demolish(actor_id=7, victim_active=True, victim_actor=7))
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.demos_received == {("steam", "VICTIM"): 2}
+    assert fa.per_player()[PlayerIdentity("steam", "VICTIM")].demos_received == 2
 
 
 # -- BoostStatsHandler --
@@ -638,9 +644,10 @@ def test_movement_handler_attributes_boost_consumption_on_delete():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    bpm = fa.movement_stats[("steam", "PLAYER")].boost_per_minute
+    m = fa.per_player()[PlayerIdentity("steam", "PLAYER")].movement
+    assert m is not None
     # 55 / 255 * 100 / (300 / 60) = ~4.3
-    assert bpm == 4.3
+    assert m.boost_per_minute == 4.3
 
 
 def test_movement_handler_skips_boost_when_not_playing():
@@ -653,7 +660,7 @@ def test_movement_handler_skips_boost_when_not_playing():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    assert fa.movement_stats == {}
+    assert fa.per_player() == {}
 
 
 def test_movement_handler_accumulates_speed_samples():
@@ -672,10 +679,11 @@ def test_movement_handler_accumulates_speed_samples():
 
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
-    stats = fa.movement_stats[("steam", "PLAYER")]
-    assert stats.avg_speed > 0
+    m = fa.per_player()[PlayerIdentity("steam", "PLAYER")].movement
+    assert m is not None
+    assert m.avg_speed > 0
     # 1 second of supersonic out of 60s duration = ~1.7%
-    assert stats.time_supersonic_pct > 0
+    assert m.time_supersonic_pct > 0
 
 
 # -- MatchEventsHandler --
