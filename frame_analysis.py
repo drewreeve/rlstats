@@ -279,8 +279,8 @@ def _parse_pickup(
     return instigator, team, is_big, is_stolen
 
 
-def _resolve_obj_ids(objects: list[str]) -> dict[str, int | None]:
-    """Resolve all object names to IDs in a single pass."""
+def _resolve_obj_ids(replay: ParsedReplay) -> dict[str, int | None]:
+    """Resolve handler-relevant object names to IDs via the replay's object index."""
     names = {
         "TAGame.Ball_TA:HitTeamNum",
         "Archetypes.Ball.Ball_Default",
@@ -304,8 +304,7 @@ def _resolve_obj_ids(objects: list[str]) -> dict[str, int | None]:
         "TAGame.PRI_TA:MatchSaves",
         "TAGame.PRI_TA:MatchAssists",
     }
-    index = {name: i for i, name in enumerate(objects) if name in names}
-    return {name: index.get(name) for name in names}
+    return {name: replay.object_index.get(name) for name in names}
 
 
 # -- Handlers --
@@ -1054,13 +1053,12 @@ def analyze_frames(
     game_mode: str | None,
 ) -> FrameAnalysis:
 
-    objects = replay.objects
     frames = replay.frames
 
-    if not objects or not frames:
+    if not replay.object_index or not frames:
         return FrameAnalysis()
 
-    obj_ids = _resolve_obj_ids(objects)
+    obj_ids = _resolve_obj_ids(replay)
 
     loop_obj_ids = _FrameLoopObjectIds(
         car_archetype=obj_ids.get("Archetypes.Car.Car_Default"),

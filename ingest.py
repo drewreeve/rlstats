@@ -1,7 +1,6 @@
 # Replay Ingestion Pipeline
 # rrrocket JSON -> SQLite
 
-import datetime
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -136,27 +135,6 @@ def sync_tracked_players(
 
 
 _SQL_DT_FMT = "%Y-%m-%d %H:%M:%S"
-
-
-def _resolve_played_at(replay: ParsedReplay) -> str | None:
-    # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43
-    # replays fall back to BakkesMod's GameStartTime in debug_info.
-    epoch = replay.properties.get("MatchStartEpoch")
-    if epoch:
-        try:
-            return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC).strftime(
-                _SQL_DT_FMT
-            )
-        except ValueError, TypeError:
-            pass
-    for entry in replay.debug_info:
-        if entry.get("user") == "GameStartTime":
-            try:
-                dt = datetime.datetime.fromisoformat(entry["text"])
-                return dt.astimezone(datetime.UTC).strftime(_SQL_DT_FMT)
-            except ValueError, KeyError:
-                continue
-    return None
 
 
 def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
@@ -366,7 +344,7 @@ def validate_replay(
     if not replay.match_guid:
         return SkipReason.NO_MATCH_GUID
 
-    if not _resolve_played_at(replay):
+    if replay.played_at is None:
         return SkipReason.MISSING_DATE
 
     player_stats = {
@@ -395,8 +373,9 @@ def analyze_replay(
     assert replay_hash is not None  # guaranteed by validate_replay
     # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43 replays fall back to
     # BakkesMod's GameStartTime in debug_info (absent on replays saved manually from match history)
-    played_at_sql = _resolve_played_at(replay)
-    assert played_at_sql is not None
+    _played_at = replay.played_at
+    assert _played_at is not None  # guaranteed by validate_replay
+    played_at_sql = _played_at.strftime(_SQL_DT_FMT)
     duration = props.get("TotalSecondsPlayed")
     forfeit = 1 if props.get("bForfeit") else 0
     team_size = props.get("TeamSize")

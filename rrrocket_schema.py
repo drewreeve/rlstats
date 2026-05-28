@@ -15,6 +15,7 @@ dataclass. All downstream consumers (ingest.py, frame_analysis.py) accept
 is first read.
 """
 
+import datetime
 from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
 
@@ -86,17 +87,36 @@ class ReplayJSON(TypedDict, total=False):
 class ParsedReplay:
     match_guid: str | None
     properties: ReplayProperties
-    objects: list[str]
+    object_index: dict[str, int]
     frames: list[FrameData]
     debug_info: list[DebugInfoEntry]
+
+    @property
+    def played_at(self) -> datetime.datetime | None:
+        """Resolve match start time from MatchStartEpoch (patch 2.43+) or BakkesMod debug_info."""
+        epoch = self.properties.get("MatchStartEpoch")
+        if epoch:
+            try:
+                return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC)
+            except ValueError, TypeError:
+                pass
+        for entry in self.debug_info:
+            if entry.get("user") == "GameStartTime":
+                try:
+                    dt = datetime.datetime.fromisoformat(entry["text"])
+                    return dt.astimezone(datetime.UTC)
+                except ValueError, KeyError:
+                    continue
+        return None
 
 
 def parse(raw: ReplayJSON) -> ParsedReplay:
     props: ReplayProperties = raw.get("properties") or {}
+    objects = raw.get("objects") or []
     return ParsedReplay(
         match_guid=props.get("MatchGUID") or props.get("MatchGuid"),
         properties=props,
-        objects=raw.get("objects") or [],
+        object_index={name: i for i, name in enumerate(objects)},
         frames=(raw.get("network_frames") or {}).get("frames") or [],
         debug_info=raw.get("debug_info") or [],
     )
