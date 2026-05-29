@@ -86,37 +86,42 @@ class ReplayJSON(TypedDict, total=False):
 @dataclass(frozen=True)
 class ParsedReplay:
     match_guid: str | None
+    played_at: datetime.datetime | None
     properties: ReplayProperties
     object_index: dict[str, int]
     frames: list[FrameData]
     debug_info: list[DebugInfoEntry]
 
-    @property
-    def played_at(self) -> datetime.datetime | None:
-        """Resolve match start time from MatchStartEpoch (patch 2.43+) or BakkesMod debug_info."""
-        epoch = self.properties.get("MatchStartEpoch")
-        if epoch:
+
+def _resolve_played_at(
+    props: ReplayProperties, debug_info: list[DebugInfoEntry]
+) -> datetime.datetime | None:
+    """Resolve match start time from MatchStartEpoch (patch 2.43+) or BakkesMod debug_info."""
+    epoch = props.get("MatchStartEpoch")
+    if epoch:
+        try:
+            return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC)
+        except ValueError, TypeError:
+            pass
+    for entry in debug_info:
+        if entry.get("user") == "GameStartTime":
             try:
-                return datetime.datetime.fromtimestamp(int(epoch), datetime.UTC)
-            except ValueError, TypeError:
-                pass
-        for entry in self.debug_info:
-            if entry.get("user") == "GameStartTime":
-                try:
-                    dt = datetime.datetime.fromisoformat(entry["text"])
-                    return dt.astimezone(datetime.UTC)
-                except ValueError, KeyError:
-                    continue
-        return None
+                dt = datetime.datetime.fromisoformat(entry["text"])
+                return dt.astimezone(datetime.UTC)
+            except ValueError, KeyError:
+                continue
+    return None
 
 
 def parse(raw: ReplayJSON) -> ParsedReplay:
     props: ReplayProperties = raw.get("properties") or {}
     objects = raw.get("objects") or []
+    debug_info = raw.get("debug_info") or []
     return ParsedReplay(
         match_guid=props.get("MatchGUID") or props.get("MatchGuid"),
+        played_at=_resolve_played_at(props, debug_info),
         properties=props,
         object_index={name: i for i, name in enumerate(objects)},
         frames=(raw.get("network_frames") or {}).get("frames") or [],
-        debug_info=raw.get("debug_info") or [],
+        debug_info=debug_info,
     )

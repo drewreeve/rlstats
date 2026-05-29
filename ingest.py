@@ -395,11 +395,8 @@ def analyze_replay(
 
     replay_hash = replay.match_guid
     assert replay_hash is not None  # guaranteed by validate_replay
-    # MatchStartEpoch was introduced in RL patch 2.43 (September 2024); pre-2.43 replays fall back to
-    # BakkesMod's GameStartTime in debug_info (absent on replays saved manually from match history)
-    _played_at = replay.played_at
-    assert _played_at is not None  # guaranteed by validate_replay
-    played_at_sql = _played_at.strftime(_SQL_DT_FMT)
+    assert replay.played_at is not None  # guaranteed by validate_replay
+    played_at_sql = replay.played_at.strftime(_SQL_DT_FMT)
     duration = props.get("TotalSecondsPlayed")
     forfeit = 1 if props.get("bForfeit") else 0
     team_size = props.get("TeamSize")
