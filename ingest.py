@@ -24,22 +24,27 @@ PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as
 
 
 @dataclass(frozen=True)
+class MatchPerspective:
+    team: int | None
+    team_score: int | None
+    opponent_score: int | None
+    result: str
+    mvp_identity: PlayerIdentity | None
+
+
+@dataclass(frozen=True)
 class ReplayAnalysis:
     replay_hash: str
     played_at_sql: str
     duration: int | None
     forfeit: int
     team_size: int | None
-    team: int | None
-    team_score: int | None
-    opponent_score: int | None
-    result: str
     map_name: str | None
     game_mode: str | None
     frame_analysis: FrameAnalysis
     player_stats: dict[PlayerIdentity, PlayerStatEntry]
-    mvp_identity: PlayerIdentity | None
     tracked_names: dict[PlayerIdentity, str]
+    perspective: MatchPerspective
 
 
 @dataclass(frozen=True)
@@ -147,27 +152,47 @@ def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
     return None
 
 
-def _resolve_team_scores(
-    tracked_players: list[PlayerStatEntry], team0_score: Any, team1_score: Any
-) -> tuple[Any, Any, Any]:
-    tracked_teams = {p.get("Team") for p in tracked_players}
+def resolve_perspective(
+    player_stats: dict[PlayerIdentity, PlayerStatEntry],
+    tracked_players: dict[PlayerIdentity, str],
+    team0_score: Any,
+    team1_score: Any,
+) -> MatchPerspective:
+    tracked_raw = [v for k, v in player_stats.items() if k in tracked_players]
+    tracked_teams = {p.get("Team") for p in tracked_raw}
     team = tracked_teams.pop() if tracked_teams else None
 
     if team == 0:
-        return team, team0_score, team1_score
-    if team == 1:
-        return team, team1_score, team0_score
-    return team, None, None
+        team_score, opponent_score = team0_score, team1_score
+    elif team == 1:
+        team_score, opponent_score = team1_score, team0_score
+    else:
+        team_score, opponent_score = None, None
 
-
-def _resolve_result(team_score: Any, opponent_score: Any) -> str | None:
+    result: str | None
     if team_score is None or opponent_score is None:
-        return None
-    if team_score > opponent_score:
-        return "win"
-    if team_score < opponent_score:
-        return "loss"
-    return None
+        result = None
+    elif team_score > opponent_score:
+        result = "win"
+    elif team_score < opponent_score:
+        result = "loss"
+    else:
+        result = None
+    assert result is not None
+
+    tracked_identities = [k for k in player_stats if k in tracked_players]
+    mvp_identity = (
+        max(tracked_identities, key=lambda k: player_stats[k].get("Score", 0))
+        if tracked_identities
+        else None
+    )
+    return MatchPerspective(
+        team=team,
+        team_score=team_score,
+        opponent_score=opponent_score,
+        result=result,
+        mvp_identity=mvp_identity,
+    )
 
 
 def _upsert_match(
@@ -382,30 +407,25 @@ def analyze_replay(
     map_name = props.get("MapName")
     game_mode = _detect_game_mode(team_size, map_name)
 
-    team0_score = props.get("Team0Score", 0)
-    team1_score = props.get("Team1Score", 0)
     player_stats: dict[PlayerIdentity, PlayerStatEntry] = {
         identity: p
         for p in props.get("PlayerStats", [])
         if not p.get("bBot") and (identity := from_player_stats(p))
     }
-    tracked_raw = [v for k, v in player_stats.items() if k in tracked_players]
-    team, team_score, opponent_score = _resolve_team_scores(
-        tracked_raw, team0_score, team1_score
+    perspective = resolve_perspective(
+        player_stats,
+        tracked_players,
+        props.get("Team0Score", 0),
+        props.get("Team1Score", 0),
     )
-    result = _resolve_result(team_score, opponent_score)
-    assert result is not None
 
-    fa = analyze_frames(replay, team, set(tracked_players.keys()), duration, game_mode)
+    fa = analyze_frames(
+        replay, perspective.team, set(tracked_players.keys()), duration, game_mode
+    )
 
     tracked_names = {
         k: tracked_players[k] for k in player_stats if k in tracked_players
     }
-    mvp_identity = (
-        max(tracked_names, key=lambda k: player_stats[k].get("Score", 0))
-        if tracked_names
-        else None
-    )
 
     return ReplayAnalysis(
         replay_hash=replay_hash,
@@ -413,23 +433,22 @@ def analyze_replay(
         duration=duration,
         forfeit=forfeit,
         team_size=team_size,
-        team=team,
-        team_score=team_score,
-        opponent_score=opponent_score,
-        result=result,
         map_name=map_name,
         game_mode=game_mode,
         frame_analysis=fa,
         player_stats=player_stats,
-        mvp_identity=mvp_identity,
         tracked_names=tracked_names,
+        perspective=perspective,
     )
 
 
 def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
     player_id_map = _upsert_players(conn, analysis.player_stats, analysis.tracked_names)
+    perspective = analysis.perspective
     mvp_player_id = (
-        player_id_map.get(analysis.mvp_identity) if analysis.mvp_identity else None
+        player_id_map.get(perspective.mvp_identity)
+        if perspective.mvp_identity
+        else None
     )
 
     match_id = _upsert_match(
@@ -439,10 +458,10 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
         duration=analysis.duration,
         forfeit=analysis.forfeit,
         team_size=analysis.team_size,
-        team=analysis.team,
-        team_score=analysis.team_score,
-        opponent_score=analysis.opponent_score,
-        result=analysis.result,
+        team=perspective.team,
+        team_score=perspective.team_score,
+        opponent_score=perspective.opponent_score,
+        result=perspective.result,
         mvp_player_id=mvp_player_id,
         map_name=analysis.map_name,
         game_mode=analysis.game_mode,

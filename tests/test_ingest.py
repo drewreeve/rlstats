@@ -6,17 +6,19 @@ import pytest
 
 from frame_analysis import MatchEvent, analyze_frames
 from ingest import (
+    MatchPerspective,
     OffensivePairing,
     SkipReason,
     analyze_replay,
     correlate_pairings,
     get_or_create_player,
+    resolve_perspective,
     sync_tracked_players,
     validate_replay,
     write_match,
 )
 from player_identity import PlayerIdentity
-from rrrocket_schema import ReplayJSON, ReplayProperties
+from rrrocket_schema import PlayerStatEntry, ReplayJSON, ReplayProperties
 from rrrocket_schema import parse as parse_replay
 from tests.fixtures import TRACKED_PLAYERS, cached_db, in_memory_db, load_replay
 
@@ -1034,3 +1036,67 @@ def test_sync_tracked_players_promotes_untracked_player():
     )
     sync_tracked_players(conn, {identity: "NewName"})
     assert _fetch_player(conn, identity) == ("NewName", 1)
+
+
+# -- resolve_perspective unit tests --
+
+
+def _stat(team: int, score: int, pid: str = "A") -> PlayerStatEntry:
+    return cast(PlayerStatEntry, {"Team": team, "Score": score, "Name": pid})
+
+
+def test_resolve_perspective_win():
+    drew = PlayerIdentity("steam", "1")
+    player_stats = {drew: _stat(team=0, score=500, pid="1")}
+    tracked = {drew: "Drew"}
+    p = resolve_perspective(player_stats, tracked, team0_score=3, team1_score=1)
+    assert p == MatchPerspective(
+        team=0, team_score=3, opponent_score=1, result="win", mvp_identity=drew
+    )
+
+
+def test_resolve_perspective_loss():
+    drew = PlayerIdentity("steam", "1")
+    player_stats = {drew: _stat(team=1, score=200, pid="1")}
+    tracked = {drew: "Drew"}
+    p = resolve_perspective(player_stats, tracked, team0_score=4, team1_score=1)
+    assert p == MatchPerspective(
+        team=1, team_score=1, opponent_score=4, result="loss", mvp_identity=drew
+    )
+
+
+def test_resolve_perspective_mvp_is_highest_scorer():
+    drew = PlayerIdentity("steam", "1")
+    steve = PlayerIdentity("steam", "2")
+    player_stats = {
+        drew: _stat(team=0, score=300, pid="1"),
+        steve: _stat(team=0, score=700, pid="2"),
+    }
+    tracked = {drew: "Drew", steve: "Steve"}
+    p = resolve_perspective(player_stats, tracked, team0_score=2, team1_score=0)
+    assert p.mvp_identity == steve
+
+
+def test_resolve_perspective_mvp_ignores_opponents():
+    drew = PlayerIdentity("steam", "1")
+    opponent = PlayerIdentity("steam", "99")
+    player_stats = {
+        drew: _stat(team=0, score=100, pid="1"),
+        opponent: _stat(team=1, score=900, pid="99"),
+    }
+    tracked = {drew: "Drew"}
+    p = resolve_perspective(player_stats, tracked, team0_score=3, team1_score=2)
+    assert p.mvp_identity == drew
+
+
+def test_resolve_perspective_mvp_tie_uses_playerstats_order():
+    drew = PlayerIdentity("steam", "1")
+    steve = PlayerIdentity("steam", "2")
+    # drew appears first in player_stats; both have identical Score — drew wins by insertion order
+    player_stats = {
+        drew: _stat(team=0, score=400, pid="1"),
+        steve: _stat(team=0, score=400, pid="2"),
+    }
+    tracked = {drew: "Drew", steve: "Steve"}
+    p = resolve_perspective(player_stats, tracked, team0_score=1, team1_score=0)
+    assert p.mvp_identity == drew

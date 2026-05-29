@@ -41,6 +41,10 @@ Zone time is tracked both for the ball (on `matches`) and per-player (on `match_
 
 **Player match stats** are the per-player metrics computed from replay frame analysis: demolitions dealt, demolitions received, movement data (boost per minute, average speed, supersonic percentage, pad pickups), and zone time. They complement the scoreboard stats sourced from the replay's properties blob (goals, assists, saves, shots, score) and are assembled by `FrameAnalysis.per_player()` keyed by player identity.
 
+## Match Perspective
+
+A **match perspective** is the tracked-team-relative view of a match outcome: which side the tracked players were on (`team`), their score (`team_score`) vs. the opponent's (`opponent_score`), the win/loss `result`, and the tracked-side `mvp_identity` (the tracked player with the highest score). It is computed once per replay by `resolve_perspective()` in `ingest.py` and carried on `ReplayAnalysis.perspective`. All four pieces of match-outcome knowledge — team assignment, score reorientation, result derivation, and MVP selection — are quarantined inside that function; callers receive a fully typed `MatchPerspective` dataclass and do not need to know how any of them are computed.
+
 ## Offensive Pairing
 
 An **offensive pairing** is a matched (scorer, assister) pair within a single match: a goal and an assist by different players on the same team, where the assist occurred within `PAIRING_WINDOW` seconds of the goal. Only pairings where both players are tracked are recorded. The pairing algorithm is greedy: for each goal (processed in order), it claims the temporally nearest unclaimed assist within the window.
