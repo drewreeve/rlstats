@@ -49,6 +49,7 @@ class ReplayProperties(TypedDict, total=False):
     Team1Score: int
     TotalSecondsPlayed: int
     bForfeit: bool
+    WinningTeam: int
     TeamSize: int
     MapName: str
 

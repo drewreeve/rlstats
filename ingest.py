@@ -156,6 +156,7 @@ def resolve_perspective(
     tracked_players: dict[PlayerIdentity, str],
     team0_score: Any,
     team1_score: Any,
+    winning_team: int | None = None,
 ) -> MatchPerspective:
     tracked_items = [(k, v) for k, v in player_stats.items() if k in tracked_players]
     tracked_teams = {v.get("Team") for _, v in tracked_items}
@@ -169,7 +170,9 @@ def resolve_perspective(
         team_score, opponent_score = None, None
 
     result: str | None
-    if team_score is None or opponent_score is None:
+    if team is not None and winning_team is not None:
+        result = "win" if winning_team == team else "loss"
+    elif team_score is None or opponent_score is None:
         result = None
     elif team_score > opponent_score:
         result = "win"
@@ -413,6 +416,7 @@ def analyze_replay(
         tracked_players,
         props.get("Team0Score", 0),
         props.get("Team1Score", 0),
+        props.get("WinningTeam"),
     )
 
     fa = analyze_frames(

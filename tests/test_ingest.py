@@ -1099,6 +1099,26 @@ def test_resolve_perspective_tied_score_has_no_result():
     assert p.result is None
 
 
+def test_resolve_perspective_winning_team_overrides_score():
+    drew = PlayerIdentity("steam", "1")
+    player_stats = {drew: _stat(team=0, score=0, pid="1")}
+    tracked = {drew: "Drew"}
+    p = resolve_perspective(
+        player_stats, tracked, team0_score=0, team1_score=0, winning_team=0
+    )
+    assert p.result == "win"
+
+
+def test_resolve_perspective_forfeit_loss_via_winning_team():
+    drew = PlayerIdentity("steam", "1")
+    player_stats = {drew: _stat(team=0, score=0, pid="1")}
+    tracked = {drew: "Drew"}
+    p = resolve_perspective(
+        player_stats, tracked, team0_score=0, team1_score=0, winning_team=1
+    )
+    assert p.result == "loss"
+
+
 def test_resolve_perspective_mvp_tie_uses_playerstats_order():
     drew = PlayerIdentity("steam", "1")
     steve = PlayerIdentity("steam", "2")
