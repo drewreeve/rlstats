@@ -9,7 +9,7 @@ from typing import Any
 
 from frame_analysis import FrameAnalysis, MatchEvent, PlayerMatchStats, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
-from rrrocket_schema import ParsedReplay, PlayerStatEntry
+from rrrocket_schema import ParsedReplay, PlayerStatEntry, ReplayProperties
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,10 @@ def correlate_pairings(
     goal_events: list[tuple[float, PlayerIdentity, int]] = []
     assist_events: list[tuple[float, PlayerIdentity, int]] = []
     for e in events:
-        identity = PlayerIdentity(e.platform, e.platform_id)
         if e.event_type == "goal":
-            goal_events.append((e.game_seconds, identity, e.team))
+            goal_events.append((e.game_seconds, e.identity, e.team))
         elif e.event_type == "assist":
-            assist_events.append((e.game_seconds, identity, e.team))
+            assist_events.append((e.game_seconds, e.identity, e.team))
 
     pairings: list[OffensivePairing] = []
     used_assists: set[int] = set()
@@ -158,8 +157,8 @@ def resolve_perspective(
     team0_score: Any,
     team1_score: Any,
 ) -> MatchPerspective:
-    tracked_raw = [v for k, v in player_stats.items() if k in tracked_players]
-    tracked_teams = {p.get("Team") for p in tracked_raw}
+    tracked_items = [(k, v) for k, v in player_stats.items() if k in tracked_players]
+    tracked_teams = {v.get("Team") for _, v in tracked_items}
     team = tracked_teams.pop() if tracked_teams else None
 
     if team == 0:
@@ -179,10 +178,9 @@ def resolve_perspective(
     else:
         result = None
 
-    tracked_identities = [k for k in player_stats if k in tracked_players]
     mvp_identity = (
-        max(tracked_identities, key=lambda k: player_stats[k].get("Score", 0))
-        if tracked_identities
+        max(tracked_items, key=lambda kv: kv[1].get("Score", 0))[0]
+        if tracked_items
         else None
     )
     return MatchPerspective(
@@ -362,6 +360,16 @@ def _insert_match_players(
         )
 
 
+def _build_player_stats(
+    props: ReplayProperties,
+) -> dict[PlayerIdentity, PlayerStatEntry]:
+    return {
+        identity: p
+        for p in props.get("PlayerStats", [])
+        if not p.get("bBot") and (identity := from_player_stats(p))
+    }
+
+
 def validate_replay(
     replay: ParsedReplay, tracked_players: dict[PlayerIdentity, str]
 ) -> SkipReason | None:
@@ -371,11 +379,7 @@ def validate_replay(
     if replay.played_at is None:
         return SkipReason.MISSING_DATE
 
-    player_stats = {
-        identity: p
-        for p in replay.properties.get("PlayerStats", [])
-        if not p.get("bBot") and (identity := from_player_stats(p))
-    }
+    player_stats = _build_player_stats(replay.properties)
     tracked_raw = [v for k, v in player_stats.items() if k in tracked_players]
     if not tracked_raw:
         return SkipReason.NO_TRACKED_PLAYERS
@@ -403,11 +407,7 @@ def analyze_replay(
     map_name = props.get("MapName")
     game_mode = _detect_game_mode(team_size, map_name)
 
-    player_stats: dict[PlayerIdentity, PlayerStatEntry] = {
-        identity: p
-        for p in props.get("PlayerStats", [])
-        if not p.get("bBot") and (identity := from_player_stats(p))
-    }
+    player_stats = _build_player_stats(props)
     perspective = resolve_perspective(
         player_stats,
         tracked_players,
@@ -474,7 +474,7 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
 
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
     for e in analysis.frame_analysis.match_events:
-        player_id = player_id_map.get(PlayerIdentity(e.platform, e.platform_id))
+        player_id = player_id_map.get(e.identity)
         if player_id is None:
             continue
         conn.execute(

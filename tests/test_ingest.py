@@ -386,7 +386,9 @@ def test_offensive_pairings_idempotent():
 def _ev(
     event_type: str, game_seconds: float, platform: str, platform_id: str, team: int
 ) -> MatchEvent:
-    return MatchEvent(event_type, game_seconds, platform, platform_id, team)
+    return MatchEvent(
+        event_type, game_seconds, PlayerIdentity(platform, platform_id), team
+    )
 
 
 def test_correlate_pairings_basic():

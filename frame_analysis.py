@@ -102,8 +102,7 @@ class IdentityResolver:
 class MatchEvent:
     event_type: str
     game_seconds: float
-    platform: str
-    platform_id: str
+    identity: PlayerIdentity
     team: int
 
 
@@ -932,7 +931,7 @@ class MatchEventsHandler(FrameHandler):
                 continue
             gs = frame_to_game_seconds(ft)
             result.match_events.append(
-                MatchEvent(event_type, gs, identity[0], identity[1], team)
+                MatchEvent(event_type, gs, PlayerIdentity(*identity), team)
             )
 
 

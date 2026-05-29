@@ -720,8 +720,7 @@ def test_match_events_handler_emits_goal_event_with_game_time():
     assert len(fa.match_events) == 1
     ev = fa.match_events[0]
     assert ev.event_type == "goal"
-    assert ev.platform == "steam"
-    assert ev.platform_id == "TRACKED"
+    assert ev.identity == PlayerIdentity("steam", "TRACKED")
     assert ev.team == 0
 
 
