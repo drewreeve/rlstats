@@ -28,7 +28,7 @@ class MatchPerspective:
     team: int | None
     team_score: int | None
     opponent_score: int | None
-    result: str
+    result: str | None
     mvp_identity: PlayerIdentity | None
 
 
@@ -178,7 +178,6 @@ def resolve_perspective(
         result = "loss"
     else:
         result = None
-    assert result is not None
 
     tracked_identities = [k for k in player_stats if k in tracked_players]
     mvp_identity = (

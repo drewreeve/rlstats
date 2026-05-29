@@ -1089,6 +1089,14 @@ def test_resolve_perspective_mvp_ignores_opponents():
     assert p.mvp_identity == drew
 
 
+def test_resolve_perspective_tied_score_has_no_result():
+    drew = PlayerIdentity("steam", "1")
+    player_stats = {drew: _stat(team=0, score=0, pid="1")}
+    tracked = {drew: "Drew"}
+    p = resolve_perspective(player_stats, tracked, team0_score=0, team1_score=0)
+    assert p.result is None
+
+
 def test_resolve_perspective_mvp_tie_uses_playerstats_order():
     drew = PlayerIdentity("steam", "1")
     steve = PlayerIdentity("steam", "2")
