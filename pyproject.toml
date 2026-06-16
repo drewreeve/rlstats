@@ -9,7 +9,7 @@ dependencies = [
     "fastapi>=0.115",
     "itsdangerous>=2.2",
     "orjson>=3.11.7",
-    "python-multipart>=0.0.20",
+    "python-multipart>=0.0.31",
     "uvicorn[standard]>=0.34",
 ]
 
