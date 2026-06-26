@@ -8,7 +8,13 @@ from unittest.mock import MagicMock, patch
 
 from process import UploadProcessor, parse_replay, process_batch, process_replay
 from rrrocket_schema import parse as parse_rrrocket
-from tests.fixtures import TRACKED_PLAYERS, file_db, in_memory_db, load_replay
+from tests.fixtures import (
+    TEST_DATA_DIR,
+    TRACKED_PLAYERS,
+    file_db,
+    in_memory_db,
+    load_replay,
+)
 
 
 def _make_conn() -> sqlite3.Connection:
@@ -153,6 +159,32 @@ def test_process_batch_commits(tmp_path: Path):
     # Markers are written only after commit
     for p in files:
         assert (p.with_suffix(p.suffix + ".ingested")).exists()
+
+
+def test_parse_replay_end_to_end():
+    """parse_replay invokes the real rrrocket binary on a .replay file."""
+    replay_path = TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
+    result, error = parse_replay(replay_path)
+    assert error is None
+    assert result is not None
+    assert result.match_guid is not None
+
+
+def test_process_replay_end_to_end(tmp_path: Path):
+    """process_replay runs rrrocket and ingests a real replay into the DB."""
+    conn = _make_conn()
+    replay_path = tmp_path / "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
+    replay_path.write_bytes(
+        (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
+    )
+
+    success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
+
+    assert error is None
+    assert success is True
+    conn.commit()
+    row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
+    assert row[0] == 1
 
 
 def test_upload_processor_debounce(tmp_path: Path):
