@@ -5,7 +5,7 @@ _.file = '.env'
 python.uv_venv_auto = "source"
 
 [tools]
-"github:nickbabcock/rrrocket" = "0.11.1"
+"github:nickbabcock/rrrocket" = "0.11.4"
 pre-commit = "latest"
 uv = "latest"
 
