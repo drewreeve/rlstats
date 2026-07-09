@@ -147,26 +147,7 @@ def query_match_detail(
     ]
 
     return {
-        "match": {
-            "id": match["id"],
-            "played_at": match["played_at"],
-            "game_mode": match["game_mode"],
-            "result": match["result"],
-            "forfeit": match["forfeit"],
-            "team_score": match["team_score"],
-            "opponent_score": match["opponent_score"],
-            "duration_seconds": match["duration_seconds"],
-            "team": team_num,
-            "team_possession_seconds": match["team_possession_seconds"],
-            "opponent_possession_seconds": match["opponent_possession_seconds"],
-            "defensive_zone_seconds": match["defensive_zone_seconds"],
-            "neutral_zone_seconds": match["neutral_zone_seconds"],
-            "offensive_zone_seconds": match["offensive_zone_seconds"],
-            "team_boost_collected": match["team_boost_collected"],
-            "opponent_boost_collected": match["opponent_boost_collected"],
-            "team_boost_stolen": match["team_boost_stolen"],
-            "opponent_boost_stolen": match["opponent_boost_stolen"],
-        },
+        "match": dict(match),
         "events": events,
         "team_players": team_players,
         "opponent_players": opponent_players,

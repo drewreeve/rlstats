@@ -5,8 +5,9 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, TypedDict
 
+import db
 from frame_analysis import FrameAnalysis, MatchEvent, PlayerMatchStats, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
 from rrrocket_schema import ParsedReplay, PlayerStatEntry, ReplayProperties
@@ -117,13 +118,16 @@ def sync_tracked_players(
     tracked_players: dict[PlayerIdentity, str],
 ) -> None:
     for identity, name in tracked_players.items():
-        conn.execute(
-            """INSERT INTO players (platform, platform_id, name, is_tracked)
-               VALUES (?, ?, ?, 1)
-               ON CONFLICT(platform, platform_id) DO UPDATE SET
-                 name = excluded.name,
-                 is_tracked = 1""",
-            (identity.platform, identity.platform_id, name),
+        db.upsert(
+            conn,
+            "players",
+            ["platform", "platform_id"],
+            {
+                "platform": identity.platform,
+                "platform_id": identity.platform_id,
+                "name": name,
+                "is_tracked": 1,
+            },
         )
     if tracked_players:
         placeholders = ",".join("(?,?)" for _ in tracked_players)
@@ -195,6 +199,85 @@ def resolve_perspective(
     )
 
 
+class MatchRow(TypedDict):
+    replay_hash: str
+    played_at: str | None
+    duration_seconds: int | None
+    forfeit: int
+    team_size: int | None
+    team: int | None
+    team_score: int | None
+    opponent_score: int | None
+    result: str | None
+    team_mvp_player_id: int | None
+    map_name: str | None
+    game_mode: str | None
+    team_possession_seconds: float | None
+    opponent_possession_seconds: float | None
+    defensive_zone_seconds: float | None
+    neutral_zone_seconds: float | None
+    offensive_zone_seconds: float | None
+    team_boost_collected: int | None
+    opponent_boost_collected: int | None
+    team_boost_stolen: int | None
+    opponent_boost_stolen: int | None
+
+
+class MatchPlayerRow(TypedDict):
+    match_id: int
+    player_id: int
+    team: int | None
+    goals: int
+    assists: int
+    saves: int
+    shots: int
+    score: int
+    demos: int
+    demos_received: int
+    boost_per_minute: float | None
+    avg_speed: float | None
+    time_supersonic_pct: float | None
+    small_pads: int | None
+    large_pads: int | None
+    stolen_small_pads: int | None
+    stolen_large_pads: int | None
+    defensive_zone_seconds: float | None
+    neutral_zone_seconds: float | None
+    offensive_zone_seconds: float | None
+
+
+def _build_match_player_row(
+    match_id: int,
+    player_id: int,
+    player: PlayerStatEntry,
+    stats: PlayerMatchStats,
+) -> MatchPlayerRow:
+    mv = stats.movement
+    pz = stats.zone_seconds
+    return MatchPlayerRow(
+        match_id=match_id,
+        player_id=player_id,
+        team=player.get("Team"),
+        goals=player.get("Goals", 0),
+        assists=player.get("Assists", 0),
+        saves=player.get("Saves", 0),
+        shots=player.get("Shots", 0),
+        score=player.get("Score", 0),
+        demos=stats.demos,
+        demos_received=stats.demos_received,
+        boost_per_minute=mv.boost_per_minute if mv else None,
+        avg_speed=mv.avg_speed if mv else None,
+        time_supersonic_pct=mv.time_supersonic_pct if mv else None,
+        small_pads=mv.small_pads if mv else None,
+        large_pads=mv.large_pads if mv else None,
+        stolen_small_pads=mv.stolen_small_pads if mv else None,
+        stolen_large_pads=mv.stolen_large_pads if mv else None,
+        defensive_zone_seconds=pz.defensive if pz else None,
+        neutral_zone_seconds=pz.neutral if pz else None,
+        offensive_zone_seconds=pz.offensive if pz else None,
+    )
+
+
 def _upsert_match(
     conn: sqlite3.Connection,
     *,
@@ -213,67 +296,30 @@ def _upsert_match(
     frame_analysis: FrameAnalysis,
 ) -> int:
     fa = frame_analysis
-    return int(
-        conn.execute(
-            """
-        INSERT INTO matches (
-            replay_hash,
-            played_at, duration_seconds, forfeit, team_size,
-            team, team_score, opponent_score, result, team_mvp_player_id,
-            map_name, game_mode,
-            team_possession_seconds, opponent_possession_seconds,
-            defensive_zone_seconds, neutral_zone_seconds, offensive_zone_seconds,
-            team_boost_collected, opponent_boost_collected,
-            team_boost_stolen, opponent_boost_stolen
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(replay_hash) DO UPDATE SET
-            played_at = excluded.played_at,
-            duration_seconds = excluded.duration_seconds,
-            forfeit = excluded.forfeit,
-            team_size = excluded.team_size,
-            team = excluded.team,
-            team_score = excluded.team_score,
-            opponent_score = excluded.opponent_score,
-            result = excluded.result,
-            team_mvp_player_id = excluded.team_mvp_player_id,
-            map_name = excluded.map_name,
-            game_mode = excluded.game_mode,
-            team_possession_seconds = excluded.team_possession_seconds,
-            opponent_possession_seconds = excluded.opponent_possession_seconds,
-            defensive_zone_seconds = excluded.defensive_zone_seconds,
-            neutral_zone_seconds = excluded.neutral_zone_seconds,
-            offensive_zone_seconds = excluded.offensive_zone_seconds,
-            team_boost_collected = excluded.team_boost_collected,
-            opponent_boost_collected = excluded.opponent_boost_collected,
-            team_boost_stolen = excluded.team_boost_stolen,
-            opponent_boost_stolen = excluded.opponent_boost_stolen
-        RETURNING id
-        """,
-            (
-                replay_hash,
-                played_at_sql,
-                duration,
-                forfeit,
-                team_size,
-                team,
-                team_score,
-                opponent_score,
-                result,
-                mvp_player_id,
-                map_name,
-                game_mode,
-                fa.team_possession_seconds,
-                fa.opponent_possession_seconds,
-                fa.defensive_zone_seconds,
-                fa.neutral_zone_seconds,
-                fa.offensive_zone_seconds,
-                fa.team_boost_collected,
-                fa.opponent_boost_collected,
-                fa.team_boost_stolen,
-                fa.opponent_boost_stolen,
-            ),
-        ).fetchone()[0]
+    row = MatchRow(
+        replay_hash=replay_hash,
+        played_at=played_at_sql,
+        duration_seconds=duration,
+        forfeit=forfeit,
+        team_size=team_size,
+        team=team,
+        team_score=team_score,
+        opponent_score=opponent_score,
+        result=result,
+        team_mvp_player_id=mvp_player_id,
+        map_name=map_name,
+        game_mode=game_mode,
+        team_possession_seconds=fa.team_possession_seconds,
+        opponent_possession_seconds=fa.opponent_possession_seconds,
+        defensive_zone_seconds=fa.defensive_zone_seconds,
+        neutral_zone_seconds=fa.neutral_zone_seconds,
+        offensive_zone_seconds=fa.offensive_zone_seconds,
+        team_boost_collected=fa.team_boost_collected,
+        opponent_boost_collected=fa.opponent_boost_collected,
+        team_boost_stolen=fa.team_boost_stolen,
+        opponent_boost_stolen=fa.opponent_boost_stolen,
     )
+    return int(db.upsert(conn, "matches", ["replay_hash"], row, returning="id"))
 
 
 def _upsert_players(
@@ -307,60 +353,8 @@ def _insert_match_players(
         if player_id is None:
             continue
         stats = per_player.get(identity, _empty)
-        mv = stats.movement
-        pz = stats.zone_seconds
-        conn.execute(
-            """
-            INSERT INTO match_players (
-                match_id, player_id, team,
-                goals, assists, saves, shots, score, demos, demos_received,
-                boost_per_minute, avg_speed, time_supersonic_pct,
-                small_pads, large_pads, stolen_small_pads, stolen_large_pads,
-                defensive_zone_seconds, neutral_zone_seconds, offensive_zone_seconds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(match_id, player_id) DO UPDATE SET
-                team = excluded.team,
-                goals = excluded.goals,
-                assists = excluded.assists,
-                saves = excluded.saves,
-                shots = excluded.shots,
-                score = excluded.score,
-                demos = excluded.demos,
-                demos_received = excluded.demos_received,
-                boost_per_minute = excluded.boost_per_minute,
-                avg_speed = excluded.avg_speed,
-                time_supersonic_pct = excluded.time_supersonic_pct,
-                small_pads = excluded.small_pads,
-                large_pads = excluded.large_pads,
-                stolen_small_pads = excluded.stolen_small_pads,
-                stolen_large_pads = excluded.stolen_large_pads,
-                defensive_zone_seconds = excluded.defensive_zone_seconds,
-                neutral_zone_seconds = excluded.neutral_zone_seconds,
-                offensive_zone_seconds = excluded.offensive_zone_seconds
-            """,
-            (
-                match_id,
-                player_id,
-                player.get("Team"),
-                player.get("Goals", 0),
-                player.get("Assists", 0),
-                player.get("Saves", 0),
-                player.get("Shots", 0),
-                player.get("Score", 0),
-                stats.demos,
-                stats.demos_received,
-                mv.boost_per_minute if mv else None,
-                mv.avg_speed if mv else None,
-                mv.time_supersonic_pct if mv else None,
-                mv.small_pads if mv else None,
-                mv.large_pads if mv else None,
-                mv.stolen_small_pads if mv else None,
-                mv.stolen_large_pads if mv else None,
-                pz.defensive if pz else None,
-                pz.neutral if pz else None,
-                pz.offensive if pz else None,
-            ),
-        )
+        row = _build_match_player_row(match_id, player_id, player, stats)
+        db.upsert(conn, "match_players", ["match_id", "player_id"], row)
 
 
 def _build_player_stats(

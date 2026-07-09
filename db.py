@@ -1,6 +1,7 @@
 import sqlite3
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 import aiosql
 
@@ -8,6 +9,48 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 SQL_DIR = Path(__file__).parent / "sql"
 
 queries: Any = aiosql.from_path(SQL_DIR, "sqlite3")  # pyright: ignore[reportUnknownMemberType]
+
+
+@overload
+def upsert(
+    conn: sqlite3.Connection,
+    table: str,
+    conflict_columns: Sequence[str],
+    row: Mapping[str, Any],
+    returning: str,
+) -> Any: ...
+@overload
+def upsert(
+    conn: sqlite3.Connection,
+    table: str,
+    conflict_columns: Sequence[str],
+    row: Mapping[str, Any],
+    returning: None = None,
+) -> None: ...
+def upsert(
+    conn: sqlite3.Connection,
+    table: str,
+    conflict_columns: Sequence[str],
+    row: Mapping[str, Any],
+    returning: str | None = None,
+) -> Any | None:
+    """Insert row into table, updating all non-conflict columns on conflict.
+
+    Column names come from row.keys() and conflict_columns, both always
+    caller-controlled literals — never user input — so f-string SQL is safe here.
+    """
+    columns = list(row)
+    update_columns = [c for c in columns if c not in conflict_columns]
+    sql = (
+        f"INSERT INTO {table} ({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)}) "
+        f"ON CONFLICT({', '.join(conflict_columns)}) DO UPDATE SET "
+        + ", ".join(f"{c} = excluded.{c}" for c in update_columns)
+    )
+    if returning:
+        sql += f" RETURNING {returning}"
+    cur = conn.execute(sql, list(row.values()))
+    return cur.fetchone()[0] if returning else None
 
 
 def apply_migrations(conn: sqlite3.Connection):
