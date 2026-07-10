@@ -6,8 +6,8 @@ SELECT
     SUM(mp.shots) AS shots,
     ROUND(
         CAST(SUM(mp.goals) AS REAL)
-        / NULLIF(SUM(mp.shots), 0),
-        3
+        / NULLIF(SUM(mp.shots), 0) * 100,
+        1
     ) AS shooting_pct
 FROM match_players mp
 JOIN players p ON p.id = mp.player_id

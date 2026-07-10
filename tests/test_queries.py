@@ -124,6 +124,29 @@ def test_match_players_nonexistent():
     assert list(queries.match_players(conn, match_id=9999)) == []
 
 
+def test_match_players_shooting_pct_null_when_no_shots():
+    conn = in_memory_db()
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "INSERT INTO players (platform, platform_id, name) VALUES (?,?,?)",
+        ("steam", "test-player", "Tester"),
+    )
+    player_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.execute(
+        "INSERT INTO matches (replay_hash, team, team_score, opponent_score, result)"
+        " VALUES (?,?,?,?,?)",
+        ("hash-zero-shots", 0, 1, 0, "win"),
+    )
+    match_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.execute(
+        "INSERT INTO match_players (match_id, player_id, team, goals, shots)"
+        " VALUES (?,?,?,?,?)",
+        (match_id, player_id, 0, 0, 0),
+    )
+    rows = list(queries.match_players(conn, match_id=match_id))
+    assert rows[0]["shooting_pct"] is None
+
+
 # -- match_events --
 
 
@@ -179,23 +202,23 @@ def test_offensive_pairings_empty_for_missing_mode():
         (
             "3v3",
             [
-                ("Drew", 4, 9, 0.444),
-                ("Jeff", 4, 5, 0.8),
-                ("Steve", 1, 4, 0.25),
+                ("Drew", 4, 9, 44.4),
+                ("Jeff", 4, 5, 80.0),
+                ("Steve", 1, 4, 25.0),
             ],
         ),
         (
             "2v2",
             [
                 ("Drew", 0, 4, 0.0),
-                ("Steve", 1, 2, 0.5),
+                ("Steve", 1, 2, 50.0),
             ],
         ),
         (
             "hoops",
             [
-                ("Drew", 2, 5, 0.4),
-                ("Jeff", 3, 5, 0.6),
+                ("Drew", 2, 5, 40.0),
+                ("Jeff", 3, 5, 60.0),
             ],
         ),
     ],

@@ -42,9 +42,7 @@ SELECT
     mp.saves,
     mp.shots,
     mp.demos,
-    CASE WHEN mp.shots > 0
-         THEN ROUND(CAST(mp.goals AS REAL) / mp.shots * 100, 1)
-         ELSE 0 END AS shooting_pct,
+    ROUND(CAST(mp.goals AS REAL) / NULLIF(mp.shots, 0) * 100, 1) AS shooting_pct,
     mp.boost_per_minute,
     mp.avg_speed,
     mp.time_supersonic_pct,

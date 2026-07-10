@@ -627,7 +627,7 @@ async function renderAll() {
   updateCardVisibility();
   playerBarChart("shooting", "chart-shooting", "/api/stats/shooting", {
     label: "Shooting %",
-    getValue: (d) => (d.shooting_pct ?? 0) * 100,
+    getValue: (d) => d.shooting_pct ?? 0,
     yPct: true,
     tooltipExtra: (d) => `${d.goals} goals / ${d.shots} shots`,
   });
