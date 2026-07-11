@@ -66,6 +66,37 @@ def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
     return _parse_rrrocket(cast(ReplayJSON, orjson.loads(result.stdout))), None
 
 
+def _try_write_match(
+    conn: sqlite3.Connection, replay_path: Path, analysis: ReplayAnalysis
+) -> str | None:
+    """Write analysis to conn. Returns None on success, an error message on failure.
+
+    write_match is atomic (wraps its own savepoint), so a failure here never
+    leaves a partial write behind for _finalize_batch's later commit to pick up.
+    """
+    try:
+        write_match(conn, analysis)
+    except Exception as exc:
+        logger.warning("Ingest failed for %s: %s", replay_path.name, exc)
+        return f"Ingest failed: {exc}"
+    return None
+
+
+def _finalize_batch(
+    conn: sqlite3.Connection,
+    tracked_players: dict[PlayerIdentity, str],
+    resolved: list[Path],
+) -> None:
+    """Sync tracked-player status, commit, and mark resolved files as ingested.
+
+    Caller must hold _batch_lock.
+    """
+    sync_tracked_players(conn, tracked_players)
+    conn.commit()
+    for replay_path in resolved:
+        replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
+
+
 def process_replay(
     replay_path: Path,
     conn: sqlite3.Connection,
@@ -86,36 +117,23 @@ def process_replay(
     if analysis is None:
         return True, None
 
-    try:
-        write_match(conn, analysis)
-    except Exception as exc:
-        msg = f"Ingest failed: {exc}"
-        logger.warning("Ingest failed for %s: %s", replay_path.name, exc)
-        return False, msg
-
-    return True, None
+    error = _try_write_match(conn, replay_path, analysis)
+    return error is None, error
 
 
 def process_batch(
     files: list[Path],
     conn: sqlite3.Connection,
     tracked_players: dict[PlayerIdentity, str],
-) -> dict[str, tuple[bool, str | None]]:
-    """Process a list of replay files in a single DB transaction.
-
-    Returns a dict mapping filename to (success, error_message) for each file.
-    """
-    results: dict[str, tuple[bool, str | None]] = {}
+) -> None:
+    """Process a list of replay files in a single DB transaction."""
     with _batch_lock:
-        for replay_path in files:
-            results[replay_path.name] = process_replay(
-                replay_path, conn, tracked_players
-            )
-        conn.commit()
-        for replay_path in files:
-            if results[replay_path.name][0]:
-                replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
-    return results
+        resolved = [
+            replay_path
+            for replay_path in files
+            if process_replay(replay_path, conn, tracked_players)[0]
+        ]
+        _finalize_batch(conn, tracked_players, resolved)
 
 
 class UploadProcessor:
@@ -203,18 +221,15 @@ def process_unprocessed(
 
     conn = _open_write_conn(db_path)
     try:
-        sync_tracked_players(conn, tracked_players)
-        ingested: list[Path] = []
-        to_sentinel: list[Path] = []
-        for path, analysis in zip(replay_paths, results, strict=True):
-            if analysis is not None:
-                write_match(conn, analysis)
-                ingested.append(path)
-            elif path.exists():
-                to_sentinel.append(path)
-        conn.commit()
-        for replay_path in ingested + to_sentinel:
-            replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
+        with _batch_lock:
+            resolved: list[Path] = []
+            for path, analysis in zip(replay_paths, results, strict=True):
+                if analysis is not None:
+                    if _try_write_match(conn, path, analysis) is None:
+                        resolved.append(path)
+                elif path.exists():
+                    resolved.append(path)
+            _finalize_batch(conn, tracked_players, resolved)
     finally:
         conn.close()
 

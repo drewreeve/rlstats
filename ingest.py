@@ -437,6 +437,26 @@ def analyze_replay(
 
 
 def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
+    """Write a fully-analyzed replay to the DB as one atomic unit.
+
+    This issues several separate statements (upsert match, upsert
+    match_players, delete+insert match_events, delete+insert
+    offensive_pairings) with no atomicity of its own otherwise. Wrapped in a
+    savepoint so a failure partway through rolls back cleanly for any caller,
+    including one already inside a larger multi-replay transaction.
+    """
+    conn.execute("SAVEPOINT write_match")
+    try:
+        _write_match(conn, analysis)
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT write_match")
+        conn.execute("RELEASE SAVEPOINT write_match")
+        raise
+    else:
+        conn.execute("RELEASE SAVEPOINT write_match")
+
+
+def _write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
     player_id_map = _upsert_players(conn, analysis.player_stats, analysis.tracked_names)
     perspective = analysis.perspective
     mvp_player_id = (
