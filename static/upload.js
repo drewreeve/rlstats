@@ -205,6 +205,7 @@
 
     function pollStatus(filename, entry) {
         var elapsed = 0;
+        var previous = null;
         var interval = setInterval(function () {
             elapsed += 2000;
             if (elapsed > 30000) {
@@ -215,12 +216,27 @@
             fetch("/api/upload/status?filename=" + encodeURIComponent(filename))
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
+                    // Any change in the response counts as progress, even if this
+                    // file's own stage hasn't moved (e.g. the batch counter did).
+                    var body = JSON.stringify(data);
+                    if (body !== previous) {
+                        elapsed = 0;
+                        previous = body;
+                    }
+
                     if (data.status === "processed") {
                         clearInterval(interval);
                         setEntryStatus(entry, "success", "PROCESSED");
                     } else if (data.status === "error") {
                         clearInterval(interval);
                         setEntryStatus(entry, "error", "PROCESSING FAILED");
+                    } else if (data.stage === "queued") {
+                        setEntryStatus(entry, "processing", "QUEUED");
+                    } else if (data.batch) {
+                        setEntryStatus(entry, "processing",
+                            "PROCESSING (" + data.batch.completed + "/" + data.batch.total + ")...");
+                    } else {
+                        setEntryStatus(entry, "processing", "PROCESSING...");
                     }
                 })
                 .catch(function () {

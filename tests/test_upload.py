@@ -4,7 +4,9 @@ from pathlib import Path
 
 from starlette.testclient import TestClient
 
+import process
 from config import Settings
+from process import UploadProcessor
 from server import create_app
 from tests.fixtures import file_db
 
@@ -327,3 +329,72 @@ def test_upload_status_sanitizes_filename(tmp_path: Path):
     assert resp.status_code == 200
     # _secure_filename strips traversal; the sanitized name won't exist
     assert resp.json()["status"] in ("error", "unknown")
+
+
+def test_upload_status_reports_live_stage_and_batch(tmp_path: Path):
+    """A processor with an in-flight file reports its stage and batch progress."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    processor = UploadProcessor(file_db(tmp_path), {})
+    processor._file_status["test.replay"] = "parsed"  # pyright: ignore[reportPrivateUsage]
+    bp = process._BatchProgress(total=20)  # pyright: ignore[reportPrivateUsage]
+    bp.completed = 3
+    processor._file_batch["test.replay"] = bp  # pyright: ignore[reportPrivateUsage]
+    app = create_app(file_db(tmp_path), replay_dir=replay_dir, processor=processor)
+    client = TestClient(app, base_url="https://testserver")
+
+    resp = client.get("/api/upload/status?filename=test.replay")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "status": "pending",
+        "stage": "parsed",
+        "batch": {"completed": 3, "total": 20},
+    }
+
+
+def test_upload_status_omits_batch_when_queued(tmp_path: Path):
+    """A queued file (flush hasn't started) has no batch yet."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    processor = UploadProcessor(file_db(tmp_path), {})
+    processor._file_status["test.replay"] = "queued"  # pyright: ignore[reportPrivateUsage]
+    app = create_app(file_db(tmp_path), replay_dir=replay_dir, processor=processor)
+    client = TestClient(app, base_url="https://testserver")
+
+    resp = client.get("/api/upload/status?filename=test.replay")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "pending", "stage": "queued"}
+
+
+def test_upload_status_reports_processor_error(tmp_path: Path):
+    """A processor error entry surfaces as status=error with the message."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    processor = UploadProcessor(file_db(tmp_path), {})
+    processor._file_status["test.replay"] = (  # pyright: ignore[reportPrivateUsage]
+        "error:Ingest failed: boom"
+    )
+    app = create_app(file_db(tmp_path), replay_dir=replay_dir, processor=processor)
+    client = TestClient(app, base_url="https://testserver")
+
+    resp = client.get("/api/upload/status?filename=test.replay")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "error", "error": "Ingest failed: boom"}
+
+
+def test_upload_status_sentinel_wins_over_processor_error(tmp_path: Path):
+    """The .ingested sentinel is the durable record and wins over stale live state."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    (replay_dir / "test.replay").write_bytes(b"\x00")
+    (replay_dir / "test.replay.ingested").write_bytes(b"")
+    processor = UploadProcessor(file_db(tmp_path), {})
+    processor._file_status["test.replay"] = (  # pyright: ignore[reportPrivateUsage]
+        "error:should be ignored"
+    )
+    app = create_app(file_db(tmp_path), replay_dir=replay_dir, processor=processor)
+    client = TestClient(app, base_url="https://testserver")
+
+    resp = client.get("/api/upload/status?filename=test.replay")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "processed"}

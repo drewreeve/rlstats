@@ -336,6 +336,16 @@ def create_app(
         ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
         if ingested_path.exists():
             return {"status": "processed"}
+        if processor is not None:
+            stage = processor.file_status(safe_name)
+            if stage is not None and stage.startswith("error:"):
+                return {"status": "error", "error": stage[len("error:") :]}
+            if stage is not None:
+                result: dict[str, Any] = {"status": "pending", "stage": stage}
+                batch = processor.batch_progress(safe_name)
+                if batch is not None:
+                    result["batch"] = {"completed": batch[0], "total": batch[1]}
+                return result
         if not replay_path.exists():
             return {"status": "error"}
         return {"status": "pending"}

@@ -4,6 +4,7 @@ import os
 import sqlite3
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -195,6 +196,19 @@ def _write_parsed_batch(
     return outcomes
 
 
+class _BatchProgress:
+    """Mutable (completed, total) counter shared by every file in one flush's
+    batch. Scoped per-batch (not processor-wide) so two overlapping flushes —
+    possible because Timer.cancel() doesn't interrupt an in-flight flush() —
+    can't clobber each other's displayed progress."""
+
+    __slots__ = ("completed", "total")
+
+    def __init__(self, total: int) -> None:
+        self.completed = 0
+        self.total = total
+
+
 class UploadProcessor:
     """Debounced batch processor for uploaded replay files."""
 
@@ -203,36 +217,90 @@ class UploadProcessor:
         db_path: str | Path,
         tracked_players: dict[PlayerIdentity, str],
         delay: float = 2.0,
+        error_retention: float = 1800.0,
     ):
         self.db_path = db_path
         self.tracked_players = tracked_players
         self.delay = delay
+        self.error_retention = error_retention
         self._queue: list[Path] = []
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
+        # Progress state for the server's /api/upload/status endpoint. Filename ->
+        # "queued" | "processing" | "parsed" | "error:<msg>". Resolved (processed
+        # or skipped) files are pruned once flush ends; the .ingested sentinel is
+        # the durable record from then on. Error entries are kept for reporting,
+        # but expire after error_retention so abandoned uploads don't accumulate.
+        self._file_status: dict[str, str] = {}
+        self._file_batch: dict[str, _BatchProgress] = {}
+        self._error_recorded_at: dict[str, float] = {}
+
+    def _prune_stale_errors(self) -> None:
+        """Drop error entries older than error_retention. Caller must hold self._lock."""
+        cutoff = time.monotonic() - self.error_retention
+        stale = [name for name, at in self._error_recorded_at.items() if at < cutoff]
+        for name in stale:
+            self._error_recorded_at.pop(name, None)
+            self._file_status.pop(name, None)
 
     def enqueue(self, path: Path):
         with self._lock:
+            self._prune_stale_errors()
             self._queue.append(path)
+            self._file_status[path.name] = "queued"
+            self._error_recorded_at.pop(path.name, None)
             if self._timer is not None:
                 self._timer.cancel()
             self._timer = threading.Timer(self.delay, self.flush)
             self._timer.daemon = True
             self._timer.start()
 
+    def file_status(self, name: str) -> str | None:
+        with self._lock:
+            return self._file_status.get(name)
+
+    def batch_progress(self, name: str) -> tuple[int, int] | None:
+        with self._lock:
+            batch = self._file_batch.get(name)
+            return None if batch is None else (batch.completed, batch.total)
+
+    def _on_parsed(self, path: Path, batch: _BatchProgress) -> None:
+        with self._lock:
+            if path.name in self._file_status:
+                self._file_status[path.name] = "parsed"
+            batch.completed += 1
+
     def flush(self) -> None:
         with self._lock:
             files = list(self._queue)
             self._queue.clear()
             self._timer = None
-        if files:
-            logger.info("Processing %d uploaded replay(s)", len(files))
-            results = _parallel_parse(files, self.tracked_players)
-            conn = _open_write_conn(self.db_path)
-            try:
-                _write_parsed_batch(conn, self.tracked_players, results)
-            finally:
-                conn.close()
+            batch = _BatchProgress(total=len(files)) if files else None
+            if files and batch is not None:
+                for path in files:
+                    self._file_status[path.name] = "processing"
+                    self._file_batch[path.name] = batch
+        if not files or batch is None:
+            return
+        logger.info("Processing %d uploaded replay(s)", len(files))
+        results = _parallel_parse(
+            files, self.tracked_players, on_parsed=lambda p: self._on_parsed(p, batch)
+        )
+        conn = _open_write_conn(self.db_path)
+        try:
+            outcomes = _write_parsed_batch(conn, self.tracked_players, results)
+        finally:
+            conn.close()
+        with self._lock:
+            for name, outcome in outcomes.items():
+                if outcome.startswith("error:"):
+                    self._file_status[name] = outcome
+                    self._error_recorded_at[name] = time.monotonic()
+                else:
+                    self._file_status.pop(name, None)
+                    self._error_recorded_at.pop(name, None)
+            for path in files:
+                self._file_batch.pop(path.name, None)
 
 
 def process_unprocessed(
