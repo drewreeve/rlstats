@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from ingest import analyze_replay
 from process import (
     UploadProcessor,
+    _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
+    _write_parsed_batch,  # pyright: ignore[reportPrivateUsage]
     parse_replay,
-    process_batch,
     process_replay,
     process_unprocessed,
 )
@@ -84,7 +86,7 @@ def test_process_replay_success(tmp_path: Path):
     conn.commit()
     row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
     assert row[0] == 1
-    # Marker is NOT written by process_replay; process_batch handles it after commit
+    # Marker is NOT written by process_replay; _write_parsed_batch handles it after commit
     assert not (tmp_path / "test.replay.ingested").exists()
 
 
@@ -135,70 +137,60 @@ def test_process_replay_skipped(tmp_path: Path):
     assert row[0] == 0
 
 
-def test_process_batch_commits(tmp_path: Path):
-    """process_batch processes multiple files and commits once."""
+def test_write_parsed_batch_commits(tmp_path: Path):
+    """_write_parsed_batch processes multiple files and commits once."""
     conn = _make_conn()
     replay_data = load_replay("match.json")
 
     files: list[Path] = []
+    results: dict[Path, Any] = {}
     for i in range(3):
         p = tmp_path / f"match{i}.replay"
         p.write_bytes(b"\x00" * 1024)
         files.append(p)
-
-    call_count = 0
-
-    def fake_rrrocket(args: Any, **kwargs: Any):
-        nonlocal call_count
         # Give each match a unique GUID so they don't collide
         data = json.loads(json.dumps(replay_data))
-        data["properties"]["MatchGUID"] = f"GUID-{call_count}"
-        call_count += 1
-        stdout = json.dumps(data).encode()
-        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+        data["properties"]["MatchGUID"] = f"GUID-{i}"
+        results[p] = analyze_replay(parse_rrrocket(data), TRACKED_PLAYERS)
 
-    with patch("process.subprocess.run", side_effect=fake_rrrocket):
-        process_batch(files, conn, TRACKED_PLAYERS)
+    outcomes = _write_parsed_batch(conn, TRACKED_PLAYERS, results)
 
     row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
     assert row[0] == 3
     # Markers are written only after commit
     for p in files:
         assert (p.with_suffix(p.suffix + ".ingested")).exists()
+        assert outcomes[p.name] == "processed"
 
 
-def test_process_batch_rolls_back_partial_write_on_failure(tmp_path: Path):
+def test_write_parsed_batch_rolls_back_partial_write_on_failure(tmp_path: Path):
     """A failure partway through write_match must not leave a half-written match row.
 
-    write_match issues several separate statements (upsert match, insert
-    match_players, ...) with no transaction of its own. Without a savepoint
-    around each file's write, a mid-write failure would still get committed
-    alongside the rest of the batch once _finalize_batch commits.
+    write_match wraps its own savepoint (see _try_write_match), so a mid-write
+    failure here must not get committed alongside the rest of the batch once
+    _finalize_batch commits.
     """
     conn = _make_conn()
     replay_data = load_replay("match.json")
     replay_path = tmp_path / "bad.replay"
     replay_path.write_bytes(b"\x00" * 1024)
+    analysis = analyze_replay(parse_rrrocket(replay_data), TRACKED_PLAYERS)
 
-    def fake_rrrocket(args: Any, **kwargs: Any):
-        stdout = json.dumps(replay_data).encode()
-        return subprocess.CompletedProcess(args, 0, stdout=stdout)
-
-    with (
-        patch("process.subprocess.run", side_effect=fake_rrrocket),
-        patch(
-            "ingest._insert_match_players",
-            side_effect=RuntimeError("simulated failure after match row inserted"),
-        ),
+    with patch(
+        "ingest._insert_match_players",
+        side_effect=RuntimeError("simulated failure after match row inserted"),
     ):
-        process_batch([replay_path], conn, TRACKED_PLAYERS)
+        outcomes = _write_parsed_batch(conn, TRACKED_PLAYERS, {replay_path: analysis})
 
     assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 0
     assert not replay_path.with_suffix(replay_path.suffix + ".ingested").exists()
     assert replay_path.exists()
+    assert outcomes[replay_path.name].startswith("error:")
 
 
-def test_process_batch_isolates_failure_from_other_files_in_batch(tmp_path: Path):
+def test_write_parsed_batch_isolates_failure_from_other_files_in_batch(
+    tmp_path: Path,
+):
     """A failing file's rolled-back savepoint must not affect other files in the
     same batch, before or after it, once they share one connection/transaction."""
     from ingest import (
@@ -209,13 +201,12 @@ def test_process_batch_isolates_failure_from_other_files_in_batch(tmp_path: Path
     replay_data = load_replay("match.json")
 
     files = [tmp_path / f"{name}.replay" for name in ("a", "bad", "c")]
+    results: dict[Path, Any] = {}
     for p in files:
         p.write_bytes(b"\x00" * 1024)
-
-    def fake_rrrocket(args: Any, **kwargs: Any):
         data = json.loads(json.dumps(replay_data))
-        data["properties"]["MatchGUID"] = f"GUID-{Path(args[-1]).stem}"
-        return subprocess.CompletedProcess(args, 0, stdout=json.dumps(data).encode())
+        data["properties"]["MatchGUID"] = f"GUID-{p.stem}"
+        results[p] = analyze_replay(parse_rrrocket(data), TRACKED_PLAYERS)
 
     call_count = 0
 
@@ -226,11 +217,8 @@ def test_process_batch_isolates_failure_from_other_files_in_batch(tmp_path: Path
             raise RuntimeError("simulated failure")
         return real_insert(*args, **kwargs)
 
-    with (
-        patch("process.subprocess.run", side_effect=fake_rrrocket),
-        patch("ingest._insert_match_players", side_effect=insert_or_fail),
-    ):
-        process_batch(files, conn, TRACKED_PLAYERS)
+    with patch("ingest._insert_match_players", side_effect=insert_or_fail):
+        outcomes = _write_parsed_batch(conn, TRACKED_PLAYERS, results)
 
     assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM match_players").fetchone()[0] > 0
@@ -239,13 +227,16 @@ def test_process_batch_isolates_failure_from_other_files_in_batch(tmp_path: Path
     assert not bad.with_suffix(bad.suffix + ".ingested").exists()
     assert c.with_suffix(c.suffix + ".ingested").exists()
     assert bad.exists()
+    assert outcomes[a.name] == "processed"
+    assert outcomes[bad.name].startswith("error:")
+    assert outcomes[c.name] == "processed"
 
 
-def test_process_batch_syncs_tracked_players(tmp_path: Path):
+def test_write_parsed_batch_syncs_tracked_players(tmp_path: Path):
     """A player already in the DB as untracked gets flipped once they're in config.
 
     Regression test: get_or_create_player's ON CONFLICT doesn't update is_tracked,
-    so this relies on process_batch also running sync_tracked_players.
+    so this relies on _write_parsed_batch also running sync_tracked_players.
     """
     conn = _make_conn()
     conn.execute(
@@ -259,8 +250,10 @@ def test_process_batch_syncs_tracked_players(tmp_path: Path):
     replay_path.write_bytes(
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
+    analysis = _parse_and_analyze(replay_path, TRACKED_PLAYERS)
+    assert analysis is not None
 
-    process_batch([replay_path], conn, TRACKED_PLAYERS)
+    _write_parsed_batch(conn, TRACKED_PLAYERS, {replay_path: analysis})
 
     row = conn.execute(
         "SELECT is_tracked FROM players WHERE platform_id = ?",
@@ -343,15 +336,23 @@ def test_process_unprocessed_write_failure_does_not_abort_batch(tmp_path: Path):
 def test_upload_processor_debounce(tmp_path: Path):
     """Multiple enqueues within the delay result in a single batch."""
     db_path = file_db(tmp_path)
-    batch_calls: list[list[Path]] = []
+    parse_calls: list[list[Path]] = []
 
-    def fake_batch(
-        f: list[Path], c: sqlite3.Connection, tp: object
-    ) -> dict[str, tuple[bool, None]]:
-        batch_calls.append(list(f))
-        return {p.name: (True, None) for p in f}
+    def fake_parallel_parse(
+        paths: list[Path], tracked_players: object, on_parsed: object = None
+    ) -> dict[Path, None]:
+        parse_calls.append(list(paths))
+        return {p: None for p in paths}
 
-    with patch("process.process_batch", side_effect=fake_batch):
+    def fake_write_batch(
+        conn: sqlite3.Connection, tracked_players: object, results: dict[Path, None]
+    ) -> dict[str, str]:
+        return {p.name: "skipped" for p in results}
+
+    with (
+        patch("process._parallel_parse", side_effect=fake_parallel_parse),
+        patch("process._write_parsed_batch", side_effect=fake_write_batch),
+    ):
         proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=0.1)
 
         for i in range(5):
@@ -370,7 +371,30 @@ def test_upload_processor_debounce(tmp_path: Path):
         proc.enqueue(tmp_path / "match5.replay")
         done.wait(timeout=2.0)
 
-    assert len(batch_calls) >= 1
+    assert len(parse_calls) >= 1
     # All files should be in total across calls
-    all_files = [f for call in batch_calls for f in call]
+    all_files = [f for call in parse_calls for f in call]
     assert len(all_files) == 6
+
+
+def test_upload_processor_flush_end_to_end(tmp_path: Path):
+    """flush() runs rrrocket + ingests a real replay via the real process pool."""
+    db_path = file_db(tmp_path)
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    replay_path = replay_dir / "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
+    replay_path.write_bytes(
+        (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
+    )
+
+    proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=100.0)
+    proc.enqueue(replay_path)
+    assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
+    proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
+
+    proc.flush()
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
+    assert row[0] == 1
+    assert replay_path.with_suffix(replay_path.suffix + ".ingested").exists()

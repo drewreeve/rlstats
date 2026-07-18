@@ -4,7 +4,8 @@ import os
 import sqlite3
 import subprocess
 import threading
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import cast
 
@@ -121,19 +122,77 @@ def process_replay(
     return error is None, error
 
 
-def process_batch(
-    files: list[Path],
+def _parse_and_analyze(
+    replay_path: Path, tracked_players: dict[PlayerIdentity, str]
+) -> ReplayAnalysis | None:
+    """Worker for parallel processing: parse + analyze a replay without DB access."""
+    replay, _ = parse_replay(replay_path)
+    if replay is None:
+        return None
+    analysis = analyze_replay(replay, tracked_players)
+    if analysis is None:
+        logger.debug(
+            "Skipping %s: no tracked players or missing metadata", replay_path.name
+        )
+    return analysis
+
+
+def _parallel_parse(
+    paths: list[Path],
+    tracked_players: dict[PlayerIdentity, str],
+    on_parsed: Callable[[Path], None] | None = None,
+) -> dict[Path, ReplayAnalysis | None]:
+    """Parse+analyze a batch of replays in a process pool.
+
+    Returns path -> analysis (in the same order as paths), with None meaning
+    skip (corrupt, untracked, or missing metadata). Calls on_parsed(path) as
+    each file's parse completes, for progress reporting; that happens in
+    completion order, but the returned dict is reordered back to match paths
+    so write order stays deterministic regardless of which worker finishes first.
+    """
+    workers = max(1, (os.cpu_count() or 2) // 2)
+    worker = functools.partial(_parse_and_analyze, tracked_players=tracked_players)
+    completed: dict[Path, ReplayAnalysis | None] = {}
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        future_to_path = {pool.submit(worker, path): path for path in paths}
+        for future in as_completed(future_to_path):
+            path = future_to_path[future]
+            completed[path] = future.result()
+            if on_parsed is not None:
+                on_parsed(path)
+    return {path: completed[path] for path in paths}
+
+
+def _write_parsed_batch(
     conn: sqlite3.Connection,
     tracked_players: dict[PlayerIdentity, str],
-) -> None:
-    """Process a list of replay files in a single DB transaction."""
+    results: dict[Path, ReplayAnalysis | None],
+) -> dict[str, str]:
+    """Write parsed results to conn, finalize the batch, and report per-file outcomes.
+
+    Outcomes are "processed", "skipped" (no tracked players / missing metadata), or
+    "error:<message>". Acquires _batch_lock itself, so batch-commit semantics (one
+    commit + all sentinels at the end, write_match's own savepoint isolating each
+    file's write) are unchanged from before this was pulled out of process_batch.
+    """
+    outcomes: dict[str, str] = {}
     with _batch_lock:
-        resolved = [
-            replay_path
-            for replay_path in files
-            if process_replay(replay_path, conn, tracked_players)[0]
-        ]
+        resolved: list[Path] = []
+        for path, analysis in results.items():
+            if analysis is not None:
+                error = _try_write_match(conn, path, analysis)
+                if error is None:
+                    resolved.append(path)
+                    outcomes[path.name] = "processed"
+                else:
+                    outcomes[path.name] = f"error:{error}"
+            elif path.exists():
+                resolved.append(path)
+                outcomes[path.name] = "skipped"
+            else:
+                outcomes[path.name] = "error:parse failed"
         _finalize_batch(conn, tracked_players, resolved)
+    return outcomes
 
 
 class UploadProcessor:
@@ -168,26 +227,12 @@ class UploadProcessor:
             self._timer = None
         if files:
             logger.info("Processing %d uploaded replay(s)", len(files))
+            results = _parallel_parse(files, self.tracked_players)
             conn = _open_write_conn(self.db_path)
             try:
-                process_batch(files, conn, self.tracked_players)
+                _write_parsed_batch(conn, self.tracked_players, results)
             finally:
                 conn.close()
-
-
-def _parse_and_analyze(
-    replay_path: Path, tracked_players: dict[PlayerIdentity, str]
-) -> ReplayAnalysis | None:
-    """Worker for parallel processing: parse + analyze a replay without DB access."""
-    replay, _ = parse_replay(replay_path)
-    if replay is None:
-        return None
-    analysis = analyze_replay(replay, tracked_players)
-    if analysis is None:
-        logger.debug(
-            "Skipping %s: no tracked players or missing metadata", replay_path.name
-        )
-    return analysis
 
 
 def process_unprocessed(
@@ -214,22 +259,11 @@ def process_unprocessed(
 
     logger.info("Processing %d replay(s)...", len(replay_paths))
 
-    workers = max(1, (os.cpu_count() or 2) // 2)
-    worker = functools.partial(_parse_and_analyze, tracked_players=tracked_players)
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(worker, replay_paths))
+    results = _parallel_parse(replay_paths, tracked_players)
 
     conn = _open_write_conn(db_path)
     try:
-        with _batch_lock:
-            resolved: list[Path] = []
-            for path, analysis in zip(replay_paths, results, strict=True):
-                if analysis is not None:
-                    if _try_write_match(conn, path, analysis) is None:
-                        resolved.append(path)
-                elif path.exists():
-                    resolved.append(path)
-            _finalize_batch(conn, tracked_players, resolved)
+        _write_parsed_batch(conn, tracked_players, results)
     finally:
         conn.close()
 
