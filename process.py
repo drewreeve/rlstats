@@ -7,6 +7,8 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import cast
 
@@ -196,6 +198,24 @@ def _write_parsed_batch(
     return outcomes
 
 
+class UploadState(Enum):
+    PENDING = "pending"
+    PROCESSED = "processed"
+    ERROR = "error"
+
+
+@dataclass
+class UploadStatus:
+    """Reconciled status for one uploaded file: folds together the .ingested
+    sentinel, this processor's in-memory pipeline state, and file existence
+    into the single answer a caller needs."""
+
+    state: UploadState
+    stage: str | None = None
+    batch: tuple[int, int] | None = None
+    error: str | None = None
+
+
 class _BatchProgress:
     """Mutable (completed, total) counter shared by every file in one flush's
     batch. Scoped per-batch (not processor-wide) so two overlapping flushes —
@@ -216,11 +236,13 @@ class UploadProcessor:
         self,
         db_path: str | Path,
         tracked_players: dict[PlayerIdentity, str],
+        replay_dir: str | Path,
         delay: float = 2.0,
         error_retention: float = 1800.0,
     ):
         self.db_path = db_path
         self.tracked_players = tracked_players
+        self.replay_dir = Path(replay_dir)
         self.delay = delay
         self.error_retention = error_retention
         self._queue: list[Path] = []
@@ -263,6 +285,30 @@ class UploadProcessor:
         with self._lock:
             batch = self._file_batch.get(name)
             return None if batch is None else (batch.completed, batch.total)
+
+    def status(self, name: str) -> UploadStatus:
+        """Reconcile the .ingested sentinel, this processor's pipeline state,
+        and file existence into one answer.
+
+        Precedence: the sentinel is the durable record and wins over any
+        stale in-memory state; a recorded error is next; then pipeline
+        stage/batch; then a missing file is an error; otherwise pending.
+        """
+        replay_path = self.replay_dir / name
+        ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
+        if ingested_path.exists():
+            return UploadStatus(UploadState.PROCESSED)
+
+        stage = self.file_status(name)
+        if stage is not None and stage.startswith("error:"):
+            return UploadStatus(UploadState.ERROR, error=stage[len("error:") :])
+        if stage is not None:
+            return UploadStatus(
+                UploadState.PENDING, stage=stage, batch=self.batch_progress(name)
+            )
+        if not replay_path.exists():
+            return UploadStatus(UploadState.ERROR)
+        return UploadStatus(UploadState.PENDING)
 
     def _on_parsed(self, path: Path, batch: _BatchProgress) -> None:
         with self._lock:

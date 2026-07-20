@@ -10,6 +10,9 @@ from unittest.mock import MagicMock, patch
 from ingest import analyze_replay
 from process import (
     UploadProcessor,
+    UploadState,
+    UploadStatus,
+    _BatchProgress,  # pyright: ignore[reportPrivateUsage]
     _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
     _write_parsed_batch,  # pyright: ignore[reportPrivateUsage]
     parse_replay,
@@ -354,7 +357,7 @@ def test_upload_processor_debounce(tmp_path: Path):
         patch("process._parallel_parse", side_effect=fake_parallel_parse),
         patch("process._write_parsed_batch", side_effect=fake_write_batch),
     ):
-        proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=0.1)
+        proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path, delay=0.1)
 
         for i in range(5):
             proc.enqueue(tmp_path / f"match{i}.replay")
@@ -388,7 +391,7 @@ def test_upload_processor_flush_end_to_end(tmp_path: Path):
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
 
-    proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=100.0)
+    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir, delay=100.0)
     proc.enqueue(replay_path)
     assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
     proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
@@ -427,7 +430,7 @@ def test_upload_processor_status_transitions(tmp_path: Path):
         patch("process._parallel_parse", side_effect=fake_parallel_parse),
         patch("process._write_parsed_batch", side_effect=fake_write_batch),
     ):
-        proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=100.0)
+        proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path, delay=100.0)
         proc.enqueue(replay_path)
         assert proc.file_status(replay_path.name) == "queued"
         assert proc.batch_progress(replay_path.name) is None
@@ -454,7 +457,7 @@ def test_upload_processor_status_error_path(tmp_path: Path):
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
 
-    proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=100.0)
+    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir, delay=100.0)
     proc.enqueue(replay_path)
     assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
     proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
@@ -502,7 +505,7 @@ def test_upload_processor_overlapping_flushes_do_not_corrupt_batch_progress(
         patch("process._parallel_parse", side_effect=fake_parallel_parse),
         patch("process._write_parsed_batch", side_effect=fake_write_batch),
     ):
-        proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=100.0)
+        proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path, delay=100.0)
 
         proc.enqueue(tmp_path / "a.replay")
         assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
@@ -545,7 +548,9 @@ def test_upload_processor_error_entries_expire(tmp_path: Path):
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
 
-    proc = UploadProcessor(db_path, TRACKED_PLAYERS, delay=100.0, error_retention=0.05)
+    proc = UploadProcessor(
+        db_path, TRACKED_PLAYERS, replay_dir, delay=100.0, error_retention=0.05
+    )
     proc.enqueue(replay_path)
     assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
     proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
@@ -568,3 +573,90 @@ def test_upload_processor_error_entries_expire(tmp_path: Path):
     proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
 
     assert proc.file_status(replay_path.name) is None
+
+
+# -- UploadProcessor.status() reconciliation --
+
+
+def test_upload_status_missing_file_is_error(tmp_path: Path):
+    """No .replay file at all means processing failed (file was deleted)."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
+
+    assert proc.status("nonexistent.replay") == UploadStatus(UploadState.ERROR)
+
+
+def test_upload_status_bare_pending_when_replay_exists_untracked(tmp_path: Path):
+    """.replay exists on disk but the processor has no record of it: pending, no stage."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    (replay_dir / "test.replay").write_bytes(b"\x00")
+    proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
+
+    assert proc.status("test.replay") == UploadStatus(UploadState.PENDING)
+
+
+def test_upload_status_processed_when_ingested_marker_exists(tmp_path: Path):
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    (replay_dir / "test.replay").write_bytes(b"\x00")
+    (replay_dir / "test.replay.ingested").write_bytes(b"")
+    proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
+
+    assert proc.status("test.replay") == UploadStatus(UploadState.PROCESSED)
+
+
+def test_upload_status_reports_live_stage_and_batch(tmp_path: Path):
+    """A processor with an in-flight file reports its stage and batch progress."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
+    proc._file_status["test.replay"] = "parsed"  # pyright: ignore[reportPrivateUsage]
+    bp = _BatchProgress(total=20)
+    bp.completed = 3
+    proc._file_batch["test.replay"] = bp  # pyright: ignore[reportPrivateUsage]
+
+    assert proc.status("test.replay") == UploadStatus(
+        UploadState.PENDING, stage="parsed", batch=(3, 20)
+    )
+
+
+def test_upload_status_omits_batch_when_queued(tmp_path: Path):
+    """A queued file (flush hasn't started) has no batch yet."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
+    proc._file_status["test.replay"] = "queued"  # pyright: ignore[reportPrivateUsage]
+
+    assert proc.status("test.replay") == UploadStatus(
+        UploadState.PENDING, stage="queued"
+    )
+
+
+def test_upload_status_reports_processor_error(tmp_path: Path):
+    """A processor error entry surfaces as an ERROR status with the message."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
+    proc._file_status["test.replay"] = (  # pyright: ignore[reportPrivateUsage]
+        "error:Ingest failed: boom"
+    )
+
+    assert proc.status("test.replay") == UploadStatus(
+        UploadState.ERROR, error="Ingest failed: boom"
+    )
+
+
+def test_upload_status_sentinel_wins_over_processor_error(tmp_path: Path):
+    """The .ingested sentinel is the durable record and wins over stale live state."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    (replay_dir / "test.replay").write_bytes(b"\x00")
+    (replay_dir / "test.replay.ingested").write_bytes(b"")
+    proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
+    proc._file_status["test.replay"] = (  # pyright: ignore[reportPrivateUsage]
+        "error:should be ignored"
+    )
+
+    assert proc.status("test.replay") == UploadStatus(UploadState.PROCESSED)

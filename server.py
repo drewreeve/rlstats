@@ -190,6 +190,11 @@ def create_app(
     upload_password = settings.upload_password
 
     upload_dir = replay_dir or REPLAY_DIR
+    if processor is None:
+        # main() always builds and passes its own processor, so this branch
+        # only fires for callers (tests) that don't care about background
+        # timing; a long delay keeps it inert instead of firing mid-suite.
+        processor = UploadProcessor(db_path, settings.players, upload_dir, delay=3600.0)
 
     version = _compute_version(STATIC_DIR)
     index_html = _versioned_html(STATIC_DIR / "index.html", version)
@@ -318,8 +323,7 @@ def create_app(
             return JSONResponse(
                 {"error": "File already exists", "duplicate": True}, status_code=409
             )
-        if processor is not None:
-            processor.enqueue(dest)
+        processor.enqueue(dest)
         return JSONResponse({"filename": safe_name}, status_code=201)
 
     @app.get("/api/upload/status")
@@ -332,23 +336,19 @@ def create_app(
         safe_name = secure_filename(filename)
         if not safe_name:
             return {"status": "unknown"}
-        replay_path = upload_dir / safe_name
-        ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
-        if ingested_path.exists():
-            return {"status": "processed"}
-        if processor is not None:
-            stage = processor.file_status(safe_name)
-            if stage is not None and stage.startswith("error:"):
-                return {"status": "error", "error": stage[len("error:") :]}
-            if stage is not None:
-                result: dict[str, Any] = {"status": "pending", "stage": stage}
-                batch = processor.batch_progress(safe_name)
-                if batch is not None:
-                    result["batch"] = {"completed": batch[0], "total": batch[1]}
-                return result
-        if not replay_path.exists():
-            return {"status": "error"}
-        return {"status": "pending"}
+
+        status = processor.status(safe_name)
+        result: dict[str, Any] = {"status": status.state.value}
+        if status.error is not None:
+            result["error"] = status.error
+        if status.stage is not None:
+            result["stage"] = status.stage
+        if status.batch is not None:
+            result["batch"] = {
+                "completed": status.batch[0],
+                "total": status.batch[1],
+            }
+        return result
 
     # -- Match routes --
 
@@ -527,7 +527,7 @@ def main():
     settings = config.load_settings()
     process_unprocessed(DB_PATH, REPLAY_DIR, settings.players)
 
-    processor = UploadProcessor(DB_PATH, settings.players)
+    processor = UploadProcessor(DB_PATH, settings.players, REPLAY_DIR)
     app = create_app(DB_PATH, processor=processor, settings=settings)
     print(f"Serving on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
