@@ -9,11 +9,16 @@ from unittest.mock import MagicMock, patch
 
 from ingest import analyze_replay
 from process import (
+    Errored,  # pyright: ignore[reportPrivateUsage]
+    Parsed,  # pyright: ignore[reportPrivateUsage]
+    Processing,  # pyright: ignore[reportPrivateUsage]
+    Queued,  # pyright: ignore[reportPrivateUsage]
     UploadProcessor,
     UploadState,
     UploadStatus,
     _BatchProgress,  # pyright: ignore[reportPrivateUsage]
     _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
+    _UploadFiles,  # pyright: ignore[reportPrivateUsage]
     _write_parsed_batch,  # pyright: ignore[reportPrivateUsage]
     parse_replay,
     process_replay,
@@ -612,10 +617,14 @@ def test_upload_status_reports_live_stage_and_batch(tmp_path: Path):
     replay_dir = tmp_path / "replays"
     replay_dir.mkdir()
     proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
-    proc._file_status["test.replay"] = "parsed"  # pyright: ignore[reportPrivateUsage]
     bp = _BatchProgress(total=20)
     bp.completed = 3
-    proc._file_batch["test.replay"] = bp  # pyright: ignore[reportPrivateUsage]
+    proc._files.mark_processing(  # pyright: ignore[reportPrivateUsage]
+        "test.replay", bp
+    )
+    proc._files.mark_parsed(  # pyright: ignore[reportPrivateUsage]
+        "test.replay", bp
+    )
 
     assert proc.status("test.replay") == UploadStatus(
         UploadState.PENDING, stage="parsed", batch=(3, 20)
@@ -627,7 +636,7 @@ def test_upload_status_omits_batch_when_queued(tmp_path: Path):
     replay_dir = tmp_path / "replays"
     replay_dir.mkdir()
     proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
-    proc._file_status["test.replay"] = "queued"  # pyright: ignore[reportPrivateUsage]
+    proc._files.mark_queued("test.replay")  # pyright: ignore[reportPrivateUsage]
 
     assert proc.status("test.replay") == UploadStatus(
         UploadState.PENDING, stage="queued"
@@ -639,8 +648,8 @@ def test_upload_status_reports_processor_error(tmp_path: Path):
     replay_dir = tmp_path / "replays"
     replay_dir.mkdir()
     proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
-    proc._file_status["test.replay"] = (  # pyright: ignore[reportPrivateUsage]
-        "error:Ingest failed: boom"
+    proc._files.record_error(  # pyright: ignore[reportPrivateUsage]
+        "test.replay", "Ingest failed: boom"
     )
 
     assert proc.status("test.replay") == UploadStatus(
@@ -655,8 +664,85 @@ def test_upload_status_sentinel_wins_over_processor_error(tmp_path: Path):
     (replay_dir / "test.replay").write_bytes(b"\x00")
     (replay_dir / "test.replay.ingested").write_bytes(b"")
     proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
-    proc._file_status["test.replay"] = (  # pyright: ignore[reportPrivateUsage]
-        "error:should be ignored"
+    proc._files.record_error(  # pyright: ignore[reportPrivateUsage]
+        "test.replay", "should be ignored"
     )
 
     assert proc.status("test.replay") == UploadStatus(UploadState.PROCESSED)
+
+
+# -- _UploadFiles --
+
+
+def test_upload_files_mark_queued():
+    files = _UploadFiles()
+    files.mark_queued("a.replay")
+
+    assert files.get("a.replay") == Queued()
+
+
+def test_upload_files_mark_processing():
+    files = _UploadFiles()
+    bp = _BatchProgress(total=5)
+    files.mark_processing("a.replay", bp)
+
+    assert files.get("a.replay") == Processing(bp)
+
+
+def test_upload_files_mark_parsed_after_processing():
+    files = _UploadFiles()
+    bp = _BatchProgress(total=5)
+    files.mark_processing("a.replay", bp)
+    files.mark_parsed("a.replay", bp)
+
+    assert files.get("a.replay") == Parsed(bp)
+
+
+def test_upload_files_mark_parsed_without_existing_record_is_noop():
+    files = _UploadFiles()
+    bp = _BatchProgress(total=5)
+    files.mark_parsed("a.replay", bp)
+
+    assert files.get("a.replay") is None
+
+
+def test_upload_files_record_error():
+    files = _UploadFiles()
+    files.record_error("a.replay", "boom")
+
+    record = files.get("a.replay")
+    assert isinstance(record, Errored)
+    assert record.message == "boom"
+
+
+def test_upload_files_resolve_removes_record():
+    files = _UploadFiles()
+    files.mark_queued("a.replay")
+    files.resolve("a.replay")
+
+    assert files.get("a.replay") is None
+
+
+def test_upload_files_resolve_missing_record_is_noop():
+    files = _UploadFiles()
+    files.resolve("a.replay")
+
+    assert files.get("a.replay") is None
+
+
+def test_upload_files_prune_stale_drops_only_expired_errors():
+    files = _UploadFiles()
+    files.mark_queued("queued.replay")
+    files.record_error("stale_error.replay", "old")
+    time.sleep(0.05)
+    cutoff = time.monotonic()
+    time.sleep(0.05)
+    files.record_error("fresh_error.replay", "new")
+
+    files.prune_stale(cutoff)
+
+    assert files.get("queued.replay") == Queued()
+    assert files.get("stale_error.replay") is None
+    record = files.get("fresh_error.replay")
+    assert isinstance(record, Errored)
+    assert record.message == "new"

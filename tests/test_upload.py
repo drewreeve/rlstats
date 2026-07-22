@@ -323,10 +323,14 @@ def test_upload_status_serializes_stage_and_batch(tmp_path: Path):
     replay_dir = tmp_path / "replays"
     replay_dir.mkdir()
     processor = UploadProcessor(file_db(tmp_path), {}, replay_dir)
-    processor._file_status["test.replay"] = "parsed"  # pyright: ignore[reportPrivateUsage]
     bp = _BatchProgress(total=20)
     bp.completed = 3
-    processor._file_batch["test.replay"] = bp  # pyright: ignore[reportPrivateUsage]
+    processor._files.mark_processing(  # pyright: ignore[reportPrivateUsage]
+        "test.replay", bp
+    )
+    processor._files.mark_parsed(  # pyright: ignore[reportPrivateUsage]
+        "test.replay", bp
+    )
     app = create_app(file_db(tmp_path), replay_dir=replay_dir, processor=processor)
     client = TestClient(app, base_url="https://testserver")
 

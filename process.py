@@ -229,6 +229,72 @@ class _BatchProgress:
         self.total = total
 
 
+@dataclass(frozen=True)
+class Queued:
+    pass
+
+
+@dataclass(frozen=True)
+class Processing:
+    batch: _BatchProgress
+
+
+@dataclass(frozen=True)
+class Parsed:
+    batch: _BatchProgress
+
+
+@dataclass(frozen=True)
+class Errored:
+    message: str
+    recorded_at: float
+
+
+FileRecord = Queued | Processing | Parsed | Errored
+
+
+class _UploadFiles:
+    """Per-file pipeline state for one UploadProcessor: queued -> processing
+    -> parsed -> resolved (removed), or -> errored (kept until it expires).
+
+    Not thread-safe on its own — the owning UploadProcessor serializes all
+    access via its own lock, the same lock that also guards the upload queue
+    and timer, so a flush's "drain queue, mark files processing" step stays
+    one atomic unit.
+    """
+
+    def __init__(self) -> None:
+        self._records: dict[str, FileRecord] = {}
+
+    def get(self, name: str) -> FileRecord | None:
+        return self._records.get(name)
+
+    def mark_queued(self, name: str) -> None:
+        self._records[name] = Queued()
+
+    def mark_processing(self, name: str, batch: _BatchProgress) -> None:
+        self._records[name] = Processing(batch)
+
+    def mark_parsed(self, name: str, batch: _BatchProgress) -> None:
+        if name in self._records:
+            self._records[name] = Parsed(batch)
+
+    def record_error(self, name: str, message: str) -> None:
+        self._records[name] = Errored(message, time.monotonic())
+
+    def resolve(self, name: str) -> None:
+        self._records.pop(name, None)
+
+    def prune_stale(self, cutoff: float) -> None:
+        stale = [
+            name
+            for name, record in self._records.items()
+            if isinstance(record, Errored) and record.recorded_at < cutoff
+        ]
+        for name in stale:
+            self._records.pop(name, None)
+
+
 class UploadProcessor:
     """Debounced batch processor for uploaded replay files."""
 
@@ -248,29 +314,18 @@ class UploadProcessor:
         self._queue: list[Path] = []
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
-        # Progress state for the server's /api/upload/status endpoint. Filename ->
-        # "queued" | "processing" | "parsed" | "error:<msg>". Resolved (processed
-        # or skipped) files are pruned once flush ends; the .ingested sentinel is
-        # the durable record from then on. Error entries are kept for reporting,
-        # but expire after error_retention so abandoned uploads don't accumulate.
-        self._file_status: dict[str, str] = {}
-        self._file_batch: dict[str, _BatchProgress] = {}
-        self._error_recorded_at: dict[str, float] = {}
-
-    def _prune_stale_errors(self) -> None:
-        """Drop error entries older than error_retention. Caller must hold self._lock."""
-        cutoff = time.monotonic() - self.error_retention
-        stale = [name for name, at in self._error_recorded_at.items() if at < cutoff]
-        for name in stale:
-            self._error_recorded_at.pop(name, None)
-            self._file_status.pop(name, None)
+        # Progress state for the server's /api/upload/status endpoint. Resolved
+        # (processed or skipped) files are removed once flush ends; the .ingested
+        # sentinel is the durable record from then on. Errored records are kept
+        # for reporting, but expire after error_retention so abandoned uploads
+        # don't accumulate.
+        self._files = _UploadFiles()
 
     def enqueue(self, path: Path):
         with self._lock:
-            self._prune_stale_errors()
+            self._files.prune_stale(time.monotonic() - self.error_retention)
             self._queue.append(path)
-            self._file_status[path.name] = "queued"
-            self._error_recorded_at.pop(path.name, None)
+            self._files.mark_queued(path.name)
             if self._timer is not None:
                 self._timer.cancel()
             self._timer = threading.Timer(self.delay, self.flush)
@@ -279,11 +334,21 @@ class UploadProcessor:
 
     def file_status(self, name: str) -> str | None:
         with self._lock:
-            return self._file_status.get(name)
+            record = self._files.get(name)
+        if record is None:
+            return None
+        if isinstance(record, Queued):
+            return "queued"
+        if isinstance(record, Processing):
+            return "processing"
+        if isinstance(record, Parsed):
+            return "parsed"
+        return f"error:{record.message}"
 
     def batch_progress(self, name: str) -> tuple[int, int] | None:
         with self._lock:
-            batch = self._file_batch.get(name)
+            record = self._files.get(name)
+            batch = record.batch if isinstance(record, Processing | Parsed) else None
             return None if batch is None else (batch.completed, batch.total)
 
     def status(self, name: str) -> UploadStatus:
@@ -312,8 +377,7 @@ class UploadProcessor:
 
     def _on_parsed(self, path: Path, batch: _BatchProgress) -> None:
         with self._lock:
-            if path.name in self._file_status:
-                self._file_status[path.name] = "parsed"
+            self._files.mark_parsed(path.name, batch)
             batch.completed += 1
 
     def flush(self) -> None:
@@ -324,8 +388,7 @@ class UploadProcessor:
             batch = _BatchProgress(total=len(files)) if files else None
             if files and batch is not None:
                 for path in files:
-                    self._file_status[path.name] = "processing"
-                    self._file_batch[path.name] = batch
+                    self._files.mark_processing(path.name, batch)
         if not files or batch is None:
             return
         logger.info("Processing %d uploaded replay(s)", len(files))
@@ -340,13 +403,9 @@ class UploadProcessor:
         with self._lock:
             for name, outcome in outcomes.items():
                 if outcome.startswith("error:"):
-                    self._file_status[name] = outcome
-                    self._error_recorded_at[name] = time.monotonic()
+                    self._files.record_error(name, outcome[len("error:") :])
                 else:
-                    self._file_status.pop(name, None)
-                    self._error_recorded_at.pop(name, None)
-            for path in files:
-                self._file_batch.pop(path.name, None)
+                    self._files.resolve(name)
 
 
 def process_unprocessed(
