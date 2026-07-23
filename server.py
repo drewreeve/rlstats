@@ -16,7 +16,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import config
 from db import apply_migrations, queries
-from process import UploadProcessor, process_unprocessed
+from process import process_unprocessed
+from upload_processor import UploadProcessor
 
 logger = logging.getLogger(__name__)
 

@@ -5,12 +5,12 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from config import Settings
-from process import (
+from server import create_app
+from tests.fixtures import file_db
+from upload_processor import (
     UploadProcessor,
     _BatchProgress,  # pyright: ignore[reportPrivateUsage]
 )
-from server import create_app
-from tests.fixtures import file_db
 
 
 def _replay_content(size: int = 300 * 1024) -> bytes:
@@ -304,7 +304,7 @@ def test_upload_status_sanitizes_filename(tmp_path: Path):
 def test_upload_status_calls_through_to_processor(tmp_path: Path):
     """The endpoint asks UploadProcessor.status() and serializes its answer;
     precedence/reconciliation itself is covered directly against
-    UploadProcessor.status() in test_process.py."""
+    UploadProcessor.status() in test_upload_processor.py."""
     replay_dir = tmp_path / "replays"
     replay_dir.mkdir()
     (replay_dir / "test.replay").write_bytes(b"\x00")
