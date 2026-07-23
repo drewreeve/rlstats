@@ -98,30 +98,6 @@ def _finalize_batch(
         replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
 
 
-def process_replay(
-    replay_path: Path,
-    conn: sqlite3.Connection,
-    tracked_players: dict[PlayerIdentity, str],
-) -> tuple[bool, str | None]:
-    """Run rrrocket on a .replay file, then ingest the parsed data.
-
-    Returns (True, None) when the file is resolved and a sentinel should be written:
-    either successfully ingested, or skipped (no tracked players, missing metadata).
-    Returns (False, error_message) on unexpected failure; the sentinel is not written
-    so the next run retries. Corrupt files that fail rrrocket parsing are deleted.
-    """
-    replay, error = parse_replay(replay_path)
-    if replay is None:
-        return False, error
-
-    analysis = analyze_replay(replay, tracked_players)
-    if analysis is None:
-        return True, None
-
-    error = _try_write_match(conn, replay_path, analysis)
-    return error is None, error
-
-
 def _parse_and_analyze(
     replay_path: Path, tracked_players: dict[PlayerIdentity, str]
 ) -> ReplayAnalysis | None:

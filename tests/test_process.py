@@ -3,13 +3,12 @@ import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from ingest import analyze_replay
 from process import (
     _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
     parse_replay,
-    process_replay,
     process_unprocessed,
     write_parsed_batch,
 )
@@ -64,77 +63,6 @@ def test_parse_replay_failure(tmp_path: Path):
     assert not replay_path.exists()
 
 
-def test_process_replay_success(tmp_path: Path):
-    """process_replay parses and ingests a replay without writing a marker."""
-    conn = _make_conn()
-    replay_data = load_replay("match.json")
-
-    replay_path = tmp_path / "test.replay"
-    replay_path.write_bytes(b"\x00" * 1024)
-
-    def fake_rrrocket(args: Any, **kwargs: Any):
-        stdout = json.dumps(replay_data).encode()
-        return subprocess.CompletedProcess(args, 0, stdout=stdout)
-
-    with patch("process.subprocess.run", side_effect=fake_rrrocket):
-        success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
-
-    assert success is True
-    assert error is None
-    conn.commit()
-    row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
-    assert row[0] == 1
-    # Marker is NOT written by process_replay; write_parsed_batch handles it after commit
-    assert not (tmp_path / "test.replay.ingested").exists()
-
-
-def test_process_replay_ingest_failure(tmp_path: Path):
-    """When ingest fails, the .replay is kept for retry and no marker is written."""
-    conn = _make_conn()
-    replay_path = tmp_path / "bad.replay"
-    replay_path.write_bytes(b"\x00" * 1024)
-
-    def fake_rrrocket(args: Any, **kwargs: Any):
-        stdout = b'{"properties": {}}'
-        return subprocess.CompletedProcess(args, 0, stdout=stdout)
-
-    with (
-        patch("process.subprocess.run", side_effect=fake_rrrocket),
-        patch("process.analyze_replay", return_value=MagicMock()),
-        patch("process.write_match", side_effect=RuntimeError("ingest broke")),
-    ):
-        success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
-
-    assert success is False
-    assert error is not None
-    assert "Ingest failed" in error
-    assert replay_path.exists()
-    assert not (tmp_path / "bad.replay.ingested").exists()
-
-
-def test_process_replay_skipped(tmp_path: Path):
-    """When analyze_replay returns None, returns True (sentinel will be written)."""
-    conn = _make_conn()
-    replay_path = tmp_path / "skip.replay"
-    replay_path.write_bytes(b"\x00" * 1024)
-
-    def fake_rrrocket(args: Any, **kwargs: Any):
-        stdout = b'{"properties": {}}'
-        return subprocess.CompletedProcess(args, 0, stdout=stdout)
-
-    with (
-        patch("process.subprocess.run", side_effect=fake_rrrocket),
-        patch("process.analyze_replay", return_value=None),
-    ):
-        success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
-
-    assert success is True
-    assert error is None
-    assert replay_path.exists()
-    row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
-    assert row[0] == 0
-
-
 def test_write_parsed_batch_commits(tmp_path: Path):
     """write_parsed_batch processes multiple files and commits once."""
     conn = _make_conn()
@@ -159,6 +87,21 @@ def test_write_parsed_batch_commits(tmp_path: Path):
     for p in files:
         assert (p.with_suffix(p.suffix + ".ingested")).exists()
         assert outcomes[p.name] == "processed"
+
+
+def test_write_parsed_batch_marks_skipped_files_ingested(tmp_path: Path):
+    """A None analysis (no tracked players / missing metadata) is reported as
+    "skipped" and still gets a sentinel, so it isn't retried forever."""
+    conn = _make_conn()
+    replay_path = tmp_path / "untracked.replay"
+    replay_path.write_bytes(b"\x00" * 1024)
+
+    outcomes = write_parsed_batch(conn, TRACKED_PLAYERS, {replay_path: None})
+
+    assert outcomes[replay_path.name] == "skipped"
+    assert replay_path.with_suffix(replay_path.suffix + ".ingested").exists()
+    row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
+    assert row[0] == 0
 
 
 def test_write_parsed_batch_rolls_back_partial_write_on_failure(tmp_path: Path):
@@ -267,23 +210,6 @@ def test_parse_replay_end_to_end():
     assert error is None
     assert result is not None
     assert result.match_guid is not None
-
-
-def test_process_replay_end_to_end(tmp_path: Path):
-    """process_replay runs rrrocket and ingests a real replay into the DB."""
-    conn = _make_conn()
-    replay_path = tmp_path / "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
-    replay_path.write_bytes(
-        (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
-    )
-
-    success, error = process_replay(replay_path, conn, TRACKED_PLAYERS)
-
-    assert error is None
-    assert success is True
-    conn.commit()
-    row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
-    assert row[0] == 1
 
 
 def test_process_unprocessed_end_to_end(tmp_path: Path):
