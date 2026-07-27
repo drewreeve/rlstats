@@ -150,15 +150,18 @@
         return entry;
     }
 
-    function setEntryStatus(entry, status, text) {
+    function setEntryStatus(entry, status, text, title) {
         entry.setAttribute("data-status", status);
         var statusEl = entry.querySelector(".file-entry-status");
         statusEl.textContent = text;
+        if (title) {
+            statusEl.title = title;
+        }
         var bar = entry.querySelector(".file-progress-bar");
         if (status === "success") {
             bar.style.width = "100%";
             bar.classList.add("complete");
-        } else if (status === "error" || status === "duplicate") {
+        } else if (status === "error" || status === "duplicate" || status === "skipped") {
             bar.style.width = "100%";
         }
     }
@@ -227,6 +230,9 @@
                     if (data.status === "processed") {
                         clearInterval(interval);
                         setEntryStatus(entry, "success", "PROCESSED");
+                    } else if (data.status === "skipped") {
+                        clearInterval(interval);
+                        setEntryStatus(entry, "skipped", "SKIPPED", data.reason);
                     } else if (data.status === "error") {
                         clearInterval(interval);
                         setEntryStatus(entry, "error", "PROCESSING FAILED");

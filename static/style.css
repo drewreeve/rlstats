@@ -1309,7 +1309,8 @@ a.mode-btn {
     50% { opacity: 1; }
 }
 
-.file-entry[data-status="duplicate"] {
+.file-entry[data-status="duplicate"],
+.file-entry[data-status="skipped"] {
     border-color: rgba(255, 107, 0, 0.4);
 }
 
@@ -1348,7 +1349,8 @@ a.mode-btn {
     color: #ff3c3c;
 }
 
-.file-entry[data-status="duplicate"] .file-entry-status {
+.file-entry[data-status="duplicate"] .file-entry-status,
+.file-entry[data-status="skipped"] .file-entry-status {
     color: var(--orange);
 }
 
@@ -1374,7 +1376,8 @@ a.mode-btn {
     background: #ff3c3c;
 }
 
-.file-entry[data-status="duplicate"] .file-progress-bar {
+.file-entry[data-status="duplicate"] .file-progress-bar,
+.file-entry[data-status="skipped"] .file-progress-bar {
     background: var(--orange);
 }
 

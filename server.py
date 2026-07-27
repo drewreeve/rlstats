@@ -342,6 +342,8 @@ def create_app(
         result: dict[str, Any] = {"status": status.state.value}
         if status.error is not None:
             result["error"] = status.error
+        if status.reason is not None:
+            result["reason"] = status.reason
         if status.stage is not None:
             result["stage"] = status.stage
         if status.batch is not None:
