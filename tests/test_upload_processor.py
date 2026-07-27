@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from ingest import Skipped, SkipReason
+from process import FileOutcome
 from tests.fixtures import TEST_DATA_DIR, TRACKED_PLAYERS, file_db
 from upload_processor import (
     Errored,
@@ -26,14 +28,16 @@ def test_upload_processor_debounce(tmp_path: Path):
 
     def fake_parallel_parse(
         paths: list[Path], tracked_players: object, on_parsed: object = None
-    ) -> dict[Path, None]:
+    ) -> dict[Path, FileOutcome]:
         parse_calls.append(list(paths))
-        return {p: None for p in paths}
+        return {p: Skipped(SkipReason.NO_TRACKED_PLAYERS) for p in paths}
 
     def fake_write_batch(
-        conn: sqlite3.Connection, tracked_players: object, results: dict[Path, None]
-    ) -> dict[str, str]:
-        return {p.name: "skipped" for p in results}
+        conn: sqlite3.Connection,
+        tracked_players: object,
+        results: dict[Path, FileOutcome],
+    ) -> dict[str, FileOutcome]:
+        return {p.name: Skipped(SkipReason.NO_TRACKED_PLAYERS) for p in results}
 
     with (
         patch("upload_processor.parallel_parse", side_effect=fake_parallel_parse),
@@ -94,19 +98,21 @@ def test_upload_processor_status_transitions(tmp_path: Path):
 
     def fake_parallel_parse(
         paths: list[Path], tracked_players: object, on_parsed: Any = None
-    ) -> dict[Path, None]:
+    ) -> dict[Path, FileOutcome]:
         observed["processing"] = proc.file_status(replay_path.name)
         for p in paths:
             if on_parsed is not None:
                 on_parsed(p)
         observed["parsed"] = proc.file_status(replay_path.name)
         observed["batch_after_parse"] = proc.batch_progress(replay_path.name)
-        return {p: None for p in paths}
+        return {p: Skipped(SkipReason.NO_TRACKED_PLAYERS) for p in paths}
 
     def fake_write_batch(
-        conn: sqlite3.Connection, tracked_players: object, results: dict[Path, None]
-    ) -> dict[str, str]:
-        return {p.name: "skipped" for p in results}
+        conn: sqlite3.Connection,
+        tracked_players: object,
+        results: dict[Path, FileOutcome],
+    ) -> dict[str, FileOutcome]:
+        return {p.name: Skipped(SkipReason.NO_TRACKED_PLAYERS) for p in results}
 
     with (
         patch("upload_processor.parallel_parse", side_effect=fake_parallel_parse),
@@ -169,19 +175,21 @@ def test_upload_processor_overlapping_flushes_do_not_corrupt_batch_progress(
 
     def fake_parallel_parse(
         paths: list[Path], tracked_players: object, on_parsed: Any = None
-    ) -> dict[Path, None]:
+    ) -> dict[Path, FileOutcome]:
         if any(p.name == "a.replay" for p in paths):
             a_started.set()
             assert a_release.wait(timeout=2.0), "batch A was never released"
         for p in paths:
             if on_parsed is not None:
                 on_parsed(p)
-        return {p: None for p in paths}
+        return {p: Skipped(SkipReason.NO_TRACKED_PLAYERS) for p in paths}
 
     def fake_write_batch(
-        conn: sqlite3.Connection, tracked_players: object, results: dict[Path, None]
-    ) -> dict[str, str]:
-        return {p.name: "skipped" for p in results}
+        conn: sqlite3.Connection,
+        tracked_players: object,
+        results: dict[Path, FileOutcome],
+    ) -> dict[str, FileOutcome]:
+        return {p.name: Skipped(SkipReason.NO_TRACKED_PLAYERS) for p in results}
 
     with (
         patch("upload_processor.parallel_parse", side_effect=fake_parallel_parse),
@@ -287,6 +295,64 @@ def test_upload_status_processed_when_ingested_marker_exists(tmp_path: Path):
     proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
 
     assert proc.status("test.replay") == UploadStatus(UploadState.PROCESSED)
+
+
+def test_upload_status_skipped_when_sentinel_records_skip_reason(tmp_path: Path):
+    """A sentinel written by a Skipped outcome reports SKIPPED with the reason,
+    not PROCESSED — the bug this outcome protocol exists to prevent."""
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    (replay_dir / "test.replay").write_bytes(b"\x00")
+    (replay_dir / "test.replay.ingested").write_text("skipped:no_tracked_players")
+    proc = UploadProcessor(file_db(tmp_path), TRACKED_PLAYERS, replay_dir)
+
+    assert proc.status("test.replay") == UploadStatus(
+        UploadState.SKIPPED, reason="No tracked players in this replay"
+    )
+
+
+def test_upload_status_round_trip_through_write_parsed_batch(tmp_path: Path):
+    """The sentinel format written by process.write_parsed_batch and read by
+    UploadProcessor.status() must agree — exercised end to end, not just at
+    each side's own unit tests, since the two are only connected by a string
+    convention with no shared type."""
+    from ingest import Skipped, SkipReason
+    from process import (
+        _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
+        open_write_conn,
+        write_parsed_batch,
+    )
+
+    db_path = file_db(tmp_path)
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+
+    written_src = TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
+    written_path = replay_dir / "written.replay"
+    written_path.write_bytes(written_src.read_bytes())
+    skipped_path = replay_dir / "skipped.replay"
+    skipped_path.write_bytes(b"\x00")
+
+    written_result = _parse_and_analyze(written_path, TRACKED_PLAYERS)
+
+    conn = open_write_conn(db_path)
+    try:
+        write_parsed_batch(
+            conn,
+            TRACKED_PLAYERS,
+            {
+                written_path: written_result,
+                skipped_path: Skipped(SkipReason.NO_TRACKED_PLAYERS),
+            },
+        )
+    finally:
+        conn.close()
+
+    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir)
+    assert proc.status("written.replay") == UploadStatus(UploadState.PROCESSED)
+    assert proc.status("skipped.replay") == UploadStatus(
+        UploadState.SKIPPED, reason="No tracked players in this replay"
+    )
 
 
 def test_upload_status_reports_live_stage_and_batch(tmp_path: Path):

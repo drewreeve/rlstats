@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from ingest import SkipReason
 from player_identity import PlayerIdentity
-from process import open_write_conn, parallel_parse, write_parsed_batch
+from process import Failed, open_write_conn, parallel_parse, write_parsed_batch
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 class UploadState(Enum):
     PENDING = "pending"
     PROCESSED = "processed"
+    SKIPPED = "skipped"
     ERROR = "error"
 
 
@@ -27,6 +29,7 @@ class UploadStatus:
     stage: str | None = None
     batch: tuple[int, int] | None = None
     error: str | None = None
+    reason: str | None = None
 
 
 class _BatchProgress:
@@ -108,6 +111,23 @@ class _UploadFiles:
             self._records.pop(name, None)
 
 
+def _sentinel_status(ingested_path: Path) -> UploadStatus:
+    """Read a .ingested sentinel's content and reconcile written vs skipped.
+
+    Older sentinels (empty touch files, from before content was recorded)
+    have no "skipped:" prefix and are treated as written, matching their
+    original meaning.
+    """
+    content = ingested_path.read_text().strip()
+    if content.startswith("skipped:"):
+        try:
+            reason = SkipReason(content[len("skipped:") :])
+        except ValueError:
+            return UploadStatus(UploadState.SKIPPED)
+        return UploadStatus(UploadState.SKIPPED, reason=reason.message)
+    return UploadStatus(UploadState.PROCESSED)
+
+
 class UploadProcessor:
     """Debounced batch processor for uploaded replay files."""
 
@@ -175,7 +195,7 @@ class UploadProcessor:
         replay_path = self.replay_dir / name
         ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
         if ingested_path.exists():
-            return UploadStatus(UploadState.PROCESSED)
+            return _sentinel_status(ingested_path)
 
         stage = self.file_status(name)
         if stage is not None and stage.startswith("error:"):
@@ -215,7 +235,7 @@ class UploadProcessor:
             conn.close()
         with self._lock:
             for name, outcome in outcomes.items():
-                if outcome.startswith("error:"):
-                    self._files.record_error(name, outcome[len("error:") :])
+                if isinstance(outcome, Failed):
+                    self._files.record_error(name, outcome.message)
                 else:
                     self._files.resolve(name)

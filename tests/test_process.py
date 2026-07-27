@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from ingest import analyze_replay
+from ingest import Skipped, SkipReason, Written, analyze_replay
 from process import (
+    Failed,
     _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
     parse_replay,
     process_unprocessed,
@@ -86,20 +87,23 @@ def test_write_parsed_batch_commits(tmp_path: Path):
     # Markers are written only after commit
     for p in files:
         assert (p.with_suffix(p.suffix + ".ingested")).exists()
-        assert outcomes[p.name] == "processed"
+        assert isinstance(outcomes[p.name], Written)
 
 
 def test_write_parsed_batch_marks_skipped_files_ingested(tmp_path: Path):
-    """A None analysis (no tracked players / missing metadata) is reported as
-    "skipped" and still gets a sentinel, so it isn't retried forever."""
+    """A Skipped outcome (no tracked players / missing metadata) is reported as
+    such and still gets a sentinel, so it isn't retried forever."""
     conn = _make_conn()
     replay_path = tmp_path / "untracked.replay"
     replay_path.write_bytes(b"\x00" * 1024)
+    skip = Skipped(SkipReason.NO_TRACKED_PLAYERS)
 
-    outcomes = write_parsed_batch(conn, TRACKED_PLAYERS, {replay_path: None})
+    outcomes = write_parsed_batch(conn, TRACKED_PLAYERS, {replay_path: skip})
 
-    assert outcomes[replay_path.name] == "skipped"
-    assert replay_path.with_suffix(replay_path.suffix + ".ingested").exists()
+    assert outcomes[replay_path.name] == skip
+    sentinel = replay_path.with_suffix(replay_path.suffix + ".ingested")
+    assert sentinel.exists()
+    assert sentinel.read_text() == "skipped:no_tracked_players"
     row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
     assert row[0] == 0
 
@@ -126,7 +130,7 @@ def test_write_parsed_batch_rolls_back_partial_write_on_failure(tmp_path: Path):
     assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 0
     assert not replay_path.with_suffix(replay_path.suffix + ".ingested").exists()
     assert replay_path.exists()
-    assert outcomes[replay_path.name].startswith("error:")
+    assert isinstance(outcomes[replay_path.name], Failed)
 
 
 def test_write_parsed_batch_isolates_failure_from_other_files_in_batch(
@@ -168,9 +172,9 @@ def test_write_parsed_batch_isolates_failure_from_other_files_in_batch(
     assert not bad.with_suffix(bad.suffix + ".ingested").exists()
     assert c.with_suffix(c.suffix + ".ingested").exists()
     assert bad.exists()
-    assert outcomes[a.name] == "processed"
-    assert outcomes[bad.name].startswith("error:")
-    assert outcomes[c.name] == "processed"
+    assert isinstance(outcomes[a.name], Written)
+    assert isinstance(outcomes[bad.name], Failed)
+    assert isinstance(outcomes[c.name], Written)
 
 
 def test_write_parsed_batch_syncs_tracked_players(tmp_path: Path):
@@ -191,10 +195,10 @@ def test_write_parsed_batch_syncs_tracked_players(tmp_path: Path):
     replay_path.write_bytes(
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
-    analysis = _parse_and_analyze(replay_path, TRACKED_PLAYERS)
-    assert analysis is not None
+    result = _parse_and_analyze(replay_path, TRACKED_PLAYERS)
+    assert isinstance(result, Written)
 
-    write_parsed_batch(conn, TRACKED_PLAYERS, {replay_path: analysis})
+    write_parsed_batch(conn, TRACKED_PLAYERS, {replay_path: result})
 
     row = conn.execute(
         "SELECT is_tracked FROM players WHERE platform_id = ?",

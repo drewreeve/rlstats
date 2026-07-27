@@ -6,7 +6,7 @@ from typing import cast
 
 from config import load_settings
 from db import apply_migrations
-from ingest import analyze_replay, write_match
+from ingest import Written, analyze_replay, write_match
 from rrrocket_schema import ReplayJSON
 from rrrocket_schema import parse as parse_replay
 
@@ -34,9 +34,9 @@ def _cached_ingested_db(replay_names: tuple[str, ...]) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     apply_migrations(conn)
     for name in replay_names:
-        analysis = analyze_replay(parse_replay(load_replay(name)), TRACKED_PLAYERS)
-        assert analysis is not None
-        write_match(conn, analysis)
+        result = analyze_replay(parse_replay(load_replay(name)), TRACKED_PLAYERS)
+        assert isinstance(result, Written)
+        write_match(conn, result.analysis)
     conn.commit()
     return conn
 

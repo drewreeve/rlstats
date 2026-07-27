@@ -20,6 +20,14 @@ class SkipReason(Enum):
     MISSING_DATE = "missing_date"
     NO_TRACKED_PLAYERS = "no_tracked_players"
 
+    @property
+    def message(self) -> str:
+        return {
+            SkipReason.NO_MATCH_GUID: "Replay has no match GUID",
+            SkipReason.MISSING_DATE: "Replay has no match date",
+            SkipReason.NO_TRACKED_PLAYERS: "No tracked players in this replay",
+        }[self]
+
 
 PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
 
@@ -46,6 +54,19 @@ class ReplayAnalysis:
     player_stats: dict[PlayerIdentity, PlayerStatEntry]
     tracked_names: dict[PlayerIdentity, str]
     perspective: MatchPerspective
+
+
+@dataclass(frozen=True)
+class Written:
+    analysis: ReplayAnalysis
+
+
+@dataclass(frozen=True)
+class Skipped:
+    reason: SkipReason
+
+
+AnalysisResult = Written | Skipped
 
 
 @dataclass(frozen=True)
@@ -386,11 +407,11 @@ def validate_replay(
 
 def analyze_replay(
     replay: ParsedReplay, tracked_players: dict[PlayerIdentity, str]
-) -> ReplayAnalysis | None:
+) -> AnalysisResult:
     skip = validate_replay(replay, tracked_players)
     if skip is not None:
         logger.debug("Skipping replay: %s", skip.value)
-        return None
+        return Skipped(skip)
 
     props = replay.properties
 
@@ -421,18 +442,20 @@ def analyze_replay(
         k: tracked_players[k] for k in player_stats if k in tracked_players
     }
 
-    return ReplayAnalysis(
-        replay_hash=replay_hash,
-        played_at_sql=played_at_sql,
-        duration=duration,
-        forfeit=forfeit,
-        team_size=team_size,
-        map_name=map_name,
-        game_mode=game_mode,
-        frame_analysis=fa,
-        player_stats=player_stats,
-        tracked_names=tracked_names,
-        perspective=perspective,
+    return Written(
+        ReplayAnalysis(
+            replay_hash=replay_hash,
+            played_at_sql=played_at_sql,
+            duration=duration,
+            forfeit=forfeit,
+            team_size=team_size,
+            map_name=map_name,
+            game_mode=game_mode,
+            frame_analysis=fa,
+            player_stats=player_stats,
+            tracked_names=tracked_names,
+            perspective=perspective,
+        )
     )
 
 

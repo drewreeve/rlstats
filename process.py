@@ -6,6 +6,7 @@ import subprocess
 import threading
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -13,7 +14,8 @@ import orjson
 
 from config import load_tracked_players
 from ingest import (
-    ReplayAnalysis,
+    Skipped,
+    Written,
     analyze_replay,
     sync_tracked_players,
     write_match,
@@ -25,6 +27,14 @@ from rrrocket_schema import parse as _parse_rrrocket
 logger = logging.getLogger(__name__)
 
 _batch_lock = threading.Lock()
+
+
+@dataclass(frozen=True)
+class Failed:
+    message: str
+
+
+FileOutcome = Written | Skipped | Failed
 
 
 def open_write_conn(db_path: str | Path) -> sqlite3.Connection:
@@ -67,26 +77,16 @@ def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
     return _parse_rrrocket(cast(ReplayJSON, orjson.loads(result.stdout))), None
 
 
-def _try_write_match(
-    conn: sqlite3.Connection, replay_path: Path, analysis: ReplayAnalysis
-) -> str | None:
-    """Write analysis to conn. Returns None on success, an error message on failure.
-
-    write_match is atomic (wraps its own savepoint), so a failure here never
-    leaves a partial write behind for _finalize_batch's later commit to pick up.
-    """
-    try:
-        write_match(conn, analysis)
-    except Exception as exc:
-        logger.warning("Ingest failed for %s: %s", replay_path.name, exc)
-        return f"Ingest failed: {exc}"
-    return None
+def _sentinel_content(outcome: Written | Skipped) -> str:
+    if isinstance(outcome, Skipped):
+        return f"skipped:{outcome.reason.value}"
+    return "written"
 
 
 def _finalize_batch(
     conn: sqlite3.Connection,
     tracked_players: dict[PlayerIdentity, str],
-    resolved: list[Path],
+    resolved: list[tuple[Path, Written | Skipped]],
 ) -> None:
     """Sync tracked-player status, commit, and mark resolved files as ingested.
 
@@ -94,41 +94,38 @@ def _finalize_batch(
     """
     sync_tracked_players(conn, tracked_players)
     conn.commit()
-    for replay_path in resolved:
-        replay_path.with_suffix(replay_path.suffix + ".ingested").touch()
+    for replay_path, outcome in resolved:
+        sentinel = replay_path.with_suffix(replay_path.suffix + ".ingested")
+        sentinel.write_text(_sentinel_content(outcome))
 
 
 def _parse_and_analyze(
     replay_path: Path, tracked_players: dict[PlayerIdentity, str]
-) -> ReplayAnalysis | None:
+) -> FileOutcome:
     """Worker for parallel processing: parse + analyze a replay without DB access."""
-    replay, _ = parse_replay(replay_path)
+    replay, error = parse_replay(replay_path)
     if replay is None:
-        return None
-    analysis = analyze_replay(replay, tracked_players)
-    if analysis is None:
-        logger.debug(
-            "Skipping %s: no tracked players or missing metadata", replay_path.name
-        )
-    return analysis
+        return Failed(error or "parse failed")
+    return analyze_replay(replay, tracked_players)
 
 
 def parallel_parse(
     paths: list[Path],
     tracked_players: dict[PlayerIdentity, str],
     on_parsed: Callable[[Path], None] | None = None,
-) -> dict[Path, ReplayAnalysis | None]:
+) -> dict[Path, FileOutcome]:
     """Parse+analyze a batch of replays in a process pool.
 
-    Returns path -> analysis (in the same order as paths), with None meaning
-    skip (corrupt, untracked, or missing metadata). Calls on_parsed(path) as
-    each file's parse completes, for progress reporting; that happens in
-    completion order, but the returned dict is reordered back to match paths
-    so write order stays deterministic regardless of which worker finishes first.
+    Returns path -> outcome (in the same order as paths): Written on success,
+    Skipped (untracked, missing metadata) or Failed (corrupt replay) otherwise.
+    Calls on_parsed(path) as each file's parse completes, for progress
+    reporting; that happens in completion order, but the returned dict is
+    reordered back to match paths so write order stays deterministic
+    regardless of which worker finishes first.
     """
     workers = max(1, (os.cpu_count() or 2) // 2)
     worker = functools.partial(_parse_and_analyze, tracked_players=tracked_players)
-    completed: dict[Path, ReplayAnalysis | None] = {}
+    completed: dict[Path, FileOutcome] = {}
     with ProcessPoolExecutor(max_workers=workers) as pool:
         future_to_path = {pool.submit(worker, path): path for path in paths}
         for future in as_completed(future_to_path):
@@ -142,31 +139,32 @@ def parallel_parse(
 def write_parsed_batch(
     conn: sqlite3.Connection,
     tracked_players: dict[PlayerIdentity, str],
-    results: dict[Path, ReplayAnalysis | None],
-) -> dict[str, str]:
+    results: dict[Path, FileOutcome],
+) -> dict[str, FileOutcome]:
     """Write parsed results to conn, finalize the batch, and report per-file outcomes.
 
-    Outcomes are "processed", "skipped" (no tracked players / missing metadata), or
-    "error:<message>". Acquires _batch_lock itself, so batch-commit semantics (one
-    commit + all sentinels at the end, write_match's own savepoint isolating each
-    file's write) are unchanged from before this was pulled out of process_batch.
+    Acquires _batch_lock itself, so batch-commit semantics (one commit + all
+    sentinels at the end, write_match's own savepoint isolating each file's
+    write) are unchanged from before this was pulled out of process_batch.
     """
-    outcomes: dict[str, str] = {}
+    outcomes: dict[str, FileOutcome] = {}
     with _batch_lock:
-        resolved: list[Path] = []
-        for path, analysis in results.items():
-            if analysis is not None:
-                error = _try_write_match(conn, path, analysis)
-                if error is None:
-                    resolved.append(path)
-                    outcomes[path.name] = "processed"
+        resolved: list[tuple[Path, Written | Skipped]] = []
+        for path, result in results.items():
+            if isinstance(result, Written):
+                try:
+                    write_match(conn, result.analysis)
+                except Exception as exc:
+                    logger.warning("Ingest failed for %s: %s", path.name, exc)
+                    outcomes[path.name] = Failed(f"Ingest failed: {exc}")
                 else:
-                    outcomes[path.name] = f"error:{error}"
-            elif path.exists():
-                resolved.append(path)
-                outcomes[path.name] = "skipped"
+                    resolved.append((path, result))
+                    outcomes[path.name] = result
+            elif isinstance(result, Skipped):
+                resolved.append((path, result))
+                outcomes[path.name] = result
             else:
-                outcomes[path.name] = "error:parse failed"
+                outcomes[path.name] = result
         _finalize_batch(conn, tracked_players, resolved)
     return outcomes
 

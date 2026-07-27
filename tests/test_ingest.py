@@ -8,7 +8,9 @@ from frame_analysis import MatchEvent, analyze_frames
 from ingest import (
     MatchPerspective,
     OffensivePairing,
+    Skipped,
     SkipReason,
+    Written,
     analyze_replay,
     correlate_pairings,
     get_or_create_player,
@@ -46,9 +48,9 @@ def conn_no_network() -> sqlite3.Connection:
             if k not in ("network_frames", "objects")
         },
     )
-    analysis = analyze_replay(parse_replay(replay), TRACKED_PLAYERS)
-    assert analysis is not None
-    write_match(conn, analysis)
+    result = analyze_replay(parse_replay(replay), TRACKED_PLAYERS)
+    assert isinstance(result, Written)
+    write_match(conn, result.analysis)
     return conn
 
 
@@ -374,11 +376,11 @@ def test_offensive_pairings_only_tracked_players():
 
 def test_offensive_pairings_idempotent():
     conn = in_memory_db()
-    analysis = analyze_replay(parse_replay(load_replay("match.json")), TRACKED_PLAYERS)
-    assert analysis is not None
-    write_match(conn, analysis)
+    result = analyze_replay(parse_replay(load_replay("match.json")), TRACKED_PLAYERS)
+    assert isinstance(result, Written)
+    write_match(conn, result.analysis)
     count1 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
-    write_match(conn, analysis)
+    write_match(conn, result.analysis)
     count2 = conn.execute("SELECT COUNT(*) FROM offensive_pairings").fetchone()[0]
     assert count1 == count2
 
@@ -921,16 +923,17 @@ def test_player_name_updates_on_change():
 
 
 def test_played_at_derived_from_match_start_epoch():
-    analysis = analyze_replay(parse_replay(load_replay("match.json")), TRACKED_PLAYERS)
-    assert analysis is not None
-    assert analysis.played_at_sql == "2026-02-08 23:27:57"
+    result = analyze_replay(parse_replay(load_replay("match.json")), TRACKED_PLAYERS)
+    assert isinstance(result, Written)
+    assert result.analysis.played_at_sql == "2026-02-08 23:27:57"
 
 
 def test_analyze_replay_rejects_when_no_date_source_available():
     replay = copy.deepcopy(load_replay("match.json"))
     del cast(ReplayProperties, replay.get("properties"))["MatchStartEpoch"]
     replay["debug_info"] = []
-    assert analyze_replay(parse_replay(replay), TRACKED_PLAYERS) is None
+    result = analyze_replay(parse_replay(replay), TRACKED_PLAYERS)
+    assert result == Skipped(SkipReason.MISSING_DATE)
 
 
 def _replay_with_bakkesmod_time(game_start_time: str) -> ReplayJSON:
@@ -943,12 +946,12 @@ def _replay_with_bakkesmod_time(game_start_time: str) -> ReplayJSON:
 
 
 def test_played_at_falls_back_to_bakkesmod_game_start_time():
-    analysis = analyze_replay(
+    result = analyze_replay(
         parse_replay(_replay_with_bakkesmod_time("2024-08-10T02:37:59-0400")),
         TRACKED_PLAYERS,
     )
-    assert analysis is not None
-    assert analysis.played_at_sql == "2024-08-10 06:37:59"
+    assert isinstance(result, Written)
+    assert result.analysis.played_at_sql == "2024-08-10 06:37:59"
 
 
 def test_match_start_epoch_takes_precedence_over_bakkesmod():
@@ -956,9 +959,9 @@ def test_match_start_epoch_takes_precedence_over_bakkesmod():
     replay["debug_info"] = [
         {"frame": 0, "user": "GameStartTime", "text": "2020-01-01T00:00:00+0000"}
     ]
-    analysis = analyze_replay(parse_replay(replay), TRACKED_PLAYERS)
-    assert analysis is not None
-    assert analysis.played_at_sql == "2026-02-08 23:27:57"
+    result = analyze_replay(parse_replay(replay), TRACKED_PLAYERS)
+    assert isinstance(result, Written)
+    assert result.analysis.played_at_sql == "2026-02-08 23:27:57"
 
 
 # -- validate_replay --
