@@ -533,7 +533,7 @@ def _pickup(
 
 def test_boost_stats_handler_attributes_big_pad_to_team():
     h = BoostStatsHandler(PICKUP_OID, tracked_team=0, big_pads=BIG_PADS)
-    ctx = FrameContext()
+    ctx = FrameContext(is_playing=True)
     ctx.actor_team[1] = 0  # team 0 player
     ctx.actor_position[1] = (-3072.0, -4096.0)  # on a big pad, defensive half
 
@@ -549,7 +549,7 @@ def test_boost_stats_handler_attributes_big_pad_to_team():
 
 def test_boost_stats_handler_detects_stolen():
     h = BoostStatsHandler(PICKUP_OID, tracked_team=0, big_pads=BIG_PADS)
-    ctx = FrameContext()
+    ctx = FrameContext(is_playing=True)
     ctx.actor_team[1] = 0
     ctx.actor_position[1] = (3072.0, 4096.0)  # on a big pad in opponent half (y > 0)
 
@@ -565,7 +565,7 @@ def test_boost_stats_handler_detects_stolen():
 
 def test_boost_stats_handler_small_pad_when_far_from_big():
     h = BoostStatsHandler(PICKUP_OID, tracked_team=0, big_pads=BIG_PADS)
-    ctx = FrameContext()
+    ctx = FrameContext(is_playing=True)
     ctx.actor_team[1] = 0
     ctx.actor_position[1] = (0.0, -1000.0)  # not near any big pad
 
@@ -578,7 +578,7 @@ def test_boost_stats_handler_small_pad_when_far_from_big():
 
 def test_boost_stats_handler_dedupes_same_pickup_state():
     h = BoostStatsHandler(PICKUP_OID, tracked_team=0, big_pads=BIG_PADS)
-    ctx = FrameContext()
+    ctx = FrameContext(is_playing=True)
     ctx.actor_team[1] = 0
     ctx.actor_position[1] = (-3072.0, -4096.0)
 
@@ -590,6 +590,21 @@ def test_boost_stats_handler_dedupes_same_pickup_state():
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
     assert fa.team_boost_collected == 100
+
+
+def test_boost_stats_handler_skips_pickups_when_not_playing():
+    """Pickups during a goal replay / kickoff countdown shouldn't count — the
+    match hasn't resumed yet, matching MovementHandler's existing gate."""
+    h = BoostStatsHandler(PICKUP_OID, tracked_team=0, big_pads=BIG_PADS)
+    ctx = FrameContext(is_playing=False)
+    ctx.actor_team[1] = 0
+    ctx.actor_position[1] = (-3072.0, -4096.0)
+
+    h.on_update(ctx, _pickup(50, instigator=1, picked_up_state=1))
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.team_boost_collected is None
 
 
 def test_boost_stats_handler_returns_none_when_nothing_collected():

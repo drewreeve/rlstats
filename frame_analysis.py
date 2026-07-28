@@ -585,6 +585,8 @@ class BoostStatsHandler(FrameHandler):
         self.last_pickup_state.pop(aid, None)
 
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
+        if not ctx.is_playing:
+            return
         result = _parse_pickup(
             actor,
             self.last_pickup_state,

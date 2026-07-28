@@ -463,7 +463,7 @@ def test_boost_stats_tracking():
     row = conn.execute(
         "SELECT team_boost_collected, opponent_boost_collected, team_boost_stolen, opponent_boost_stolen FROM matches"
     ).fetchone()
-    assert row == (6276, 8472, 2212, 3468)
+    assert row == (5992, 8240, 2064, 3432)
 
 
 def test_boost_stats_none_without_network_data(conn_no_network: sqlite3.Connection):
