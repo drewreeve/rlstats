@@ -8,8 +8,10 @@ from fastapi.testclient import TestClient
 from server import (
     STAT_ROUTES,
     create_app,
+    query_match_detail,
     query_match_players,
     query_matches,
+    query_player_career,
 )
 from tests.fixtures import cached_db, file_db
 
@@ -192,6 +194,62 @@ def test_timeline_returns_pairing_rows(
     assert data
     assert "pairing" in data[0]
     assert "win_rate" in data[0]
+
+
+# -- query_match_detail --
+
+
+def test_query_match_detail_returns_team_split() -> None:
+    conn = cached_db("match.json")
+    conn.row_factory = sqlite3.Row
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    data = query_match_detail(conn, match_id)
+
+    assert data is not None
+    assert data["match"]["result"] == "win"
+    assert data["match"]["team_score"] == 5
+    assert data["match"]["opponent_score"] == 4
+    team_names = {p["name"] for p in data["team_players"]}
+    assert {"Drew", "Jeff", "Steve"} == team_names
+    assert all(p["name"] not in team_names for p in data["opponent_players"])
+
+
+def test_query_match_detail_nonexistent_match() -> None:
+    conn = _db_with_replay()
+    data = query_match_detail(conn, 9999)
+
+    assert data is None
+
+
+def test_query_match_detail_events() -> None:
+    conn = _db_with_replay()
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    data = query_match_detail(conn, match_id)
+
+    assert data is not None
+    event_types = {e["event_type"] for e in data["events"]}
+    assert "goal" in event_types
+
+
+# -- query_player_career --
+
+
+def test_query_player_career_returns_stats() -> None:
+    conn = _db_with_replay()
+    data = query_player_career(conn, "Drew", "3v3")
+
+    assert data["player"] == "Drew"
+    assert data["matches"] == 1
+    assert data["shots"] == 2
+
+
+def test_query_player_career_no_data_returns_zero_matches() -> None:
+    conn = _db_with_replay()
+    data = query_player_career(conn, "Drew", "2v2")
+
+    assert data["player"] == "Drew"
+    assert data["matches"] == 0
+    assert data["avg_score"] is None
 
 
 # -- match detail endpoint --

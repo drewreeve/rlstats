@@ -155,6 +155,39 @@ def query_match_detail(
     }
 
 
+_EMPTY_PLAYER_CAREER: dict[str, Any] = {
+    "matches": 0,
+    "goals": 0,
+    "assists": 0,
+    "saves": 0,
+    "shots": 0,
+    "demos": 0,
+    "avg_score": None,
+    "shooting_pct": None,
+    "mvp_count": 0,
+    "wins": 0,
+    "losses": 0,
+    "avg_boost_per_minute": None,
+    "avg_supersonic_pct": None,
+    "avg_demos": None,
+    "avg_demos_received": None,
+    "avg_defensive_zone_seconds": None,
+    "avg_neutral_zone_seconds": None,
+    "avg_offensive_zone_seconds": None,
+}
+
+
+def query_player_career(
+    conn: sqlite3.Connection, player_name: str, game_mode: str
+) -> dict[str, Any]:
+    row = queries.player_career_stats(
+        conn, player_name=player_name, game_mode=game_mode
+    )
+    if row is None:
+        return {"player": player_name, **_EMPTY_PLAYER_CAREER}
+    return dict(row)
+
+
 STAT_ROUTES = {
     "/api/stats/shooting": queries.shooting_pct,
     "/api/stats/players": queries.player_stats,
@@ -466,30 +499,7 @@ def create_app(
         conn: Annotated[sqlite3.Connection, Depends(get_conn)],
         mode: Annotated[str, Depends(game_mode)],
     ):
-        row = queries.player_career_stats(conn, player_name=player_name, game_mode=mode)
-        if row is None:
-            return {
-                "player": player_name,
-                "matches": 0,
-                "goals": 0,
-                "assists": 0,
-                "saves": 0,
-                "shots": 0,
-                "demos": 0,
-                "avg_score": None,
-                "shooting_pct": None,
-                "mvp_count": 0,
-                "wins": 0,
-                "losses": 0,
-                "avg_boost_per_minute": None,
-                "avg_supersonic_pct": None,
-                "avg_demos": None,
-                "avg_demos_received": None,
-                "avg_defensive_zone_seconds": None,
-                "avg_neutral_zone_seconds": None,
-                "avg_offensive_zone_seconds": None,
-            }
-        return dict(row)
+        return query_player_career(conn, player_name, mode)
 
     @app.get("/api/players/{player_name}/time-series")
     async def player_time_series_route(
