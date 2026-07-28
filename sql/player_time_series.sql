@@ -23,29 +23,26 @@ ORDER BY date;
 -- name: player_career_stats(player_name, game_mode)^
 -- Career totals for a single tracked player.
 SELECT
-    p.name AS player,
+    player,
     COUNT(*) AS matches,
-    SUM(mp.goals) AS goals,
-    SUM(mp.assists) AS assists,
-    SUM(mp.saves) AS saves,
-    SUM(mp.shots) AS shots,
-    SUM(mp.demos) AS demos,
-    ROUND(AVG(CAST(mp.score AS REAL)), 1) AS avg_score,
-    ROUND(CAST(SUM(mp.goals) AS REAL) / NULLIF(SUM(mp.shots), 0) * 100, 1) AS shooting_pct,
-    SUM(CASE WHEN m.team_mvp_player_id = p.id THEN 1 ELSE 0 END) AS mvp_count,
-    SUM(CASE WHEN m.result = 'win' THEN 1 ELSE 0 END) AS wins,
-    SUM(CASE WHEN m.result = 'loss' THEN 1 ELSE 0 END) AS losses,
-    ROUND(AVG(mp.boost_per_minute), 1) AS avg_boost_per_minute,
-    ROUND(AVG(mp.time_supersonic_pct), 1) AS avg_supersonic_pct,
-    ROUND(AVG(CAST(mp.demos AS REAL)), 2) AS avg_demos,
-    ROUND(AVG(CAST(mp.demos_received AS REAL)), 2) AS avg_demos_received,
-    ROUND(AVG(mp.defensive_zone_seconds), 1) AS avg_defensive_zone_seconds,
-    ROUND(AVG(mp.neutral_zone_seconds), 1) AS avg_neutral_zone_seconds,
-    ROUND(AVG(mp.offensive_zone_seconds), 1) AS avg_offensive_zone_seconds
-FROM match_players mp
-JOIN players p ON p.id = mp.player_id
-JOIN matches m ON m.id = mp.match_id
-WHERE p.name = :player_name
-  AND p.is_tracked = 1
-  AND m.game_mode = :game_mode
-GROUP BY p.id, p.name;
+    SUM(goals) AS goals,
+    SUM(assists) AS assists,
+    SUM(saves) AS saves,
+    SUM(shots) AS shots,
+    SUM(demos) AS demos,
+    ROUND(AVG(CAST(score AS REAL)), 1) AS avg_score,
+    ROUND(CAST(SUM(goals) AS REAL) / NULLIF(SUM(shots), 0) * 100, 1) AS shooting_pct,
+    SUM(CASE WHEN team_mvp_player_id = player_id THEN 1 ELSE 0 END) AS mvp_count,
+    SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
+    SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses,
+    ROUND(AVG(boost_per_minute), 1) AS avg_boost_per_minute,
+    ROUND(AVG(time_supersonic_pct), 1) AS avg_supersonic_pct,
+    ROUND(AVG(CAST(demos AS REAL)), 2) AS avg_demos,
+    ROUND(AVG(CAST(demos_received AS REAL)), 2) AS avg_demos_received,
+    ROUND(AVG(defensive_zone_seconds), 1) AS avg_defensive_zone_seconds,
+    ROUND(AVG(neutral_zone_seconds), 1) AS avg_neutral_zone_seconds,
+    ROUND(AVG(offensive_zone_seconds), 1) AS avg_offensive_zone_seconds
+FROM tracked_player_match_stats
+WHERE player = :player_name
+  AND game_mode = :game_mode
+GROUP BY player_id, player;
