@@ -1,0 +1,3 @@
+# Do not guard resolve_perspective() against tracked players splitting teams
+
+`resolve_perspective()` derives `team` from `tracked_teams.pop()`, which silently picks an arbitrary side if tracked players ever land on both teams in the same match. A raise or an "ambiguous" `MatchPerspective` state was considered and rejected: Drew, Steve, and Jeff only ever play as a full team together, never split across opposing sides in ranked, so `tracked_teams` is a set of size 0 or 1 in every real replay — the same zero-occurrence tradeoff ADR-0001 made for `IdentityResolver`'s `None` return. Revisit if the roster or play pattern changes.
