@@ -159,6 +159,13 @@ class UploadProcessor:
             self._files.prune_stale(time.monotonic() - self.error_retention)
             self._queue.append(path)
             self._files.mark_queued(path.name)
+        self._schedule_flush()
+
+    def _schedule_flush(self) -> None:
+        """Arm (or reset) the debounce timer. Internal seam: tests that want
+        enqueue() to stay synchronous-only can no-op this instead of reaching
+        in to cancel a real threading.Timer by hand."""
+        with self._lock:
             if self._timer is not None:
                 self._timer.cancel()
             self._timer = threading.Timer(self.delay, self.flush)

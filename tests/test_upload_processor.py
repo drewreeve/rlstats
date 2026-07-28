@@ -77,10 +77,9 @@ def test_upload_processor_flush_end_to_end(tmp_path: Path):
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
 
-    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir, delay=100.0)
+    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir)
+    proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
     proc.enqueue(replay_path)
-    assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
-    proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
 
     proc.flush()
 
@@ -118,12 +117,11 @@ def test_upload_processor_status_transitions(tmp_path: Path):
         patch("upload_processor.parallel_parse", side_effect=fake_parallel_parse),
         patch("upload_processor.write_parsed_batch", side_effect=fake_write_batch),
     ):
-        proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path, delay=100.0)
+        proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path)
+        proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
         proc.enqueue(replay_path)
         assert proc.file_status(replay_path.name) == "queued"
         assert proc.batch_progress(replay_path.name) is None
-        assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
-        proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
 
         proc.flush()
 
@@ -145,10 +143,9 @@ def test_upload_processor_status_error_path(tmp_path: Path):
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
 
-    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir, delay=100.0)
+    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir)
+    proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
     proc.enqueue(replay_path)
-    assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
-    proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
 
     with patch("process.write_match", side_effect=RuntimeError("ingest broke")):
         proc.flush()
@@ -195,11 +192,10 @@ def test_upload_processor_overlapping_flushes_do_not_corrupt_batch_progress(
         patch("upload_processor.parallel_parse", side_effect=fake_parallel_parse),
         patch("upload_processor.write_parsed_batch", side_effect=fake_write_batch),
     ):
-        proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path, delay=100.0)
+        proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path)
+        proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
 
         proc.enqueue(tmp_path / "a.replay")
-        assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
-        proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
 
         thread_a = threading.Thread(target=proc.flush)
         thread_a.start()
@@ -210,8 +206,6 @@ def test_upload_processor_overlapping_flushes_do_not_corrupt_batch_progress(
         assert proc.batch_progress("a.replay") == (0, 1)
 
         proc.enqueue(tmp_path / "b.replay")
-        assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
-        proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
         proc.flush()  # batch B runs to completion synchronously, on the foreground thread
 
         # Batch B finishing (and clearing its own progress) must not have
@@ -238,12 +232,9 @@ def test_upload_processor_error_entries_expire(tmp_path: Path):
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
 
-    proc = UploadProcessor(
-        db_path, TRACKED_PLAYERS, replay_dir, delay=100.0, error_retention=0.05
-    )
+    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir, error_retention=0.05)
+    proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
     proc.enqueue(replay_path)
-    assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
-    proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
 
     with patch("process.write_match", side_effect=RuntimeError("ingest broke")):
         proc.flush()
@@ -259,8 +250,6 @@ def test_upload_processor_error_entries_expire(tmp_path: Path):
     # error bookkeeping directly, proving nothing about the prune sweep).
     other_path = replay_dir / "other.replay"
     proc.enqueue(other_path)
-    assert proc._timer is not None  # pyright: ignore[reportPrivateUsage]
-    proc._timer.cancel()  # pyright: ignore[reportPrivateUsage]
 
     assert proc.file_status(replay_path.name) is None
 
