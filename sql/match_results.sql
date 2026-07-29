@@ -86,6 +86,7 @@ SELECT
     COUNT(*) AS match_count
 FROM matches
 WHERE result IN ('win', 'loss')
+  AND played_at IS NOT NULL
   AND game_mode = :game_mode
 GROUP BY differential
 ORDER BY differential;
@@ -171,6 +172,7 @@ WITH ordered AS (
         ROW_NUMBER() OVER (PARTITION BY result ORDER BY played_at) AS grp
     FROM matches
     WHERE result IN ('win', 'loss')
+      AND played_at IS NOT NULL
       AND game_mode = :game_mode
 ),
 islands AS (
