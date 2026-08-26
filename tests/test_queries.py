@@ -267,6 +267,72 @@ def test_player_stats_values_by_mode(mode: str, expected: Any):
     assert actual == expected
 
 
+# -- n_by_n_stats --
+
+
+def _insert_n_by_n_matches(
+    conn: sqlite3.Connection,
+    triples: list[tuple[int, int, int]],
+    game_mode: str = "3v3",
+) -> None:
+    """Insert one tracked player with one match per (goals, assists, saves) triple."""
+    conn.execute(
+        "INSERT INTO players (platform, platform_id, name, is_tracked)"
+        " VALUES ('steam', ?, 'Tester', 1)",
+        (f"test-player-{game_mode}",),
+    )
+    player_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    for i, (goals, assists, saves) in enumerate(triples):
+        conn.execute(
+            "INSERT INTO matches"
+            " (replay_hash, team, team_score, opponent_score, result, game_mode)"
+            " VALUES (?, 0, 1, 0, 'win', ?)",
+            (f"hash-n-by-n-{game_mode}-{i}", game_mode),
+        )
+        match_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO match_players"
+            " (match_id, player_id, team, goals, assists, saves)"
+            " VALUES (?, ?, 0, ?, ?, ?)",
+            (match_id, player_id, goals, assists, saves),
+        )
+    conn.commit()
+
+
+def test_n_by_n_stats_buckets_by_min_of_the_three_stats():
+    conn = in_memory_db()
+    conn.row_factory = sqlite3.Row
+    _insert_n_by_n_matches(
+        conn,
+        [
+            (1, 2, 1),  # min 1
+            (1, 2, 3),  # min 1
+            (2, 2, 1),  # min 1
+            (2, 2, 2),  # min 2
+            (3, 3, 3),  # min 3
+            (3, 1, 2),  # min 1
+            (0, 5, 5),  # min 0, excluded entirely
+        ],
+    )
+    rows = queries.n_by_n_stats(conn, game_mode="3v3")
+    actual = _as_tuples(rows, ("player", "n", "matches"))
+    assert actual == [("Tester", 1, 4), ("Tester", 2, 1), ("Tester", 3, 1)]
+
+
+def test_n_by_n_stats_filtered_by_mode():
+    conn = in_memory_db()
+    conn.row_factory = sqlite3.Row
+    _insert_n_by_n_matches(conn, [(1, 1, 1)], game_mode="3v3")
+    _insert_n_by_n_matches(conn, [(2, 2, 2)], game_mode="2v2")
+
+    assert _as_tuples(
+        queries.n_by_n_stats(conn, game_mode="3v3"), ("player", "n", "matches")
+    ) == [("Tester", 1, 1)]
+    assert _as_tuples(
+        queries.n_by_n_stats(conn, game_mode="2v2"), ("player", "n", "matches")
+    ) == [("Tester", 2, 1)]
+
+
 @pytest.mark.parametrize(
     "mode,expected",
     [

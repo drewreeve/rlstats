@@ -29,6 +29,26 @@ WHERE game_mode = :game_mode
 GROUP BY player_id, player
 ORDER BY player;
 
+-- name: n_by_n_stats(game_mode)
+-- Count of "N by N" matches per player for a given game mode, where N is the
+-- largest value such that goals, assists, and saves are all >= N in that match.
+WITH per_match AS (
+    SELECT
+        player_id,
+        player,
+        MIN(goals, assists, saves) AS n
+    FROM tracked_player_match_stats
+    WHERE game_mode = :game_mode
+)
+SELECT
+    player,
+    n,
+    COUNT(*) AS matches
+FROM per_match
+WHERE n >= 1
+GROUP BY player_id, player, n
+ORDER BY player, n;
+
 -- name: avg_score(game_mode)
 -- Average score per player for a given game mode.
 SELECT

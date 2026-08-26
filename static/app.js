@@ -9,6 +9,18 @@ const STAT_COLORS = {
   losses: { r: 255, g: 60, b: 60 },
 };
 
+const N_BY_N_COLORS = [
+  { r: 255, g: 214, b: 0 }, // 1x1 - gold
+  { r: 255, g: 140, b: 0 }, // 2x2 - amber
+  { r: 255, g: 40, b: 40 }, // 3x3 - red
+];
+
+function nByNColor(n) {
+  // N > 3 would require 4+ goals, assists, and saves all in one match —
+  // unreachable in practice, so just clamp to the last defined color.
+  return N_BY_N_COLORS[Math.min(n, N_BY_N_COLORS.length) - 1];
+}
+
 const PAIRING_COLORS = {
   "Drew/Jeff":  { r: 0,   g: 229, b: 255 },
   "Drew/Steve": { r: 255, g: 200, b: 0   },
@@ -362,6 +374,48 @@ async function renderPlayerStats() {
   });
 }
 
+async function renderNByN() {
+  const rows = await fetchJSON(`/api/stats/n-by-n?mode=${currentMode}`);
+  const players = [...new Set(rows.map((r) => r.player))].sort();
+  const ns = [...new Set(rows.map((r) => r.n))].sort((a, b) => a - b);
+  const counts = new Map(rows.map((r) => [`${r.player}|${r.n}`, r.matches]));
+  const canvas = document.getElementById("chart-n-by-n");
+  charts.nByN = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: players,
+      datasets: ns.map((n) => {
+        const color = nByNColor(n);
+        return {
+          label: `${n}x${n}`,
+          data: players.map((player) => counts.get(`${player}|${n}`) ?? 0),
+          backgroundColor: gradient(canvas, color, 0.85, 0.15),
+          borderColor: rgba(color, 0.8),
+          borderWidth: 1,
+          borderRadius: 2,
+          borderSkipped: false,
+        };
+      }),
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true, ticks: { precision: 0 } },
+        x: { grid: { display: false } },
+      },
+      plugins: {
+        legend: {
+          labels: {
+            boxWidth: 10,
+            boxHeight: 10,
+            padding: 16,
+            font: { family: "'DM Mono', monospace", size: 13 },
+          },
+        },
+      },
+    },
+  });
+}
+
 function renderMvpWins() {
   return playerBarChart("mvpWins", "chart-mvp-wins", "/api/stats/mvp-wins", {
     label: "MVP Wins",
@@ -646,6 +700,7 @@ async function renderAll() {
     renderWinRatePairings("hoops", "chart-win-rate-hoops", "winRateHoops", "reset-zoom-hoops");
   }
   renderPlayerStats();
+  renderNByN();
   renderMvpWins();
   renderMvpLosses();
   renderScoreDifferential();

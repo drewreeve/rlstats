@@ -191,6 +191,7 @@ def query_player_career(
 STAT_ROUTES = {
     "/api/stats/shooting": queries.shooting_pct,
     "/api/stats/players": queries.player_stats,
+    "/api/stats/n-by-n": queries.n_by_n_stats,
     "/api/stats/mvp-wins": queries.mvp_wins,
     "/api/stats/mvp-losses": queries.mvp_losses,
     "/api/stats/weekday": queries.weekday,
