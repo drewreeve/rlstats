@@ -299,49 +299,6 @@ def test_upload_status_skipped_when_sentinel_records_skip_reason(tmp_path: Path)
     )
 
 
-def test_upload_status_round_trip_through_write_parsed_batch(tmp_path: Path):
-    """The sentinel format written by process.write_parsed_batch and read by
-    UploadProcessor.status() must agree — exercised end to end, not just at
-    each side's own unit tests, since the two are only connected by a string
-    convention with no shared type."""
-    from process import (
-        _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
-        open_write_conn,
-        write_parsed_batch,
-    )
-
-    db_path = file_db(tmp_path)
-    replay_dir = tmp_path / "replays"
-    replay_dir.mkdir()
-
-    written_src = TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
-    written_path = replay_dir / "written.replay"
-    written_path.write_bytes(written_src.read_bytes())
-    skipped_path = replay_dir / "skipped.replay"
-    skipped_path.write_bytes(b"\x00")
-
-    written_result = _parse_and_analyze(written_path, TRACKED_PLAYERS)
-
-    conn = open_write_conn(db_path)
-    try:
-        write_parsed_batch(
-            conn,
-            TRACKED_PLAYERS,
-            {
-                written_path: written_result,
-                skipped_path: Skipped(SkipReason.NO_TRACKED_PLAYERS),
-            },
-        )
-    finally:
-        conn.close()
-
-    proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir)
-    assert proc.status("written.replay") == UploadStatus(UploadState.PROCESSED)
-    assert proc.status("skipped.replay") == UploadStatus(
-        UploadState.SKIPPED, reason="No tracked players in this replay"
-    )
-
-
 def test_upload_status_reports_live_stage_and_batch(tmp_path: Path):
     """A processor with an in-flight file reports its stage and batch progress."""
     replay_dir = tmp_path / "replays"

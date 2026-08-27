@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from file_outcome import Failed, SkipReason
+from file_outcome import Failed, Skipped, decode, sentinel_path
 from player_identity import PlayerIdentity
 from process import open_write_conn, parallel_parse, write_parsed_batch
 
@@ -112,19 +112,14 @@ class _UploadFiles:
 
 
 def _sentinel_status(ingested_path: Path) -> UploadStatus:
-    """Read a .ingested sentinel's content and reconcile written vs skipped.
-
-    Older sentinels (empty touch files, from before content was recorded)
-    have no "skipped:" prefix and are treated as written, matching their
-    original meaning.
-    """
-    content = ingested_path.read_text().strip()
-    if content.startswith("skipped:"):
-        try:
-            reason = SkipReason(content[len("skipped:") :])
-        except ValueError:
-            return UploadStatus(UploadState.SKIPPED)
-        return UploadStatus(UploadState.SKIPPED, reason=reason.message)
+    """Map a decoded ``.ingested`` sentinel to an UploadStatus."""
+    outcome = decode(ingested_path.read_text())
+    if isinstance(outcome, Skipped):
+        reason = outcome.reason
+        return UploadStatus(
+            UploadState.SKIPPED,
+            reason=reason.message if reason is not None else None,
+        )
     return UploadStatus(UploadState.PROCESSED)
 
 
@@ -200,7 +195,7 @@ class UploadProcessor:
         stage/batch; then a missing file is an error; otherwise pending.
         """
         replay_path = self.replay_dir / name
-        ingested_path = replay_path.with_suffix(replay_path.suffix + ".ingested")
+        ingested_path = sentinel_path(replay_path)
         if ingested_path.exists():
             return _sentinel_status(ingested_path)
 

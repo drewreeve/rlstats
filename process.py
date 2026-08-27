@@ -12,7 +12,7 @@ from typing import cast
 import orjson
 
 from config import load_tracked_players
-from file_outcome import Failed, FileOutcome, Skipped, Written
+from file_outcome import Failed, FileOutcome, Skipped, Written, encode, sentinel_path
 from ingest import (
     AnalysisResult,
     Analyzed,
@@ -73,13 +73,6 @@ def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
     return _parse_rrrocket(cast(ReplayJSON, orjson.loads(result.stdout))), None
 
 
-def _sentinel_content(outcome: Written | Skipped) -> str:
-    if isinstance(outcome, Skipped):
-        reason = outcome.reason.value if outcome.reason is not None else ""
-        return f"skipped:{reason}"
-    return "written"
-
-
 def _finalize_batch(
     conn: sqlite3.Connection,
     tracked_players: dict[PlayerIdentity, str],
@@ -92,8 +85,7 @@ def _finalize_batch(
     sync_tracked_players(conn, tracked_players)
     conn.commit()
     for replay_path, outcome in resolved:
-        sentinel = replay_path.with_suffix(replay_path.suffix + ".ingested")
-        sentinel.write_text(_sentinel_content(outcome))
+        sentinel_path(replay_path).write_text(encode(outcome))
 
 
 def _parse_and_analyze(

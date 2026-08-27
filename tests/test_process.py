@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from file_outcome import Failed, Skipped, SkipReason, Written
+from file_outcome import Failed, Skipped, SkipReason, Written, decode
 from ingest import Analyzed, analyze_replay
 from process import (
     _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
@@ -103,7 +103,7 @@ def test_write_parsed_batch_marks_skipped_files_ingested(tmp_path: Path):
     assert outcomes[replay_path.name] == skip
     sentinel = replay_path.with_suffix(replay_path.suffix + ".ingested")
     assert sentinel.exists()
-    assert sentinel.read_text() == "skipped:no_tracked_players"
+    assert decode(sentinel.read_text()) == skip
     row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
     assert row[0] == 0
 
