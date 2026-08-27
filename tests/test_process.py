@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from ingest import Skipped, SkipReason, Written, analyze_replay
+from file_outcome import Failed, Skipped, SkipReason, Written
+from ingest import Analyzed, analyze_replay
 from process import (
-    Failed,
     _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
     parse_replay,
     process_unprocessed,
@@ -196,7 +196,7 @@ def test_write_parsed_batch_syncs_tracked_players(tmp_path: Path):
         (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
     )
     result = _parse_and_analyze(replay_path, TRACKED_PLAYERS)
-    assert isinstance(result, Written)
+    assert isinstance(result, Analyzed)
 
     write_parsed_batch(conn, TRACKED_PLAYERS, {replay_path: result})
 

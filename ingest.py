@@ -4,30 +4,15 @@
 import logging
 import sqlite3
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, TypedDict
 
 import db
+from file_outcome import Skipped, SkipReason
 from frame_analysis import FrameAnalysis, MatchEvent, PlayerMatchStats, analyze_frames
 from player_identity import PlayerIdentity, from_player_stats
 from rrrocket_schema import ParsedReplay, PlayerStatEntry, ReplayProperties
 
 logger = logging.getLogger(__name__)
-
-
-class SkipReason(Enum):
-    NO_MATCH_GUID = "no_match_guid"
-    MISSING_DATE = "missing_date"
-    NO_TRACKED_PLAYERS = "no_tracked_players"
-
-    @property
-    def message(self) -> str:
-        return {
-            SkipReason.NO_MATCH_GUID: "Replay has no match GUID",
-            SkipReason.MISSING_DATE: "Replay has no match date",
-            SkipReason.NO_TRACKED_PLAYERS: "No tracked players in this replay",
-        }[self]
-
 
 PAIRING_WINDOW = 1.0  # seconds — max time between goal and assist to count as a pairing
 
@@ -57,16 +42,17 @@ class ReplayAnalysis:
 
 
 @dataclass(frozen=True)
-class Written:
+class Analyzed:
+    """A replay analyzed successfully; its match row is not yet written.
+
+    Carries the heavy ``ReplayAnalysis`` through the pipeline. Mapped to
+    ``file_outcome.Written`` once the DB write commits.
+    """
+
     analysis: ReplayAnalysis
 
 
-@dataclass(frozen=True)
-class Skipped:
-    reason: SkipReason
-
-
-AnalysisResult = Written | Skipped
+AnalysisResult = Analyzed | Skipped
 
 
 @dataclass(frozen=True)
@@ -442,7 +428,7 @@ def analyze_replay(
         k: tracked_players[k] for k in player_stats if k in tracked_players
     }
 
-    return Written(
+    return Analyzed(
         ReplayAnalysis(
             replay_hash=replay_hash,
             played_at_sql=played_at_sql,

@@ -6,16 +6,16 @@ import subprocess
 import threading
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import orjson
 
 from config import load_tracked_players
+from file_outcome import Failed, FileOutcome, Skipped, Written
 from ingest import (
-    Skipped,
-    Written,
+    AnalysisResult,
+    Analyzed,
     analyze_replay,
     sync_tracked_players,
     write_match,
@@ -28,13 +28,9 @@ logger = logging.getLogger(__name__)
 
 _batch_lock = threading.Lock()
 
-
-@dataclass(frozen=True)
-class Failed:
-    message: str
-
-
-FileOutcome = Written | Skipped | Failed
+# What flows out of the parse+analyze step, before the DB write decides the
+# terminal FileOutcome. Analyzed becomes Written once its match row commits.
+ParseOutcome = AnalysisResult | Failed
 
 
 def open_write_conn(db_path: str | Path) -> sqlite3.Connection:
@@ -79,7 +75,8 @@ def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
 
 def _sentinel_content(outcome: Written | Skipped) -> str:
     if isinstance(outcome, Skipped):
-        return f"skipped:{outcome.reason.value}"
+        reason = outcome.reason.value if outcome.reason is not None else ""
+        return f"skipped:{reason}"
     return "written"
 
 
@@ -101,7 +98,7 @@ def _finalize_batch(
 
 def _parse_and_analyze(
     replay_path: Path, tracked_players: dict[PlayerIdentity, str]
-) -> FileOutcome:
+) -> ParseOutcome:
     """Worker for parallel processing: parse + analyze a replay without DB access."""
     replay, error = parse_replay(replay_path)
     if replay is None:
@@ -113,10 +110,10 @@ def parallel_parse(
     paths: list[Path],
     tracked_players: dict[PlayerIdentity, str],
     on_parsed: Callable[[Path], None] | None = None,
-) -> dict[Path, FileOutcome]:
+) -> dict[Path, ParseOutcome]:
     """Parse+analyze a batch of replays in a process pool.
 
-    Returns path -> outcome (in the same order as paths): Written on success,
+    Returns path -> outcome (in the same order as paths): Analyzed on success,
     Skipped (untracked, missing metadata) or Failed (corrupt replay) otherwise.
     Calls on_parsed(path) as each file's parse completes, for progress
     reporting; that happens in completion order, but the returned dict is
@@ -125,7 +122,7 @@ def parallel_parse(
     """
     workers = max(1, (os.cpu_count() or 2) // 2)
     worker = functools.partial(_parse_and_analyze, tracked_players=tracked_players)
-    completed: dict[Path, FileOutcome] = {}
+    completed: dict[Path, ParseOutcome] = {}
     with ProcessPoolExecutor(max_workers=workers) as pool:
         future_to_path = {pool.submit(worker, path): path for path in paths}
         for future in as_completed(future_to_path):
@@ -139,9 +136,11 @@ def parallel_parse(
 def write_parsed_batch(
     conn: sqlite3.Connection,
     tracked_players: dict[PlayerIdentity, str],
-    results: dict[Path, FileOutcome],
+    results: dict[Path, ParseOutcome],
 ) -> dict[str, FileOutcome]:
     """Write parsed results to conn, finalize the batch, and report per-file outcomes.
+
+    Maps each Analyzed to a terminal Written once its match row commits.
 
     Acquires _batch_lock itself, so batch-commit semantics (one commit + all
     sentinels at the end, write_match's own savepoint isolating each file's
@@ -151,15 +150,16 @@ def write_parsed_batch(
     with _batch_lock:
         resolved: list[tuple[Path, Written | Skipped]] = []
         for path, result in results.items():
-            if isinstance(result, Written):
+            if isinstance(result, Analyzed):
                 try:
                     write_match(conn, result.analysis)
                 except Exception as exc:
                     logger.warning("Ingest failed for %s: %s", path.name, exc)
                     outcomes[path.name] = Failed(f"Ingest failed: {exc}")
                 else:
-                    resolved.append((path, result))
-                    outcomes[path.name] = result
+                    written = Written()
+                    resolved.append((path, written))
+                    outcomes[path.name] = written
             elif isinstance(result, Skipped):
                 resolved.append((path, result))
                 outcomes[path.name] = result

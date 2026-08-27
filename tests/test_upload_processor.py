@@ -5,8 +5,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from ingest import Skipped, SkipReason
-from process import FileOutcome
+from file_outcome import FileOutcome, Skipped, SkipReason
 from tests.fixtures import TEST_DATA_DIR, TRACKED_PLAYERS, file_db
 from upload_processor import (
     Errored,
@@ -305,7 +304,6 @@ def test_upload_status_round_trip_through_write_parsed_batch(tmp_path: Path):
     UploadProcessor.status() must agree — exercised end to end, not just at
     each side's own unit tests, since the two are only connected by a string
     convention with no shared type."""
-    from ingest import Skipped, SkipReason
     from process import (
         _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
         open_write_conn,

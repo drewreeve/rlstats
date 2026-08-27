@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from ingest import SkipReason
+from file_outcome import Failed, SkipReason
 from player_identity import PlayerIdentity
-from process import Failed, open_write_conn, parallel_parse, write_parsed_batch
+from process import open_write_conn, parallel_parse, write_parsed_batch
 
 logger = logging.getLogger(__name__)
 
