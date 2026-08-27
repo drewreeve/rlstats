@@ -52,6 +52,10 @@ class Failed:
 
 FileOutcome = Written | Skipped | Failed
 
+# The outcomes that get durably recorded in an .ingested sentinel. Failed is
+# the exception — it leaves no sentinel so the file retries on the next run.
+RecordedOutcome = Written | Skipped
+
 
 _SENTINEL_SUFFIX = ".ingested"
 _SKIPPED_PREFIX = "skipped:"
@@ -62,19 +66,15 @@ def sentinel_path(replay_path: Path) -> Path:
     return replay_path.with_suffix(replay_path.suffix + _SENTINEL_SUFFIX)
 
 
-def encode(outcome: Written | Skipped) -> str:
-    """Serialize a terminal outcome for the ``.ingested`` sentinel.
-
-    ``Failed`` outcomes get no sentinel — they retry on the next run — so they
-    are not encodable.
-    """
+def encode(outcome: RecordedOutcome) -> str:
+    """Serialize a terminal outcome for the ``.ingested`` sentinel."""
     if isinstance(outcome, Skipped):
         reason = outcome.reason.value if outcome.reason is not None else ""
         return f"{_SKIPPED_PREFIX}{reason}"
     return "written"
 
 
-def decode(text: str) -> Written | Skipped:
+def decode(text: str) -> RecordedOutcome:
     """Parse a ``.ingested`` sentinel's content back into a terminal outcome.
 
     Empty content is an older sentinel written before the written/skipped

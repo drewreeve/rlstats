@@ -190,15 +190,19 @@ class UploadProcessor:
     def status(self, name: str) -> UploadStatus:
         """One answer for the /api/upload/status endpoint.
 
-        file_outcome.reconcile() decides the terminal cases (sentinel,
-        recorded error, vanished file). Everything it leaves as None is
-        in-flight: report this processor's pipeline stage and batch position.
+        file_outcome.reconcile() folds the two durable recorded signals (the
+        sentinel, a recorded processing error) into a terminal outcome. What's
+        left is this processor's own to answer: in-flight pipeline stage and
+        batch position, and a replay file that has vanished off disk.
         """
         replay_path = self.replay_dir / name
-        ingested_path = sentinel_path(replay_path)
-        sentinel_text = ingested_path.read_text() if ingested_path.exists() else None
+        try:
+            sentinel_text = sentinel_path(replay_path).read_text()
+        except FileNotFoundError:
+            sentinel_text = None
 
-        stage = self.file_status(name)
+        # The sentinel, when present, is the whole answer — skip the lock.
+        stage = None if sentinel_text is not None else self.file_status(name)
         recorded_error = (
             stage[len("error:") :]
             if stage is not None and stage.startswith("error:")

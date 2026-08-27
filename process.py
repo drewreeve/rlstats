@@ -12,7 +12,14 @@ from typing import cast
 import orjson
 
 from config import load_tracked_players
-from file_outcome import Failed, FileOutcome, Skipped, Written, encode, sentinel_path
+from file_outcome import (
+    Failed,
+    FileOutcome,
+    RecordedOutcome,
+    Written,
+    encode,
+    sentinel_path,
+)
 from ingest import (
     AnalysisResult,
     Analyzed,
@@ -76,7 +83,7 @@ def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
 def _finalize_batch(
     conn: sqlite3.Connection,
     tracked_players: dict[PlayerIdentity, str],
-    resolved: list[tuple[Path, Written | Skipped]],
+    resolved: list[tuple[Path, RecordedOutcome]],
 ) -> None:
     """Sync tracked-player status, commit, and mark resolved files as ingested.
 
@@ -140,23 +147,22 @@ def write_parsed_batch(
     """
     outcomes: dict[str, FileOutcome] = {}
     with _batch_lock:
-        resolved: list[tuple[Path, Written | Skipped]] = []
+        resolved: list[tuple[Path, RecordedOutcome]] = []
         for path, result in results.items():
             if isinstance(result, Analyzed):
                 try:
                     write_match(conn, result.analysis)
                 except Exception as exc:
                     logger.warning("Ingest failed for %s: %s", path.name, exc)
-                    outcomes[path.name] = Failed(f"Ingest failed: {exc}")
+                    outcome: FileOutcome = Failed(f"Ingest failed: {exc}")
                 else:
-                    written = Written()
-                    resolved.append((path, written))
-                    outcomes[path.name] = written
-            elif isinstance(result, Skipped):
-                resolved.append((path, result))
-                outcomes[path.name] = result
+                    outcome = Written()
             else:
-                outcomes[path.name] = result
+                outcome = result  # Skipped | Failed — pass straight through
+
+            outcomes[path.name] = outcome
+            if not isinstance(outcome, Failed):
+                resolved.append((path, outcome))
         _finalize_batch(conn, tracked_players, resolved)
     return outcomes
 
