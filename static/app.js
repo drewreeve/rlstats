@@ -29,6 +29,7 @@ const PAIRING_COLORS = {
 
 const SEASONS = [
   { label: "S22", date: "2026-03-11" },
+  { label: "S23", date: "2026-06-10" },
   // add future seasons here
 ];
 
