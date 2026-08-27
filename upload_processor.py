@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from file_outcome import Failed, Skipped, decode, sentinel_path
+from file_outcome import Failed, FileOutcome, Skipped, reconcile, sentinel_path
 from player_identity import PlayerIdentity
 from process import open_write_conn, parallel_parse, write_parsed_batch
 
@@ -111,15 +111,16 @@ class _UploadFiles:
             self._records.pop(name, None)
 
 
-def _sentinel_status(ingested_path: Path) -> UploadStatus:
-    """Map a decoded ``.ingested`` sentinel to an UploadStatus."""
-    outcome = decode(ingested_path.read_text())
+def _status_from_outcome(outcome: FileOutcome) -> UploadStatus:
+    """Map a terminal file_outcome variant to the endpoint's UploadStatus."""
     if isinstance(outcome, Skipped):
         reason = outcome.reason
         return UploadStatus(
             UploadState.SKIPPED,
             reason=reason.message if reason is not None else None,
         )
+    if isinstance(outcome, Failed):
+        return UploadStatus(UploadState.ERROR, error=outcome.message or None)
     return UploadStatus(UploadState.PROCESSED)
 
 
@@ -187,22 +188,28 @@ class UploadProcessor:
             return None if batch is None else (batch.completed, batch.total)
 
     def status(self, name: str) -> UploadStatus:
-        """Reconcile the .ingested sentinel, this processor's pipeline state,
-        and file existence into one answer.
+        """One answer for the /api/upload/status endpoint.
 
-        Precedence: the sentinel is the durable record and wins over any
-        stale in-memory state; a recorded error is next; then pipeline
-        stage/batch; then a missing file is an error; otherwise pending.
+        file_outcome.reconcile() decides the terminal cases (sentinel,
+        recorded error, vanished file). Everything it leaves as None is
+        in-flight: report this processor's pipeline stage and batch position.
         """
         replay_path = self.replay_dir / name
         ingested_path = sentinel_path(replay_path)
-        if ingested_path.exists():
-            return _sentinel_status(ingested_path)
+        sentinel_text = ingested_path.read_text() if ingested_path.exists() else None
 
         stage = self.file_status(name)
-        if stage is not None and stage.startswith("error:"):
-            return UploadStatus(UploadState.ERROR, error=stage[len("error:") :])
-        if stage is not None:
+        recorded_error = (
+            stage[len("error:") :]
+            if stage is not None and stage.startswith("error:")
+            else None
+        )
+
+        outcome = reconcile(sentinel_text, recorded_error)
+        if outcome is not None:
+            return _status_from_outcome(outcome)
+
+        if stage is not None:  # in flight: queued / processing / parsed
             return UploadStatus(
                 UploadState.PENDING, stage=stage, batch=self.batch_progress(name)
             )

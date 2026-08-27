@@ -3,11 +3,13 @@ from pathlib import Path
 import pytest
 
 from file_outcome import (
+    Failed,
     Skipped,
     SkipReason,
     Written,
     decode,
     encode,
+    reconcile,
     sentinel_path,
 )
 
@@ -78,3 +80,26 @@ def test_decode_strips_surrounding_whitespace():
 )
 def test_encode_decode_round_trip(outcome: Written | Skipped):
     assert decode(encode(outcome)) == outcome
+
+
+# -- reconcile --
+
+
+def test_reconcile_no_signals_is_none():
+    assert reconcile(None, None) is None
+
+
+def test_reconcile_sentinel_written():
+    assert reconcile("written", None) == Written()
+
+
+def test_reconcile_sentinel_skipped():
+    assert reconcile("skipped:missing_date", None) == Skipped(SkipReason.MISSING_DATE)
+
+
+def test_reconcile_recorded_error():
+    assert reconcile(None, "Ingest failed: boom") == Failed("Ingest failed: boom")
+
+
+def test_reconcile_sentinel_wins_over_recorded_error():
+    assert reconcile("written", "Ingest failed: boom") == Written()

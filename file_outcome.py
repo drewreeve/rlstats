@@ -53,13 +53,13 @@ class Failed:
 FileOutcome = Written | Skipped | Failed
 
 
-SENTINEL_SUFFIX = ".ingested"
+_SENTINEL_SUFFIX = ".ingested"
 _SKIPPED_PREFIX = "skipped:"
 
 
 def sentinel_path(replay_path: Path) -> Path:
     """The ``.ingested`` sentinel path that sits beside a replay file."""
-    return replay_path.with_suffix(replay_path.suffix + SENTINEL_SUFFIX)
+    return replay_path.with_suffix(replay_path.suffix + _SENTINEL_SUFFIX)
 
 
 def encode(outcome: Written | Skipped) -> str:
@@ -90,3 +90,20 @@ def decode(text: str) -> Written | Skipped:
         except ValueError:
             return Skipped(None)
     return Written()
+
+
+def reconcile(
+    sentinel_text: str | None, recorded_error: str | None
+) -> FileOutcome | None:
+    """Fold the durable terminal signals for one replay file into its outcome.
+
+    The ``.ingested`` sentinel is the durable record and wins; a recorded
+    processing error is next. ``None`` means neither signal is present — the
+    file is still in flight, untouched, or gone. In-flight progress (queued /
+    parsing / batch position) and file existence are the caller's concern.
+    """
+    if sentinel_text is not None:
+        return decode(sentinel_text)
+    if recorded_error is not None:
+        return Failed(recorded_error)
+    return None
