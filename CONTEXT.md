@@ -56,3 +56,11 @@ A **file outcome** is the terminal, per-replay-file result of the ingest pipelin
 `file_outcome.encode()` / `decode()` are the sole owners of the `.replay.ingested` sentinel's on-disk string format — `"written"` or `"skipped:<reason>"` — and `sentinel_path()` builds a replay's sentinel path from it (the `RecordedOutcome = Written | Skipped` alias names the encodable subset). Empty sentinels, written before the written/skipped distinction existed, decode as `Written`; an unrecognized `skipped:<reason>` decodes to `Skipped(None)` rather than raising, so a newer writer can't break an older reader. `Failed` files get no sentinel, so they're retried on the next run; `process_unprocessed()` finds already-ingested files by globbing the sentinel name directly.
 
 `file_outcome.reconcile(sentinel_text, recorded_error)` folds the two durable terminal signals into a `FileOutcome` (sentinel wins over a recorded processing error) or `None` when neither is present. `UploadProcessor.status()` calls it, then layers on what is not the file outcome's concern: in-flight pipeline progress (queued / parsing / batch position) and the vanished-replay-file check.
+
+## Query Layer
+
+The **query layer** (`queries.py`) is the sole seam between the web layer and the database for reads. Every `/api` read route calls one `queries.*` function and returns its result unchanged — no reshaping in route closures, no direct use of the aiosql object.
+
+Row shapes are `*Row` `TypedDict`s whose keys mirror each query's SELECT aliases; composite results (`Streaks`, `GoalTiming`) are frozen dataclasses. The aiosql loader (`db.sql`, reading `sql/*.sql`) and all row reshaping — key renaming, rounding, the `timeline` game-mode branch, empty-state defaults — are implementation details of this module, not part of its interface.
+
+`_rows()` / `_first()` are the single `Any`-to-typed hop: they `cast` each `sqlite3.Row` to its row type. The cast is unchecked; `queries.READ_ROW_TYPES` drives a guard in `tests/test_stats_registry.py` that runs every query against a migrated empty database and asserts its projected columns match the row type's keys — the read-side analogue of the `MatchRow` / `MatchPlayerRow` drift check.
