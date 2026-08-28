@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from db import queries
+from db import sql as queries  # slice 4 retargets this file onto queries.py
 from tests.fixtures import cached_db, in_memory_db
 
 

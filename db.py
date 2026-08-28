@@ -8,7 +8,7 @@ import aiosql
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 SQL_DIR = Path(__file__).parent / "sql"
 
-queries: Any = aiosql.from_path(SQL_DIR, "sqlite3")  # pyright: ignore[reportUnknownMemberType]
+sql: Any = aiosql.from_path(SQL_DIR, "sqlite3")  # pyright: ignore[reportUnknownMemberType]
 
 
 @overload

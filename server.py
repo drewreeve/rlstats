@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 import config
-from db import apply_migrations, queries
+from db import apply_migrations, sql
 from process import process_unprocessed
 from upload_processor import UploadProcessor
 
@@ -90,7 +90,7 @@ def query_matches(
 ) -> dict[str, Any]:
     offset = (page - 1) * per_page
     search_param = f"%{_escape_like(search)}%" if search else None
-    count_row = queries.count_matches(
+    count_row = sql.count_matches(
         conn,
         game_mode=game_mode or None,
         result=result or None,
@@ -99,7 +99,7 @@ def query_matches(
         date_to=date_to or None,
     )
     total = count_row[0]
-    rows = queries.list_matches(
+    rows = sql.list_matches(
         conn,
         game_mode=game_mode or None,
         result=result or None,
@@ -120,18 +120,18 @@ def query_matches(
 def query_match_players(
     conn: sqlite3.Connection, match_id: int
 ) -> list[dict[str, Any]]:
-    rows = queries.match_players(conn, match_id=match_id)
+    rows = sql.match_players(conn, match_id=match_id)
     return [dict(r) for r in rows]
 
 
 def query_match_detail(
     conn: sqlite3.Connection, match_id: int
 ) -> dict[str, Any] | None:
-    match = queries.match_metadata(conn, match_id=match_id)
+    match = sql.match_metadata(conn, match_id=match_id)
     if not match:
         return None
 
-    players = list(queries.match_players(conn, match_id=match_id))
+    players = list(sql.match_players(conn, match_id=match_id))
 
     team_num = match["team"]
     team_players = [dict(p) for p in players if p["team"] == team_num]
@@ -144,7 +144,7 @@ def query_match_detail(
             "team": e["team"],
             "name": e["name"],
         }
-        for e in queries.match_events(conn, match_id=match_id)
+        for e in sql.match_events(conn, match_id=match_id)
     ]
 
     return {
@@ -180,26 +180,24 @@ _EMPTY_PLAYER_CAREER: dict[str, Any] = {
 def query_player_career(
     conn: sqlite3.Connection, player_name: str, game_mode: str
 ) -> dict[str, Any]:
-    row = queries.player_career_stats(
-        conn, player_name=player_name, game_mode=game_mode
-    )
+    row = sql.player_career_stats(conn, player_name=player_name, game_mode=game_mode)
     if row is None:
         return {"player": player_name, **_EMPTY_PLAYER_CAREER}
     return dict(row)
 
 
 STAT_ROUTES = {
-    "/api/stats/shooting": queries.shooting_pct,
-    "/api/stats/players": queries.player_stats,
-    "/api/stats/n-by-n": queries.n_by_n_stats,
-    "/api/stats/mvp-wins": queries.mvp_wins,
-    "/api/stats/mvp-losses": queries.mvp_losses,
-    "/api/stats/weekday": queries.weekday,
-    "/api/stats/avg-score": queries.avg_score,
-    "/api/stats/score-differential": queries.score_differential,
-    "/api/stats/goal-contributions": queries.avg_goal_contribution,
-    "/api/stats/score-range": queries.score_range,
-    "/api/stats/offensive-pairings": queries.offensive_pairings,
+    "/api/stats/shooting": sql.shooting_pct,
+    "/api/stats/players": sql.player_stats,
+    "/api/stats/n-by-n": sql.n_by_n_stats,
+    "/api/stats/mvp-wins": sql.mvp_wins,
+    "/api/stats/mvp-losses": sql.mvp_losses,
+    "/api/stats/weekday": sql.weekday,
+    "/api/stats/avg-score": sql.avg_score,
+    "/api/stats/score-differential": sql.score_differential,
+    "/api/stats/goal-contributions": sql.avg_goal_contribution,
+    "/api/stats/score-range": sql.score_range,
+    "/api/stats/offensive-pairings": sql.offensive_pairings,
 }
 
 
@@ -450,9 +448,9 @@ def create_app(
         conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     ) -> list[dict[str, Any]]:
         if mode in ("2v2", "hoops"):
-            rows = queries.win_loss_daily_pairings(conn, game_mode=mode)
+            rows = sql.win_loss_daily_pairings(conn, game_mode=mode)
         else:
-            rows = queries.win_loss_daily(conn, game_mode=mode)
+            rows = sql.win_loss_daily(conn, game_mode=mode)
         return [dict(r) for r in rows]
 
     @app.get("/api/stats/streaks")
@@ -460,7 +458,7 @@ def create_app(
         mode: Annotated[str, Depends(game_mode)],
         conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     ):
-        row = next(iter(queries.streaks(conn, game_mode=mode)), None)
+        row = next(iter(sql.streaks(conn, game_mode=mode)), None)
         if row:
             return {
                 "longest_win_streak": row["longest_win_streak"] or 0,
@@ -473,7 +471,7 @@ def create_app(
         mode: Annotated[str, Depends(game_mode)],
         conn: Annotated[sqlite3.Connection, Depends(get_conn)],
     ):
-        row = dict(next(queries.goal_timing(conn, game_mode=mode)))
+        row = dict(next(sql.goal_timing(conn, game_mode=mode)))
         avg_concede = row["avg_concede_delay"]
         avg_lead = row["avg_lead_duration"]
         return {
@@ -508,7 +506,7 @@ def create_app(
         conn: Annotated[sqlite3.Connection, Depends(get_conn)],
         mode: Annotated[str, Depends(game_mode)],
     ):
-        rows = queries.player_time_series(conn, player_name=player_name, game_mode=mode)
+        rows = sql.player_time_series(conn, player_name=player_name, game_mode=mode)
         return [dict(r) for r in rows]
 
     # -- Exception handlers --
