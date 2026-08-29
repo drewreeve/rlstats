@@ -1,6 +1,6 @@
 -- name: count_matches(game_mode, result, search, date_from, date_to)^
 -- Total number of matches matching the given optional filters.
-SELECT COUNT(*)
+SELECT COUNT(*) AS total
 FROM matches m
 LEFT JOIN players p ON m.team_mvp_player_id = p.id
 WHERE (:game_mode IS NULL OR m.game_mode = :game_mode)

@@ -7,9 +7,25 @@ from typing import Any, is_typeddict
 import pytest
 
 import queries
+from db import sql
 from ingest import MatchPlayerRow, MatchRow
 from queries import READ_ROW_TYPES
 from tests.fixtures import in_memory_db
+
+# Dummy bind values for every :placeholder any read query uses. SQLite ignores
+# keys a given query doesn't bind, so the whole dict is passed to every query;
+# a query that needs a name absent here fails loudly with a clear error.
+_GUARD_PARAMS: dict[str, Any] = {
+    "game_mode": "3v3",
+    "match_id": 1,
+    "player_name": "x",
+    "result": None,
+    "search": None,
+    "date_from": None,
+    "date_to": None,
+    "per_page": 1,
+    "offset": 0,
+}
 
 
 @pytest.mark.parametrize(
@@ -41,9 +57,7 @@ def test_read_row_type_matches_query_columns(query: Any, row_type: Any):
     appear; every projected column must be a known (required or NotRequired)
     key."""
     conn = in_memory_db()
-    projected = {
-        d[0] for d in conn.execute(query.sql, {"game_mode": "3v3"}).description
-    }
+    projected = {d[0] for d in conn.execute(query.sql, _GUARD_PARAMS).description}
     # Every TypedDict exposes both frozensets regardless of total=/NotRequired.
     required: set[str] = set(row_type.__required_keys__)
     allowed: set[str] = required | set(row_type.__optional_keys__)
@@ -57,7 +71,14 @@ def test_read_row_type_matches_query_columns(query: Any, row_type: Any):
 
 def test_read_row_types_registry_is_complete():
     """Every row TypedDict defined in queries.py must be a value in
-    READ_ROW_TYPES, so test_read_row_type_matches_query_columns can't silently
-    skip one added in a later slice."""
+    READ_ROW_TYPES, and every aiosql read query a key — so a query or row type
+    added later can't slip past test_read_row_type_matches_query_columns."""
     defined = {v for v in vars(queries).values() if is_typeddict(v)}
     assert defined == set(READ_ROW_TYPES.values())
+
+    all_queries = {
+        getattr(sql, name)
+        for name in sql.available_queries
+        if not name.endswith("_cursor")
+    }
+    assert set(READ_ROW_TYPES) == all_queries

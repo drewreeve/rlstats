@@ -1,3 +1,13 @@
+"""SQL-layer tests: the behavior of the raw queries in ``sql/*.sql`` (window
+functions, NULLIF, session bucketing, GROUP BY shapes), exercised straight
+through the aiosql loader ``db.sql``.
+
+The query-layer module (``queries.py``) — its typed rows, composites,
+reshaping and empty-state defaults — is tested in ``test_read_queries.py``.
+Column-name drift between a query and its row type is guarded in
+``test_stats_registry.py``.
+"""
+
 import sqlite3
 from collections import Counter
 from collections.abc import Sequence
@@ -5,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from db import sql as queries  # slice 4 retargets this file onto queries.py
+from db import sql
 from tests.fixtures import cached_db, in_memory_db
 
 
@@ -63,7 +73,7 @@ def _as_tuples(rows: Any, columns: Sequence[str]) -> list[tuple[Any, ...]]:
 def test_match_metadata_returns_match():
     conn = _match_db()
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
-    row = queries.match_metadata(conn, match_id=match_id)
+    row = sql.match_metadata(conn, match_id=match_id)
 
     assert row["game_mode"] == "3v3"
     assert row["result"] == "win"
@@ -75,7 +85,7 @@ def test_match_metadata_returns_match():
 
 def test_match_metadata_nonexistent():
     conn = _match_db()
-    assert queries.match_metadata(conn, match_id=9999) is None
+    assert sql.match_metadata(conn, match_id=9999) is None
 
 
 # -- match_players --
@@ -84,7 +94,7 @@ def test_match_metadata_nonexistent():
 def test_match_players_all_returned():
     conn = _match_db()
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
-    rows = list(queries.match_players(conn, match_id=match_id))
+    rows = list(sql.match_players(conn, match_id=match_id))
 
     assert len(rows) == 6
     names = {r["name"] for r in rows}
@@ -94,7 +104,7 @@ def test_match_players_all_returned():
 def test_match_players_ordered_by_score_desc():
     conn = _match_db()
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
-    rows = list(queries.match_players(conn, match_id=match_id))
+    rows = list(sql.match_players(conn, match_id=match_id))
 
     scores = [r["score"] for r in rows]
     assert scores == sorted(scores, reverse=True)
@@ -103,7 +113,7 @@ def test_match_players_ordered_by_score_desc():
 def test_match_players_values():
     conn = _match_db()
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
-    rows = list(queries.match_players(conn, match_id=match_id))
+    rows = list(sql.match_players(conn, match_id=match_id))
     by_name = {r["name"]: r for r in rows}
 
     drew = by_name["Drew"]
@@ -121,7 +131,7 @@ def test_match_players_values():
 
 def test_match_players_nonexistent():
     conn = _match_db()
-    assert list(queries.match_players(conn, match_id=9999)) == []
+    assert list(sql.match_players(conn, match_id=9999)) == []
 
 
 def test_match_players_shooting_pct_null_when_no_shots():
@@ -143,7 +153,7 @@ def test_match_players_shooting_pct_null_when_no_shots():
         " VALUES (?,?,?,?,?)",
         (match_id, player_id, 0, 0, 0),
     )
-    rows = list(queries.match_players(conn, match_id=match_id))
+    rows = list(sql.match_players(conn, match_id=match_id))
     assert rows[0]["shooting_pct"] is None
 
 
@@ -153,7 +163,7 @@ def test_match_players_shooting_pct_null_when_no_shots():
 def test_match_events_counts():
     conn = _match_db()
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
-    events = list(queries.match_events(conn, match_id=match_id))
+    events = list(sql.match_events(conn, match_id=match_id))
 
     assert len(events) == 37
     by_type = Counter(e["event_type"] for e in events)
@@ -163,7 +173,7 @@ def test_match_events_counts():
 def test_match_events_ordered_by_time():
     conn = _match_db()
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
-    events = list(queries.match_events(conn, match_id=match_id))
+    events = list(sql.match_events(conn, match_id=match_id))
 
     times = [e["game_seconds"] for e in events]
     assert times == sorted(times)
@@ -171,7 +181,7 @@ def test_match_events_ordered_by_time():
 
 def test_match_events_nonexistent():
     conn = _match_db()
-    assert list(queries.match_events(conn, match_id=9999)) == []
+    assert list(sql.match_events(conn, match_id=9999)) == []
 
 
 # -- offensive_pairings --
@@ -179,7 +189,7 @@ def test_match_events_nonexistent():
 
 def test_offensive_pairings_query():
     conn = _all_modes_db()
-    rows = list(queries.offensive_pairings(conn, game_mode="3v3"))
+    rows = list(sql.offensive_pairings(conn, game_mode="3v3"))
     assert len(rows) > 0
     for row in rows:
         assert "→" in row["pairing"]
@@ -189,7 +199,7 @@ def test_offensive_pairings_query():
 
 def test_offensive_pairings_empty_for_missing_mode():
     conn = _match_db()
-    rows = list(queries.offensive_pairings(conn, game_mode="2v2"))
+    rows = list(sql.offensive_pairings(conn, game_mode="2v2"))
     assert rows == []
 
 
@@ -225,7 +235,7 @@ def test_offensive_pairings_empty_for_missing_mode():
 )
 def test_shooting_pct_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
-    rows = queries.shooting_pct(conn, game_mode=mode)
+    rows = sql.shooting_pct(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "goals", "shots", "shooting_pct"))
     assert actual == expected
 
@@ -259,7 +269,7 @@ def test_shooting_pct_values_by_mode(mode: str, expected: Any):
 )
 def test_player_stats_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
-    rows = queries.player_stats(conn, game_mode=mode)
+    rows = sql.player_stats(conn, game_mode=mode)
     actual = _as_tuples(
         rows,
         ("player", "matches", "goals", "assists", "saves", "shots"),
@@ -314,7 +324,7 @@ def test_n_by_n_stats_buckets_by_min_of_the_three_stats():
             (0, 5, 5),  # min 0, excluded entirely
         ],
     )
-    rows = queries.n_by_n_stats(conn, game_mode="3v3")
+    rows = sql.n_by_n_stats(conn, game_mode="3v3")
     actual = _as_tuples(rows, ("player", "n", "matches"))
     assert actual == [("Tester", 1, 4), ("Tester", 2, 1), ("Tester", 3, 1)]
 
@@ -326,10 +336,10 @@ def test_n_by_n_stats_filtered_by_mode():
     _insert_n_by_n_matches(conn, [(2, 2, 2)], game_mode="2v2")
 
     assert _as_tuples(
-        queries.n_by_n_stats(conn, game_mode="3v3"), ("player", "n", "matches")
+        sql.n_by_n_stats(conn, game_mode="3v3"), ("player", "n", "matches")
     ) == [("Tester", 1, 1)]
     assert _as_tuples(
-        queries.n_by_n_stats(conn, game_mode="2v2"), ("player", "n", "matches")
+        sql.n_by_n_stats(conn, game_mode="2v2"), ("player", "n", "matches")
     ) == [("Tester", 2, 1)]
 
 
@@ -343,7 +353,7 @@ def test_n_by_n_stats_filtered_by_mode():
 )
 def test_mvp_wins_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
-    rows = queries.mvp_wins(conn, game_mode=mode)
+    rows = sql.mvp_wins(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "mvp_matches", "mvp_wins", "win_rate"))
     assert actual == expected
 
@@ -358,7 +368,7 @@ def test_mvp_wins_values_by_mode(mode: str, expected: Any):
 )
 def test_mvp_losses_values_by_mode(mode: str, expected: Any):
     conn = _mvp_losses_modes_db()
-    rows = queries.mvp_losses(conn, game_mode=mode)
+    rows = sql.mvp_losses(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "loss_mvps"))
     assert actual == expected
 
@@ -392,14 +402,14 @@ def test_mvp_losses_values_by_mode(mode: str, expected: Any):
 )
 def test_avg_score_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
-    rows = queries.avg_score(conn, game_mode=mode)
+    rows = sql.avg_score(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "matches", "total_score", "avg_score"))
     assert actual == expected
 
 
 def test_weekday_values_3v3():
     conn = _all_modes_db()
-    rows = queries.weekday(conn, game_mode="3v3")
+    rows = sql.weekday(conn, game_mode="3v3")
     actual = _as_tuples(rows, ("weekday", "matches", "wins", "losses", "win_rate"))
     assert actual == [
         ("Sunday", 1, 1, 0, 1.0),
@@ -437,14 +447,14 @@ def test_weekday_values_3v3():
 )
 def test_score_range_values_by_mode(mode: str, expected: Any):
     conn = _all_modes_db()
-    rows = queries.score_range(conn, game_mode=mode)
+    rows = sql.score_range(conn, game_mode=mode)
     actual = _as_tuples(rows, ("player", "min", "max"))
     assert actual == expected
 
 
 def test_win_loss_daily_values_3v3():
     conn = _all_modes_db()
-    rows = queries.win_loss_daily(conn, game_mode="3v3")
+    rows = sql.win_loss_daily(conn, game_mode="3v3")
     actual = _as_tuples(rows, ("date", "wins", "losses", "win_rate"))
     assert actual == [
         ("2026-01-27", 1, 0, 1.0),
@@ -458,7 +468,7 @@ def test_win_loss_daily_values_3v3():
 
 def test_score_differential_values_3v3():
     conn = _3v3_db()
-    rows = queries.score_differential(conn, game_mode="3v3")
+    rows = sql.score_differential(conn, game_mode="3v3")
     diffs = {r["differential"]: r["match_count"] for r in rows}
     assert diffs[-2] == 1  # 0-2 loss
     assert diffs[1] == 1  # 5-4 win
@@ -467,7 +477,7 @@ def test_score_differential_values_3v3():
 
 def test_score_differential_sorted_by_differential():
     conn = _3v3_db()
-    rows = queries.score_differential(conn, game_mode="3v3")
+    rows = sql.score_differential(conn, game_mode="3v3")
     differentials = [r["differential"] for r in rows]
     assert differentials == sorted(differentials)
 
@@ -485,7 +495,7 @@ def test_score_differential_sorted_by_differential():
 )
 def test_streaks_values_by_mode(mode: str, expected_win: int, expected_loss: int):
     conn = _all_modes_db()
-    rows = list(queries.streaks(conn, game_mode=mode))
+    rows = list(sql.streaks(conn, game_mode=mode))
     if rows:
         assert rows[0]["longest_win_streak"] == expected_win
         assert rows[0]["longest_loss_streak"] == expected_loss
@@ -496,7 +506,7 @@ def test_streaks_values_by_mode(mode: str, expected_win: int, expected_loss: int
 
 def test_streaks_no_matches():
     conn = _3v3_db()
-    rows = list(queries.streaks(conn, game_mode="2v2"))
+    rows = list(sql.streaks(conn, game_mode="2v2"))
     if rows:
         assert (rows[0]["longest_win_streak"] or 0) == 0
         assert (rows[0]["longest_loss_streak"] or 0) == 0
@@ -507,7 +517,7 @@ def test_streaks_no_matches():
 
 def test_avg_goal_contribution_shape():
     conn = _match_db()
-    rows = queries.avg_goal_contribution(conn, game_mode="3v3")
+    rows = sql.avg_goal_contribution(conn, game_mode="3v3")
     data = [dict(r) for r in rows]
 
     assert len(data) == 3
@@ -525,13 +535,13 @@ def test_avg_goal_contribution_shape():
 
 def test_avg_goal_contribution_zero_team_score_excluded():
     conn = _zero_score_db()
-    rows = queries.avg_goal_contribution(conn, game_mode="3v3")
+    rows = sql.avg_goal_contribution(conn, game_mode="3v3")
     assert all(r["avg_goal_contribution"] is None for r in rows)
 
 
 def test_avg_goal_contribution_values():
     conn = _3v3_db()
-    rows = queries.avg_goal_contribution(conn, game_mode="3v3")
+    rows = sql.avg_goal_contribution(conn, game_mode="3v3")
     by_player = {r["player"]: r for r in rows}
     assert by_player["Drew"]["avg_goal_contribution"] == 0.575
     assert by_player["Steve"]["avg_goal_contribution"] == 0.2
@@ -540,7 +550,7 @@ def test_avg_goal_contribution_values():
 
 def test_avg_goal_contribution_no_matches_for_mode():
     conn = _3v3_db()
-    rows = list(queries.avg_goal_contribution(conn, game_mode="2v2"))
+    rows = list(sql.avg_goal_contribution(conn, game_mode="2v2"))
     assert rows == []
 
 
@@ -559,7 +569,7 @@ def test_win_loss_daily_pairings_pairing_format(
 ):
     conn = cached_db(*replay_files)
     conn.row_factory = sqlite3.Row
-    rows = list(queries.win_loss_daily_pairings(conn, game_mode=game_mode))
+    rows = list(sql.win_loss_daily_pairings(conn, game_mode=game_mode))
 
     for row in rows:
         parts = row["pairing"].split("/")
@@ -571,7 +581,7 @@ def test_win_loss_daily_pairings_pairing_format(
 @pytest.mark.parametrize("game_mode", ["2v2", "hoops"])
 def test_win_loss_daily_pairings_empty_for_other_mode(game_mode: str):
     conn = _3v3_db()
-    rows = list(queries.win_loss_daily_pairings(conn, game_mode=game_mode))
+    rows = list(sql.win_loss_daily_pairings(conn, game_mode=game_mode))
 
     assert rows == []
 
@@ -579,7 +589,7 @@ def test_win_loss_daily_pairings_empty_for_other_mode(game_mode: str):
 def test_win_loss_daily_pairings_correct_record_2v2():
     conn = cached_db("team_size_2.json", "loss_2v2.json")
     conn.row_factory = sqlite3.Row
-    rows = list(queries.win_loss_daily_pairings(conn, game_mode="2v2"))
+    rows = list(sql.win_loss_daily_pairings(conn, game_mode="2v2"))
 
     assert len(rows) == 1
     row = rows[0]
@@ -592,7 +602,7 @@ def test_win_loss_daily_pairings_correct_record_2v2():
 def test_win_loss_daily_pairings_correct_record_hoops():
     conn = cached_db("hoops.json", "loss_hoops.json")
     conn.row_factory = sqlite3.Row
-    rows = list(queries.win_loss_daily_pairings(conn, game_mode="hoops"))
+    rows = list(sql.win_loss_daily_pairings(conn, game_mode="hoops"))
 
     assert len(rows) == 1
     row = rows[0]
@@ -605,13 +615,13 @@ def test_win_loss_daily_pairings_correct_record_hoops():
 
 def test_player_time_series_returns_rows():
     conn = _3v3_db()
-    rows = list(queries.player_time_series(conn, player_name="Drew", game_mode="3v3"))
+    rows = list(sql.player_time_series(conn, player_name="Drew", game_mode="3v3"))
     assert len(rows) > 0
 
 
 def test_player_time_series_columns():
     conn = _3v3_db()
-    rows = list(queries.player_time_series(conn, player_name="Drew", game_mode="3v3"))
+    rows = list(sql.player_time_series(conn, player_name="Drew", game_mode="3v3"))
     row = dict(rows[0])
     for col in (
         "date",
@@ -629,21 +639,19 @@ def test_player_time_series_columns():
 
 def test_player_time_series_unknown_player():
     conn = _3v3_db()
-    rows = list(
-        queries.player_time_series(conn, player_name="Unknown", game_mode="3v3")
-    )
+    rows = list(sql.player_time_series(conn, player_name="Unknown", game_mode="3v3"))
     assert rows == []
 
 
 def test_player_time_series_wrong_mode():
     conn = _3v3_db()
-    rows = list(queries.player_time_series(conn, player_name="Drew", game_mode="2v2"))
+    rows = list(sql.player_time_series(conn, player_name="Drew", game_mode="2v2"))
     assert rows == []
 
 
 def test_player_time_series_goals_match_fixture():
     conn = _match_db()
-    rows = list(queries.player_time_series(conn, player_name="Drew", game_mode="3v3"))
+    rows = list(sql.player_time_series(conn, player_name="Drew", game_mode="3v3"))
     assert len(rows) == 1
     # match.json: Drew (Flatliner) has 2 goals, 0 assists, 0 saves
     assert rows[0]["goals"] == 2
@@ -655,7 +663,7 @@ def test_player_time_series_goals_match_fixture():
 
 def test_player_career_stats_returns_totals():
     conn = _3v3_db()
-    row = queries.player_career_stats(conn, player_name="Drew", game_mode="3v3")
+    row = sql.player_career_stats(conn, player_name="Drew", game_mode="3v3")
     assert row is not None
     assert row["matches"] > 0
     assert row["player"] == "Drew"
@@ -663,13 +671,13 @@ def test_player_career_stats_returns_totals():
 
 def test_player_career_stats_unknown_player():
     conn = _3v3_db()
-    row = queries.player_career_stats(conn, player_name="Unknown", game_mode="3v3")
+    row = sql.player_career_stats(conn, player_name="Unknown", game_mode="3v3")
     assert row is None
 
 
 def test_player_career_stats_totals_match_fixture():
     conn = _match_db()
-    row = queries.player_career_stats(conn, player_name="Drew", game_mode="3v3")
+    row = sql.player_career_stats(conn, player_name="Drew", game_mode="3v3")
     assert row is not None
     assert row["matches"] == 1
     assert row["goals"] == 2
@@ -678,7 +686,7 @@ def test_player_career_stats_totals_match_fixture():
 
 def test_player_career_stats_wrong_mode_returns_none():
     conn = _match_db()
-    row = queries.player_career_stats(conn, player_name="Drew", game_mode="2v2")
+    row = sql.player_career_stats(conn, player_name="Drew", game_mode="2v2")
     assert row is None
 
 
@@ -742,7 +750,7 @@ def test_goal_timing_basic():
             }
         ]
     )
-    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    row = dict(next(sql.goal_timing(conn, game_mode="3v3")))
     assert row["avg_concede_delay"] == 90.0
     assert row["avg_lead_duration"] == 90.0
 
@@ -758,7 +766,7 @@ def test_goal_timing_hold_to_end():
             }
         ]
     )
-    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    row = dict(next(sql.goal_timing(conn, game_mode="3v3")))
     assert row["avg_concede_delay"] is None
     assert row["avg_lead_duration"] == 120.0
 
@@ -774,14 +782,14 @@ def test_goal_timing_no_lead():
             }
         ]
     )
-    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    row = dict(next(sql.goal_timing(conn, game_mode="3v3")))
     assert row["avg_concede_delay"] is None
     assert row["avg_lead_duration"] is None
 
 
 def test_goal_timing_no_events():
     conn = _goal_timing_db([])
-    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    row = dict(next(sql.goal_timing(conn, game_mode="3v3")))
     assert row["avg_concede_delay"] is None
     assert row["avg_lead_duration"] is None
 
@@ -804,7 +812,7 @@ def test_goal_timing_multiple_matches():
             },
         ]
     )
-    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    row = dict(next(sql.goal_timing(conn, game_mode="3v3")))
     assert row["avg_concede_delay"] == 60.0
     assert row["avg_lead_duration"] == 75.0
 
@@ -812,7 +820,7 @@ def test_goal_timing_multiple_matches():
 def test_goal_timing_fixture_returns_values():
     # Smoke test: real match data gives positive values
     conn = _match_db()
-    row = dict(next(queries.goal_timing(conn, game_mode="3v3")))
+    row = dict(next(sql.goal_timing(conn, game_mode="3v3")))
     assert row["avg_concede_delay"] is not None
     assert row["avg_lead_duration"] is not None
     assert row["avg_concede_delay"] > 0
@@ -821,6 +829,6 @@ def test_goal_timing_fixture_returns_values():
 
 def test_goal_timing_missing_mode_returns_nulls():
     conn = _match_db()
-    row = dict(next(queries.goal_timing(conn, game_mode="hoops")))
+    row = dict(next(sql.goal_timing(conn, game_mode="hoops")))
     assert row["avg_concede_delay"] is None
     assert row["avg_lead_duration"] is None

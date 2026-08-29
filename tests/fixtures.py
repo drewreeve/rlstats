@@ -49,6 +49,21 @@ def cached_db(*replay_names: str) -> sqlite3.Connection:
     return conn
 
 
+def row_db(*replay_names: str) -> sqlite3.Connection:
+    """cached_db() with sqlite3.Row — the connection shape queries.py needs
+    (its _rows/_one call dict(row))."""
+    conn = cached_db(*replay_names)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def empty_row_db() -> sqlite3.Connection:
+    """Migrations-only DB with sqlite3.Row, for queries.py's empty-result paths."""
+    conn = in_memory_db()
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def file_db(tmp_path: Path) -> Path:
     """Create a migrated file-based SQLite DB and return its path."""
     db_path = tmp_path / "test.sqlite"

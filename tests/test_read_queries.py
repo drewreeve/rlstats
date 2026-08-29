@@ -1,27 +1,14 @@
-"""Unit tests for the query layer (queries.py).
+"""Unit tests for the query layer (queries.py) — the read seam's own tests.
 
 Covers the reshaping that previously lived in server.py route closures and was
-only reachable through TestClient: streaks' ``or 0``, goal_timing's rounding
-and rename, and timeline's game-mode branch.
+only reachable through TestClient (streaks' ``or 0``, goal_timing's rounding
+and rename, timeline's game-mode branch) plus the match-list / match-detail
+composites.
 """
 
-import sqlite3
-
 import queries
-from tests.fixtures import cached_db, in_memory_db
-
-
-def _db(*replays: str) -> sqlite3.Connection:
-    conn = cached_db(*replays)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _empty_db() -> sqlite3.Connection:
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
-    return conn
-
+from tests.fixtures import empty_row_db as _empty_db
+from tests.fixtures import row_db as _db
 
 # -- passthrough stat reads --
 
@@ -82,3 +69,140 @@ def test_timeline_2v2_includes_pairing_key():
     rows = queries.timeline(_db("team_size_2.json", "loss_2v2.json"), "2v2")
     assert rows
     assert "pairing" in rows[0]
+
+
+# -- matches (list + pagination) --
+
+_ALL = ("zero_score.json", "match.json", "forefeit.json")
+
+
+def test_matches_returns_all():
+    page = queries.matches(_db(*_ALL))
+    assert page.total == 3
+    assert len(page.matches) == 3
+    assert page.page == 1
+
+
+def test_matches_filter_by_result():
+    page = queries.matches(_db(*_ALL), result="win")
+    assert page.total == 2
+    assert all(m["result"] == "win" for m in page.matches)
+
+
+def test_matches_filter_by_game_mode():
+    page = queries.matches(_db(*_ALL), game_mode="3v3")
+    assert page.total == 3
+    assert all(m["game_mode"] == "3v3" for m in page.matches)
+
+
+def test_matches_pagination():
+    page = queries.matches(_db(*_ALL), per_page=2, page=1)
+    assert page.total == 3
+    assert len(page.matches) == 2
+    assert page.per_page == 2
+    assert len(queries.matches(_db(*_ALL), per_page=2, page=2).matches) == 1
+
+
+def test_matches_search_by_mvp_name():
+    page = queries.matches(_db(*_ALL), search="Drew")
+    assert page.total == 1
+    assert page.matches[0]["mvp"] == "Drew"
+
+
+def test_matches_empty_db():
+    page = queries.matches(_empty_db())
+    assert page.total == 0
+    assert page.matches == []
+
+
+# -- match_players --
+
+
+def test_match_players_ordered_by_score_desc():
+    conn = _db("zero_score.json")
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    rows = queries.match_players(conn, match_id)
+    assert len(rows) == 6
+    assert {"Drew", "Jeff", "Steve"} <= {r["name"] for r in rows}
+    scores = [r["score"] for r in rows]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_match_players_computed_shooting_pct():
+    conn = _db("zero_score.json")
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    drew = next(r for r in queries.match_players(conn, match_id) if r["name"] == "Drew")
+    assert drew["shots"] == 2
+    assert drew["shooting_pct"] == 0.0
+
+
+def test_match_players_nonexistent_match_is_empty():
+    assert queries.match_players(_db("zero_score.json"), 9999) == []
+
+
+# -- match_detail (composite) --
+
+
+def test_match_detail_splits_team_and_opponent():
+    conn = _db("match.json")
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    detail = queries.match_detail(conn, match_id)
+    assert detail is not None
+    assert detail.match["result"] == "win"
+    assert detail.match["team_score"] == 5
+    assert detail.match["opponent_score"] == 4
+    team_names = {p["name"] for p in detail.team_players}
+    assert {"Drew", "Jeff", "Steve"} == team_names
+    assert all(p["name"] not in team_names for p in detail.opponent_players)
+
+
+def test_match_detail_events_present():
+    conn = _db("zero_score.json")
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    detail = queries.match_detail(conn, match_id)
+    assert detail is not None
+    assert "goal" in {e["event_type"] for e in detail.events}
+
+
+def test_match_detail_nonexistent_match_is_none():
+    assert queries.match_detail(_db("zero_score.json"), 9999) is None
+
+
+# -- player_career --
+
+
+def test_player_career_returns_stats():
+    data = queries.player_career(_db("zero_score.json"), "Drew", "3v3")
+    assert data["player"] == "Drew"
+    assert data["matches"] == 1
+    assert data["shots"] == 2
+
+
+def test_player_career_no_data_zero_fills():
+    data = queries.player_career(_db("zero_score.json"), "Drew", "2v2")
+    assert data["player"] == "Drew"
+    assert data["matches"] == 0
+    assert data["avg_score"] is None
+
+
+# -- player_time_series --
+
+
+def test_player_time_series_rows_have_expected_keys():
+    rows = queries.player_time_series(_db("match.json"), "Drew", "3v3")
+    assert rows
+    assert set(rows[0]) == {
+        "date",
+        "goals",
+        "assists",
+        "saves",
+        "shots",
+        "avg_score",
+        "mvp_count",
+        "shooting_pct",
+        "avg_speed",
+    }
+
+
+def test_player_time_series_empty_for_unplayed_mode():
+    assert queries.player_time_series(_db("match.json"), "Drew", "2v2") == []
