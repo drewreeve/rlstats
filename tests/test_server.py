@@ -5,7 +5,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from server import STAT_ROUTES, create_app
+import queries
+from server import create_app
 from tests.fixtures import cached_db, file_db
 
 
@@ -35,7 +36,7 @@ def test_query_matches_per_page_capped(tmp_path: Path):
 @pytest.mark.parametrize(
     "path",
     [
-        *STAT_ROUTES.keys(),
+        *(f"/api/stats/{slug}" for slug in queries.STAT_READS),
         "/api/stats/streaks",
         "/api/stats/goal-timing",
         "/api/stats/timeline",

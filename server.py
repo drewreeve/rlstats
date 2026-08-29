@@ -74,21 +74,6 @@ def _versioned_html(path: Path, version: str) -> str:
 ALLOWED_MODES = {"3v3", "2v2", "hoops"}
 
 
-STAT_ROUTES = {
-    "/api/stats/shooting": queries.shooting_pct,
-    "/api/stats/players": queries.player_stats,
-    "/api/stats/n-by-n": queries.n_by_n_stats,
-    "/api/stats/mvp-wins": queries.mvp_wins,
-    "/api/stats/mvp-losses": queries.mvp_losses,
-    "/api/stats/weekday": queries.weekday,
-    "/api/stats/avg-score": queries.avg_score,
-    "/api/stats/score-differential": queries.score_differential,
-    "/api/stats/goal-contributions": queries.avg_goal_contribution,
-    "/api/stats/score-range": queries.score_range,
-    "/api/stats/offensive-pairings": queries.offensive_pairings,
-}
-
-
 def _get_conn(db_path: str | Path) -> sqlite3.Connection:
     """Open a read connection to the database."""
     conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -317,19 +302,18 @@ def create_app(
     def game_mode(mode: str = "3v3") -> str:
         return mode if mode in ALLOWED_MODES else "3v3"
 
-    def make_stat_handler(
-        fn: Callable[[sqlite3.Connection, str], Any],
-    ) -> Any:
+    def make_stat_handler(slug: str) -> Any:
         async def view(
             mode: Annotated[str, Depends(game_mode)],
             conn: Annotated[sqlite3.Connection, Depends(get_conn)],
         ) -> Any:
-            return fn(conn, mode)
+            return queries.stats(slug, conn, mode)
 
         return view
 
-    for path, handler_fn in STAT_ROUTES.items():
-        app.get(path, name=path)(make_stat_handler(handler_fn))
+    for slug in queries.STAT_READS:
+        path = f"/api/stats/{slug}"
+        app.get(path, name=path)(make_stat_handler(slug))
 
     # These return typed results from queries.*; the route annotations stay
     # loose (-> Any) so FastAPI serializes via jsonable_encoder without

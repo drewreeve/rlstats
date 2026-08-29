@@ -50,8 +50,8 @@ def cached_db(*replay_names: str) -> sqlite3.Connection:
 
 
 def row_db(*replay_names: str) -> sqlite3.Connection:
-    """cached_db() with sqlite3.Row — the connection shape queries.py needs
-    (its _rows/_one call dict(row))."""
+    """cached_db() with a sqlite3.Row factory, which queries.py needs — its
+    _rows/_one do dict(row)."""
     conn = cached_db(*replay_names)
     conn.row_factory = sqlite3.Row
     return conn

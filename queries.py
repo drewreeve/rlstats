@@ -8,12 +8,9 @@ all row reshaping — key renaming, rounding, the ``timeline`` game-mode branch,
 empty-state defaults — are implementation details here, not part of the
 interface.
 
-``_rows()`` / ``_first()`` are the single ``Any``-to-typed hop: they ``cast``
-each ``sqlite3.Row`` to its row type. That cast is unchecked;
-``tests/test_stats_registry.py`` guards it via ``READ_ROW_TYPES`` by running
-every query against a migrated empty database and asserting its projected
-columns match the row type's keys — the read-side analogue of the ``MatchRow``
-/ ``MatchPlayerRow`` drift check.
+``_rows()`` / ``_first()`` / ``_one()`` are the single ``Any``-to-typed hop:
+each ``cast``s a ``sqlite3.Row`` to its row type, unchecked. ``READ_ROW_TYPES``
+and ``tests/test_stats_registry.py`` guard that cast against column drift.
 
 See CONTEXT.md: "Query Layer".
 """
@@ -25,7 +22,7 @@ from typing import Any, NotRequired, TypedDict, cast
 
 from db import sql
 
-# -- Row shapes (one per list query) --
+# -- Row shapes --
 
 
 class ShootingRow(TypedDict):
@@ -261,8 +258,7 @@ def _rows[R](
 ) -> list[R]:
     """Run an aiosql list query and cast each row to ``row_type``.
 
-    ``row_type`` only binds ``R`` for the checker — the cast is unchecked here.
-    ``READ_ROW_TYPES`` + ``tests/test_stats_registry.py`` verify the keys.
+    ``row_type`` is a checker-only hint binding ``R``; it is not read at runtime.
     """
     return [cast(R, dict(r)) for r in query(conn, **params)]
 
@@ -295,66 +291,34 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-# -- Stat reads (registered in server.STAT_ROUTES) --
+# -- Stat reads --
+
+# Slug (the /api/stats/<slug> segment) -> (aiosql query, its *Row type). The one
+# place the passthrough stat reads are defined: stats() runs them, server.py
+# routes them, READ_ROW_TYPES feeds them to the drift guard. New per-mode stat =
+# an entry here + a sql/*.sql query + a *Row type.
+STAT_READS: dict[str, tuple[Callable[..., Any], type[Any]]] = {
+    "shooting": (sql.shooting_pct, ShootingRow),
+    "players": (sql.player_stats, PlayerStatsRow),
+    "n-by-n": (sql.n_by_n_stats, NByNRow),
+    "mvp-wins": (sql.mvp_wins, MvpWinsRow),
+    "mvp-losses": (sql.mvp_losses, MvpLossesRow),
+    "weekday": (sql.weekday, WeekdayRow),
+    "avg-score": (sql.avg_score, AvgScoreRow),
+    "score-differential": (sql.score_differential, ScoreDifferentialRow),
+    "goal-contributions": (sql.avg_goal_contribution, GoalContributionRow),
+    "score-range": (sql.score_range, ScoreRangeRow),
+    "offensive-pairings": (sql.offensive_pairings, OffensivePairingsRow),
+}
 
 
-def shooting_pct(conn: sqlite3.Connection, game_mode: str) -> list[ShootingRow]:
-    return _rows(sql.shooting_pct, ShootingRow, conn, game_mode=game_mode)
+def stats(slug: str, conn: sqlite3.Connection, game_mode: str) -> list[Any]:
+    """Rows of the passthrough stat read registered under ``slug`` in STAT_READS."""
+    query, row_type = STAT_READS[slug]
+    return _rows(query, row_type, conn, game_mode=game_mode)
 
 
-def player_stats(conn: sqlite3.Connection, game_mode: str) -> list[PlayerStatsRow]:
-    return _rows(sql.player_stats, PlayerStatsRow, conn, game_mode=game_mode)
-
-
-def n_by_n_stats(conn: sqlite3.Connection, game_mode: str) -> list[NByNRow]:
-    return _rows(sql.n_by_n_stats, NByNRow, conn, game_mode=game_mode)
-
-
-def mvp_wins(conn: sqlite3.Connection, game_mode: str) -> list[MvpWinsRow]:
-    return _rows(sql.mvp_wins, MvpWinsRow, conn, game_mode=game_mode)
-
-
-def mvp_losses(conn: sqlite3.Connection, game_mode: str) -> list[MvpLossesRow]:
-    return _rows(sql.mvp_losses, MvpLossesRow, conn, game_mode=game_mode)
-
-
-def weekday(conn: sqlite3.Connection, game_mode: str) -> list[WeekdayRow]:
-    return _rows(sql.weekday, WeekdayRow, conn, game_mode=game_mode)
-
-
-def avg_score(conn: sqlite3.Connection, game_mode: str) -> list[AvgScoreRow]:
-    return _rows(sql.avg_score, AvgScoreRow, conn, game_mode=game_mode)
-
-
-def score_differential(
-    conn: sqlite3.Connection, game_mode: str
-) -> list[ScoreDifferentialRow]:
-    return _rows(
-        sql.score_differential, ScoreDifferentialRow, conn, game_mode=game_mode
-    )
-
-
-def avg_goal_contribution(
-    conn: sqlite3.Connection, game_mode: str
-) -> list[GoalContributionRow]:
-    return _rows(
-        sql.avg_goal_contribution, GoalContributionRow, conn, game_mode=game_mode
-    )
-
-
-def score_range(conn: sqlite3.Connection, game_mode: str) -> list[ScoreRangeRow]:
-    return _rows(sql.score_range, ScoreRangeRow, conn, game_mode=game_mode)
-
-
-def offensive_pairings(
-    conn: sqlite3.Connection, game_mode: str
-) -> list[OffensivePairingsRow]:
-    return _rows(
-        sql.offensive_pairings, OffensivePairingsRow, conn, game_mode=game_mode
-    )
-
-
-# -- Reads that reshape (were inline in server route closures) --
+# -- Reads that reshape --
 
 
 def timeline(conn: sqlite3.Connection, game_mode: str) -> list[TimelineRow]:
@@ -499,21 +463,10 @@ def player_time_series(
 
 # -- Drift guard registry --
 
-# Each aiosql read query mapped to the row type its results are cast to.
-# tests/test_stats_registry.py runs every query against a migrated empty DB
-# and asserts cursor.description matches the row type's keys.
-READ_ROW_TYPES: dict[Any, Any] = {
-    sql.shooting_pct: ShootingRow,
-    sql.player_stats: PlayerStatsRow,
-    sql.n_by_n_stats: NByNRow,
-    sql.mvp_wins: MvpWinsRow,
-    sql.mvp_losses: MvpLossesRow,
-    sql.weekday: WeekdayRow,
-    sql.avg_score: AvgScoreRow,
-    sql.score_differential: ScoreDifferentialRow,
-    sql.avg_goal_contribution: GoalContributionRow,
-    sql.score_range: ScoreRangeRow,
-    sql.offensive_pairings: OffensivePairingsRow,
+# Every aiosql read query -> the row type its rows are cast to, feeding the
+# test_stats_registry.py drift guard. Stat-read pairs come from STAT_READS; the
+# reshaping and composite reads above are listed here explicitly.
+_NON_STAT_READ_ROW_TYPES: dict[Any, Any] = {
     sql.win_loss_daily: TimelineRow,
     sql.win_loss_daily_pairings: TimelineRow,
     sql.streaks: _StreaksRow,
@@ -526,3 +479,5 @@ READ_ROW_TYPES: dict[Any, Any] = {
     sql.player_career_stats: PlayerCareerRow,
     sql.player_time_series: PlayerTimeSeriesRow,
 }
+
+READ_ROW_TYPES: dict[Any, Any] = dict(STAT_READS.values()) | _NON_STAT_READ_ROW_TYPES

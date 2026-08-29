@@ -51,11 +51,11 @@ def test_row_type_matches_table_columns(
     ids=[q.__name__ for q in READ_ROW_TYPES],
 )
 def test_read_row_type_matches_query_columns(query: Any, row_type: Any):
-    """Read-side analogue: each row type's keys must match the columns its
-    query actually projects. Runs the query against a migrated empty DB and
-    compares cursor.description to the TypedDict's keys. Required keys must all
-    appear; every projected column must be a known (required or NotRequired)
-    key."""
+    """Read-side analogue of test_row_type_matches_table_columns: each row
+    type's keys must match the columns its query projects. Runs the query
+    against a migrated empty DB and compares cursor.description to the
+    TypedDict's keys. Required keys must all appear; every projected column
+    must be a known (required or NotRequired) key."""
     conn = in_memory_db()
     projected = {d[0] for d in conn.execute(query.sql, _GUARD_PARAMS).description}
     # Every TypedDict exposes both frozensets regardless of total=/NotRequired.
@@ -70,9 +70,13 @@ def test_read_row_type_matches_query_columns(query: Any, row_type: Any):
 
 
 def test_read_row_types_registry_is_complete():
-    """Every row TypedDict defined in queries.py must be a value in
-    READ_ROW_TYPES, and every aiosql read query a key — so a query or row type
-    added later can't slip past test_read_row_type_matches_query_columns."""
+    """Every row TypedDict in queries.py must be a value in READ_ROW_TYPES, and
+    every aiosql read query a key — so a query or row type added later can't
+    slip past test_read_row_type_matches_query_columns.
+
+    The stat half of READ_ROW_TYPES comes from STAT_READS; this check earns its
+    keep on _NON_STAT_READ_ROW_TYPES, the hand-listed half, where a new query
+    would otherwise reach the unchecked cast unguarded."""
     defined = {v for v in vars(queries).values() if is_typeddict(v)}
     assert defined == set(READ_ROW_TYPES.values())
 

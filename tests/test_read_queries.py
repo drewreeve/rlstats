@@ -10,17 +10,17 @@ import queries
 from tests.fixtures import empty_row_db as _empty_db
 from tests.fixtures import row_db as _db
 
-# -- passthrough stat reads --
+# -- passthrough stat reads (via the STAT_READS registry) --
 
 
 def test_shooting_pct_rows_have_expected_keys():
-    rows = queries.shooting_pct(_db("match.json"), "3v3")
+    rows = queries.stats("shooting", _db("match.json"), "3v3")
     assert rows
     assert set(rows[0]) == {"player", "goals", "shots", "shooting_pct"}
 
 
 def test_stat_read_on_empty_db_returns_empty_list():
-    assert queries.player_stats(_empty_db(), "3v3") == []
+    assert queries.stats("players", _empty_db(), "3v3") == []
 
 
 # -- streaks reshaping --

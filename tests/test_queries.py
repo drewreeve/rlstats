@@ -16,23 +16,21 @@ from typing import Any
 import pytest
 
 from db import sql
-from tests.fixtures import cached_db, in_memory_db
+from tests.fixtures import empty_row_db, row_db
 
 
 def _all_modes_db():
-    conn = cached_db(
+    return row_db(
         "zero_score.json",
         "match.json",
         "forefeit.json",
         "team_size_2.json",
         "hoops.json",
     )
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def _mvp_losses_modes_db():
-    conn = cached_db(
+    return row_db(
         "zero_score.json",
         "match.json",
         "forefeit.json",
@@ -41,26 +39,18 @@ def _mvp_losses_modes_db():
         "loss_2v2.json",
         "loss_hoops.json",
     )
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def _3v3_db():
-    conn = cached_db("zero_score.json", "match.json", "forefeit.json")
-    conn.row_factory = sqlite3.Row
-    return conn
+    return row_db("zero_score.json", "match.json", "forefeit.json")
 
 
 def _match_db():
-    conn = cached_db("match.json")
-    conn.row_factory = sqlite3.Row
-    return conn
+    return row_db("match.json")
 
 
 def _zero_score_db():
-    conn = cached_db("zero_score.json")
-    conn.row_factory = sqlite3.Row
-    return conn
+    return row_db("zero_score.json")
 
 
 def _as_tuples(rows: Any, columns: Sequence[str]) -> list[tuple[Any, ...]]:
@@ -135,8 +125,7 @@ def test_match_players_nonexistent():
 
 
 def test_match_players_shooting_pct_null_when_no_shots():
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
+    conn = empty_row_db()
     conn.execute(
         "INSERT INTO players (platform, platform_id, name) VALUES (?,?,?)",
         ("steam", "test-player", "Tester"),
@@ -310,8 +299,7 @@ def _insert_n_by_n_matches(
 
 
 def test_n_by_n_stats_buckets_by_min_of_the_three_stats():
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
+    conn = empty_row_db()
     _insert_n_by_n_matches(
         conn,
         [
@@ -330,8 +318,7 @@ def test_n_by_n_stats_buckets_by_min_of_the_three_stats():
 
 
 def test_n_by_n_stats_filtered_by_mode():
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
+    conn = empty_row_db()
     _insert_n_by_n_matches(conn, [(1, 1, 1)], game_mode="3v3")
     _insert_n_by_n_matches(conn, [(2, 2, 2)], game_mode="2v2")
 
@@ -567,8 +554,7 @@ def test_avg_goal_contribution_no_matches_for_mode():
 def test_win_loss_daily_pairings_pairing_format(
     game_mode: str, replay_files: tuple[str, ...]
 ):
-    conn = cached_db(*replay_files)
-    conn.row_factory = sqlite3.Row
+    conn = row_db(*replay_files)
     rows = list(sql.win_loss_daily_pairings(conn, game_mode=game_mode))
 
     for row in rows:
@@ -587,8 +573,7 @@ def test_win_loss_daily_pairings_empty_for_other_mode(game_mode: str):
 
 
 def test_win_loss_daily_pairings_correct_record_2v2():
-    conn = cached_db("team_size_2.json", "loss_2v2.json")
-    conn.row_factory = sqlite3.Row
+    conn = row_db("team_size_2.json", "loss_2v2.json")
     rows = list(sql.win_loss_daily_pairings(conn, game_mode="2v2"))
 
     assert len(rows) == 1
@@ -600,8 +585,7 @@ def test_win_loss_daily_pairings_correct_record_2v2():
 
 
 def test_win_loss_daily_pairings_correct_record_hoops():
-    conn = cached_db("hoops.json", "loss_hoops.json")
-    conn.row_factory = sqlite3.Row
+    conn = row_db("hoops.json", "loss_hoops.json")
     rows = list(sql.win_loss_daily_pairings(conn, game_mode="hoops"))
 
     assert len(rows) == 1
@@ -695,8 +679,7 @@ def test_player_career_stats_wrong_mode_returns_none():
 
 def _goal_timing_db(match_specs: list[dict[str, Any]]) -> sqlite3.Connection:
     """Build an in-memory DB with specific matches and goal events."""
-    conn = in_memory_db()
-    conn.row_factory = sqlite3.Row
+    conn = empty_row_db()
     conn.execute(
         "INSERT INTO players (platform, platform_id, name) VALUES (?,?,?)",
         ("steam", "test-player", "Tester"),
