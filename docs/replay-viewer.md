@@ -5,9 +5,9 @@ page renders the arena + actors (team-coloured, name labels, motion trails),
 plays back on a real-time clock (play/pause, scrub, 0.5×–4×), hides a slot while
 its actor is between segments, flips the field so the tracked team always attacks
 the same way, has BROADCAST / TOP camera presets plus drag-orbit/zoom, and shows
-goal ticks on the scrub bar with a running scoreboard. A follow-up pass
-(2026-08-31) gave the arena its chamfered corners, rendered goals, and a
-per-half colour wash — see "Arena schematic pass" below.
+goal ticks on the scrub bar with a running scoreboard. Follow-up passes
+(2026-08-31) gave the arena its chamfered corners, rendered goals, a per-half
+colour wash, and static boost-pad markers — see "Arena schematic pass" below.
 
 **Deferred from decision 7** (not blockers, sensible follow-ups): shot / save /
 demolition markers (need the `PRI_TA:Match*` counter port from
@@ -301,8 +301,8 @@ moves meshes with sub-sample interpolation. **Headless Chromium
   in the top bar. Verified against match 1: 7 ticks at ascending positions with
   the right colours, score `0 – 0` before the first goal → `3 – 4` after the
   last (matching `_scan_goals` on `match.json` = the scoreline, in a unit test).
-- **Arena schematic pass (follow-up, 2026-08-31).** Three client-only commits,
-  no server/`.bin`/test change, from a second grilling session:
+- **Arena schematic pass (follow-up, 2026-08-31).** Client-only commits, no
+  server/`.bin`/test change, from further grilling sessions:
   1. **Chamfered footprint.** `buildArena` drew a `BoxGeometry` wireframe; the
      real soccar field cuts all four corners at 45° (`CORNER = 1152` uu on each
      axis, `|x| + |y| = 8064`). Replaced with the eight-point `ARENA_OUTLINE`
@@ -322,6 +322,19 @@ moves meshes with sub-sample interpolation. **Headless Chromium
      isometric corner view (ballchasing-style): `pos [10500, 9600, 13000]`,
      `target [0, 700, 0]`, `size 10200`. Cyan (tracked) goal reads lower-left,
      opponent's upper-right.
+  5. **Boost pads.** `buildBoostPads` — the 34 standard soccar pads (`BOOST_PADS_BIG`
+     / `BOOST_PADS_SMALL`, coords from wiki.rlbot.org, the 6 big ones matching
+     `frame_analysis.BIG_PAD_POSITIONS["standard"]`) drawn as flat
+     `CircleGeometry` discs in a dim grey-gold (`BOOST_PAD_COLOR`, `0.5` opacity,
+     `depthWrite: false`), big pads at `100` uu radius vs `50` for small. Sit at
+     `z = 0.6` — above the floor grid (`0.5`), below the half tint (`1`).
+     Static furniture only: no collect/respawn state (that stays the deferred
+     "boost amounts + pad respawn timers" item). Parented to `field` like the
+     rest of the arena geometry — a visual no-op (the layout is symmetric under
+     the 180° flip) but consistent with wrinkle 7. No camera retune (the pads
+     sit on the floor inside the octagon). Standard soccar layout only, so the
+     JS constant is a flat list, not the `{"standard", "hoops"}` shape the
+     Python side carries — hoops never reaches the viewer (decision 11).
   `teamTint(team, trackedTeam)` is the shared colour rule (`carColor` now
   delegates to it). Verified in both presets against match 17 (`tracked_team =
   0`) and match 38 (`tracked_team = 1`): our team is always on the near/cyan

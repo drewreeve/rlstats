@@ -47,6 +47,29 @@ const GOAL_H = 643;
 const GOAL_DEPTH = 880;
 const GOAL_LINE = 0xaab8d8; // brighter than the arena edges so the frame reads
 
+// Standard soccar boost pads: 6 big (full boost) + 28 small, positions in the
+// RL XY plane (unreal units) from wiki.rlbot.org — the same source as
+// frame_analysis.BIG_PAD_POSITIONS, whose 6 big coords these match. Drawn as
+// flat discs just above the floor: static field furniture, no pickup/respawn
+// state (that stays the deferred "pad respawn timers" item).
+const BOOST_PADS_BIG = [
+  [-3584, 0], [3584, 0],
+  [-3072, -4096], [3072, -4096],
+  [-3072, 4096], [3072, 4096],
+];
+const BOOST_PADS_SMALL = [
+  [0, -4240], [-1792, -4184], [1792, -4184], [-940, -3308], [940, -3308],
+  [0, -2816], [-3584, -2484], [3584, -2484], [-1788, -2300], [1788, -2300],
+  [-2048, -1036], [0, -1024], [2048, -1036], [-1024, 0], [1024, 0],
+  [-2048, 1036], [0, 1024], [2048, 1036], [-1788, 2300], [1788, 2300],
+  [-3584, 2484], [3584, 2484], [0, 2816], [-940, 3308], [940, 3308],
+  [-1792, 4184], [1792, 4184], [0, 4240],
+];
+const BOOST_PAD_BIG_R = 100; // big pads read at ~2x the small ones
+const BOOST_PAD_SMALL_R = 50;
+const BOOST_PAD_COLOR = 0x8f8062; // dim grey-gold, deliberately not boost-yellow
+const BOOST_PAD_Z = 0.6; // above the floor grid (0.5), below the half tint (1)
+
 const TEAM_OURS = 0x00e5ff;
 const TEAM_THEIRS = 0xff5a5a;
 const TEAM_UNKNOWN = 0x8585a0;
@@ -390,6 +413,32 @@ function buildHalfTint(parent, trackedTeam) {
   }
 }
 
+// Static boost-pad markers: one flat disc per pad, big pads at twice the
+// radius, lying just above the floor grid. Furniture only — no collect /
+// respawn animation. Parented to `field` so it rides the orientation flip
+// with the rest of the arena geometry (a visual no-op: the layout is
+// symmetric under the 180° spin, but consistent — wrinkle 7).
+function buildBoostPads(parent) {
+  const mat = new THREE.MeshBasicMaterial({
+    color: BOOST_PAD_COLOR,
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  for (const [pads, r] of [
+    [BOOST_PADS_BIG, BOOST_PAD_BIG_R],
+    [BOOST_PADS_SMALL, BOOST_PAD_SMALL_R],
+  ]) {
+    const geo = new THREE.CircleGeometry(r, 24); // in the x–y plane, faces +z
+    for (const [x, y] of pads) {
+      const disc = new THREE.Mesh(geo, mat);
+      disc.position.set(x, y, BOOST_PAD_Z);
+      parent.add(disc);
+    }
+  }
+}
+
 function createActorMeshes(field, meta) {
   return meta.slots.map((slot) => {
     const isBall = slot.kind === "ball";
@@ -638,6 +687,7 @@ function buildScene(meta, positions) {
 
   buildArena(field);
   buildHalfTint(field, meta.tracked_team);
+  buildBoostPads(field);
   buildGoals(field, meta.tracked_team);
   const meshes = createActorMeshes(field, meta);
 
