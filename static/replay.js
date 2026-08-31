@@ -340,6 +340,54 @@ function buildGoals(parent, trackedTeam) {
   }
 }
 
+// A faint colour wash over each half of the pitch, in the defending team's
+// colour, so the two ends read at a glance (and from straight overhead, where
+// the vertical goal fills are edge-on). Same chamfered footprint as the arena,
+// split at y = 0.
+function buildHalfTint(parent, trackedTeam) {
+  const halves = [
+    {
+      team: 1,
+      ring: [
+        [HX, 0],
+        [HX, HY - CORNER],
+        [HX - CORNER, HY],
+        [-(HX - CORNER), HY],
+        [-HX, HY - CORNER],
+        [-HX, 0],
+      ],
+    },
+    {
+      team: 0,
+      ring: [
+        [-HX, 0],
+        [-HX, -(HY - CORNER)],
+        [-(HX - CORNER), -HY],
+        [HX - CORNER, -HY],
+        [HX, -(HY - CORNER)],
+        [HX, 0],
+      ],
+    },
+  ];
+  for (const { team, ring } of halves) {
+    const shape = new THREE.Shape(
+      ring.map(([x, y]) => new THREE.Vector2(x, y)),
+    );
+    const mesh = new THREE.Mesh(
+      new THREE.ShapeGeometry(shape),
+      new THREE.MeshBasicMaterial({
+        color: teamTint(team, trackedTeam),
+        transparent: true,
+        opacity: 0.1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    mesh.position.z = 1; // above the floor grid (0.5), below the centre line (2)
+    parent.add(mesh);
+  }
+}
+
 function createActorMeshes(field, meta) {
   return meta.slots.map((slot) => {
     const isBall = slot.kind === "ball";
@@ -587,6 +635,7 @@ function buildScene(meta, positions) {
   world.add(field);
 
   buildArena(field);
+  buildHalfTint(field, meta.tracked_team);
   buildGoals(field, meta.tracked_team);
   const meshes = createActorMeshes(field, meta);
 
