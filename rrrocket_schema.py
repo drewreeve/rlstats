@@ -54,9 +54,16 @@ class ReplayProperties(TypedDict, total=False):
     MapName: str
 
 
+class InitialTrajectory(TypedDict, total=False):
+    location: dict[str, float]
+    rotation: dict[str, float] | None
+
+
 class NewActor(TypedDict):
     actor_id: int
     object_id: NotRequired[int]
+    name_id: NotRequired[int]
+    initial_trajectory: NotRequired[InitialTrajectory]
 
 
 class UpdatedActor(TypedDict):
