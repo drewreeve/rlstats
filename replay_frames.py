@@ -1,6 +1,6 @@
 """Replay Frames — reshape rrrocket network data into a playback buffer.
 
-Feeds the browser replay viewer (see ``docs/replay-viewer.md``). Where
+Feeds the browser replay viewer (see ``docs/adr/0004-browser-replay-viewer-design.md``). Where
 ``frame_analysis.py`` walks the same frames to compute aggregate match stats and
 throws the poses away, this module keeps them: a dense ``Float32`` position
 buffer plus the metadata needed to play it back in the browser.

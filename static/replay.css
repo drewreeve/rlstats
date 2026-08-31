@@ -1,4 +1,4 @@
-/* Browser replay viewer — see docs/replay-viewer.md */
+/* Browser replay viewer — see docs/adr/0004-browser-replay-viewer-design.md */
 
 /* Our .replay-* rules set `display`, which ties `[hidden]` on specificity and
    would otherwise defeat it (the overlay panels use the hidden attribute). */

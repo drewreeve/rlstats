@@ -2,7 +2,7 @@
 
 Resolves a match to its stored ``.replay`` file and turns that file into a
 ``ReplayFrames`` — without the deleting ingest path (:func:`process.parse_replay`)
-and without re-running ``analyze_frames``. See ``docs/replay-viewer.md``.
+and without re-running ``analyze_frames``. See ``docs/adr/0004-browser-replay-viewer-design.md``.
 """
 
 import logging

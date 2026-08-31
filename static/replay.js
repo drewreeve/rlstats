@@ -1,4 +1,4 @@
-// Browser replay viewer — see docs/replay-viewer.md
+// Browser replay viewer — see docs/adr/0004-browser-replay-viewer-design.md
 //
 // Steps 3–9: load a match's metadata + packed position buffer, build a Three.js
 // scene (wireframe soccar arena + box cars + sphere ball + name labels + motion
