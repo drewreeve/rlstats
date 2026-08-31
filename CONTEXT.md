@@ -43,7 +43,15 @@ Zone time is tracked both for the ball (on `matches`) and per-player (on `match_
 
 ## Match Perspective
 
-A **match perspective** is the tracked-team-relative view of a match outcome: which side the tracked players were on (`team`), their score (`team_score`) vs. the opponent's (`opponent_score`), the win/loss `result`, and the tracked-side `mvp_identity` (the tracked player with the highest score). It is computed once per replay by `resolve_perspective()` in `ingest.py` and carried on `ReplayAnalysis.perspective`. All four pieces of match-outcome knowledge — team assignment, score reorientation, result derivation, and MVP selection — are quarantined inside that function; callers receive a fully typed `MatchPerspective` dataclass and do not need to know how any of them are computed.
+A **match perspective** is the tracked-team-relative view of a match outcome: which side the tracked players were on (`team`), their score (`team_score`) vs. the opponent's (`opponent_score`), the win/loss `result`, and the tracked-side `mvp_identity` (the tracked player with the highest score). It is computed once per replay by `resolve_perspective()` in `ingest.py`, wrapped in the **Replay Context** (below), and carried on `ReplayAnalysis.context.perspective`. All four pieces of match-outcome knowledge — team assignment, score reorientation, result derivation, and MVP selection — are quarantined inside that function; callers receive a fully typed `MatchPerspective` dataclass and do not need to know how any of them are computed.
+
+## Replay Context
+
+A **replay context** is the tracked-team-relative view of a *parsed replay*, assembled once before frame analysis — the Match Perspective plus everything else a frame consumer needs up front. A `ReplayContext` (frozen, in `ingest.py`) carries five fields: the bot-filtered, identity-keyed `player_stats` blob; the `perspective` (a `MatchPerspective`); the detected `game_mode`; a `player_names` map from every player identity to its preferred display name — the configured `players.toml` name, else the in-game `Name`, else `"Unknown"`; and `tracked_identities`, the frozenset of tracked players **present in this match** (not the whole config).
+
+It is built by `build_replay_context(replay, tracked_players)` — the single owner of that preamble, previously hand-rebuilt in `analyze_replay`, `replay_view.build_replay_frames`, and the `test_replay_frames` integration helper (with the name rule alone existing in three forms). `resolve_perspective()` stays dict-pure; the context wrapper does the `props.get("Team0Score", …)` extraction. `ReplayAnalysis` carries the whole `ReplayContext` as `.context`; `_write_match` and `_upsert_players` read match outcome, player names, and tracked status through it.
+
+The pure frame reshapers — `analyze_frames()` and `extract_replay_frames()` — take the context's fields **unpacked** (`tracked_team`, `tracked_identities`, `player_names`, `game_mode`), never the `ReplayContext` object itself: they live in `frame_analysis.py` / `replay_frames.py`, which `ingest` imports, so depending on `ReplayContext` would be circular.
 
 ## Offensive Pairing
 

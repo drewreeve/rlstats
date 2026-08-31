@@ -20,6 +20,7 @@ Per-frame processing order enforced by analyze_frames:
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from itertools import pairwise
 
@@ -94,7 +95,7 @@ class IdentityResolver:
             return None
         return self.resolve_car(car_id)
 
-    def find_pri_ids_for(self, identities: set[tuple[str, str]]) -> list[int]:
+    def find_pri_ids_for(self, identities: AbstractSet[tuple[str, str]]) -> list[int]:
         return [aid for aid, ident in self._pri_identity.items() if ident in identities]
 
 
@@ -816,7 +817,7 @@ class MatchEventsHandler(FrameHandler):
         cls,
         obj_ids: dict[str, int | None],
         tracked_team: int | None,
-        tracked_identities: set[tuple[str, str]],
+        tracked_identities: AbstractSet[tuple[str, str]],
     ) -> "MatchEventsHandler | None":
         if tracked_team is None:
             return None
@@ -841,7 +842,7 @@ class MatchEventsHandler(FrameHandler):
         team_obj_id: int,
         counter_obj_ids: dict[int, str],
         tracked_team: int,
-        tracked_identities: set[tuple[str, str]],
+        tracked_identities: AbstractSet[tuple[str, str]],
     ) -> None:
         self.update_obj_ids = frozenset(
             {sr_obj_id, team_obj_id} | set(counter_obj_ids.keys())
@@ -1049,7 +1050,7 @@ def _process_frame(
 def analyze_frames(
     replay: ParsedReplay,
     tracked_team: int | None,
-    tracked_identities: set[tuple[str, str]],
+    tracked_identities: AbstractSet[tuple[str, str]],
     duration: int | None,
     game_mode: str | None,
 ) -> FrameAnalysis:

@@ -15,7 +15,7 @@ from typing import cast
 
 import pytest
 
-from ingest import build_player_stats, detect_game_mode, resolve_perspective
+from ingest import build_replay_context
 from replay_frames import (
     ReplayFrames,
     _scan_goals,  # type: ignore[reportPrivateUsage]
@@ -269,25 +269,13 @@ def test_scan_goals_on_a_real_replay_matches_the_scoreline() -> None:
 
 def _real() -> ReplayFrames:
     replay = parse_replay(load_replay("team_size_2.json"))
-    props = replay.properties
-    player_stats = build_player_stats(props)
-    perspective = resolve_perspective(
-        player_stats,
-        TRACKED_PLAYERS,
-        props.get("Team0Score", 0),
-        props.get("Team1Score", 0),
-        props.get("WinningTeam"),
-    )
-    player_names = {
-        identity: TRACKED_PLAYERS.get(identity) or entry.get("Name", "Unknown")
-        for identity, entry in player_stats.items()
-    }
+    context = build_replay_context(replay, TRACKED_PLAYERS)
     return extract_replay_frames(
         replay,
-        tracked_team=perspective.team,
-        tracked_identities=set(TRACKED_PLAYERS.keys()),
-        player_names=player_names,
-        game_mode=detect_game_mode(props.get("TeamSize"), props.get("MapName")),
+        tracked_team=context.perspective.team,
+        tracked_identities=context.tracked_identities,
+        player_names=context.player_names,
+        game_mode=context.game_mode,
     )
 
 

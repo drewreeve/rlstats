@@ -27,6 +27,27 @@ class MatchPerspective:
 
 
 @dataclass(frozen=True)
+class ReplayContext:
+    """The tracked-team-relative view of a parsed replay, assembled once before
+    frame analysis. See CONTEXT.md: "Replay Context".
+
+    Wraps ``MatchPerspective`` with everything else a frame consumer needs up
+    front: the bot-filtered ``player_stats`` blob, the detected ``game_mode``,
+    the identity -> preferred-display-name ``player_names`` map, and the
+    ``tracked_identities`` present in this match. Built by
+    :func:`build_replay_context`; the pure frame reshapers (``analyze_frames``,
+    ``extract_replay_frames``) take these fields unpacked, never the context
+    object itself.
+    """
+
+    player_stats: dict[PlayerIdentity, PlayerStatEntry]
+    perspective: MatchPerspective
+    game_mode: str | None
+    player_names: dict[PlayerIdentity, str]
+    tracked_identities: frozenset[PlayerIdentity]
+
+
+@dataclass(frozen=True)
 class ReplayAnalysis:
     replay_hash: str
     played_at_sql: str
@@ -34,11 +55,8 @@ class ReplayAnalysis:
     forfeit: int
     team_size: int | None
     map_name: str | None
-    game_mode: str | None
     frame_analysis: FrameAnalysis
-    player_stats: dict[PlayerIdentity, PlayerStatEntry]
-    tracked_names: dict[PlayerIdentity, str]
-    perspective: MatchPerspective
+    context: ReplayContext
     replay_filename: str | None = None
 
 
@@ -335,18 +353,14 @@ def _upsert_match(
 
 def _upsert_players(
     conn: sqlite3.Connection,
-    player_stats: dict[PlayerIdentity, PlayerStatEntry],
-    tracked_names: dict[PlayerIdentity, str],
+    player_names: dict[PlayerIdentity, str],
+    tracked_identities: frozenset[PlayerIdentity],
 ) -> dict[PlayerIdentity, int]:
     player_id_map: dict[PlayerIdentity, int] = {}
-    for identity, player in player_stats.items():
+    for identity, name in player_names.items():
         platform, platform_id = identity
-        name = player.get("Name", "Unknown")
-        display_name = tracked_names.get(identity)
-        if display_name:
-            name = display_name
         player_id_map[identity] = get_or_create_player(
-            conn, platform, platform_id, name, display_name is not None
+            conn, platform, platform_id, name, identity in tracked_identities
         )
     return player_id_map
 
@@ -376,6 +390,42 @@ def build_player_stats(
         for p in props.get("PlayerStats", [])
         if not p.get("bBot") and (identity := from_player_stats(p))
     }
+
+
+def build_replay_context(
+    replay: ParsedReplay, tracked_players: dict[PlayerIdentity, str]
+) -> ReplayContext:
+    """Assemble the tracked-team-relative view of a parsed replay.
+
+    The single owner of the preamble every frame consumer shares: bot-filtered
+    player stats, match perspective, game-mode detection, and the identity ->
+    preferred-display-name rule (configured display name, else the in-game
+    ``Name``, else ``"Unknown"``). ``ingest`` and ``replay_view`` both call this;
+    the pure reshapers receive its fields unpacked.
+    """
+    props = replay.properties
+    player_stats = build_player_stats(props)
+    perspective = resolve_perspective(
+        player_stats,
+        tracked_players,
+        props.get("Team0Score", 0),
+        props.get("Team1Score", 0),
+        props.get("WinningTeam"),
+    )
+    player_names = {
+        identity: tracked_players.get(identity) or entry.get("Name") or "Unknown"
+        for identity, entry in player_stats.items()
+    }
+    tracked_identities = frozenset(
+        identity for identity in player_stats if identity in tracked_players
+    )
+    return ReplayContext(
+        player_stats=player_stats,
+        perspective=perspective,
+        game_mode=detect_game_mode(props.get("TeamSize"), props.get("MapName")),
+        player_names=player_names,
+        tracked_identities=tracked_identities,
+    )
 
 
 def validate_replay(
@@ -416,24 +466,16 @@ def analyze_replay(
     forfeit = 1 if props.get("bForfeit") else 0
     team_size = props.get("TeamSize")
     map_name = props.get("MapName")
-    game_mode = detect_game_mode(team_size, map_name)
 
-    player_stats = build_player_stats(props)
-    perspective = resolve_perspective(
-        player_stats,
-        tracked_players,
-        props.get("Team0Score", 0),
-        props.get("Team1Score", 0),
-        props.get("WinningTeam"),
-    )
+    context = build_replay_context(replay, tracked_players)
 
     fa = analyze_frames(
-        replay, perspective.team, set(tracked_players.keys()), duration, game_mode
+        replay,
+        context.perspective.team,
+        context.tracked_identities,
+        duration,
+        context.game_mode,
     )
-
-    tracked_names = {
-        k: tracked_players[k] for k in player_stats if k in tracked_players
-    }
 
     return Analyzed(
         ReplayAnalysis(
@@ -443,11 +485,8 @@ def analyze_replay(
             forfeit=forfeit,
             team_size=team_size,
             map_name=map_name,
-            game_mode=game_mode,
             frame_analysis=fa,
-            player_stats=player_stats,
-            tracked_names=tracked_names,
-            perspective=perspective,
+            context=context,
             replay_filename=source_filename,
         )
     )
@@ -474,8 +513,11 @@ def write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
 
 
 def _write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
-    player_id_map = _upsert_players(conn, analysis.player_stats, analysis.tracked_names)
-    perspective = analysis.perspective
+    context = analysis.context
+    player_id_map = _upsert_players(
+        conn, context.player_names, context.tracked_identities
+    )
+    perspective = context.perspective
     mvp_player_id = (
         player_id_map.get(perspective.mvp_identity)
         if perspective.mvp_identity
@@ -496,14 +538,14 @@ def _write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
         result=perspective.result,
         mvp_player_id=mvp_player_id,
         map_name=analysis.map_name,
-        game_mode=analysis.game_mode,
+        game_mode=context.game_mode,
         frame_analysis=analysis.frame_analysis,
     )
 
     _insert_match_players(
         conn,
         match_id,
-        analysis.player_stats,
+        context.player_stats,
         player_id_map,
         analysis.frame_analysis.per_player(),
     )
@@ -518,7 +560,7 @@ def _write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
             (match_id, e.event_type, e.game_seconds, player_id, e.team),
         )
 
-    tracked_identities = set(analysis.tracked_names.keys())
+    tracked_identities = context.tracked_identities
     pairings = [
         p
         for p in correlate_pairings(analysis.frame_analysis.match_events)

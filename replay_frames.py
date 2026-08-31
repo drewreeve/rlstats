@@ -19,6 +19,7 @@ Divergences from the ``frame_analysis`` handlers, both deliberate:
 """
 
 from array import array
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 
 from frame_analysis import IdentityResolver
@@ -279,7 +280,7 @@ def _walk(
 
 def _build_slots(
     segments: list[_Segment],
-    tracked_identities: set[PlayerIdentity],
+    tracked_identities: AbstractSet[PlayerIdentity],
     player_names: dict[PlayerIdentity, str],
 ) -> list[ActorSlot]:
     """Group segments into playback lanes and assign each segment its slot index."""
@@ -383,7 +384,7 @@ def extract_replay_frames(
     replay: ParsedReplay,
     *,
     tracked_team: int | None,
-    tracked_identities: set[PlayerIdentity],
+    tracked_identities: AbstractSet[PlayerIdentity],
     player_names: dict[PlayerIdentity, str],
     game_mode: str | None,
 ) -> ReplayFrames:

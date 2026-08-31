@@ -132,9 +132,10 @@ isn't. The route glue lives in **`replay_view.py`** (`replay_path_for`,
 - The route layer uses **`process.run_rrrocket()`** — a non-deleting sibling of
   `parse_replay()` extracted in step 2 (`parse_replay` now calls it and unlinks
   on failure itself). `replay_view.build_replay_frames` builds the
-  `extract_replay_frames` inputs from `replay.properties` via the cheap helpers
-  `resolve_perspective`, `build_player_stats`, `detect_game_mode` (un-privatised
-  in step 1.5), **without** running `analyze_frames`.
+  `extract_replay_frames` inputs via `ingest.build_replay_context()` — the
+  shared owner of the pre-frame preamble (perspective, game mode, name map;
+  see CONTEXT.md "Replay Context") — and unpacks its fields, still **without**
+  running `analyze_frames`.
 
 - **Match id → `.replay` path** (corrected in step 1.5). Replay files are named
   by the uploader (`secure_filename(file.filename)`), *not* by `MatchGUID`, and
