@@ -1,6 +1,10 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31)
+Status: **in progress** (build sequence started 2026-08-31). Step 1 done:
+`replay_frames.py`. Measured on `tests/data/team_size_2.json` (a ~5-minute 2v2,
+9113 frames): `extract_replay_frames` runs in ~40 ms and yields a ~1.2 MiB raw
+position buffer (5 lanes). rrrocket + JSON parse on top of that is still well
+under a second, so decision 10 (no cache) holds.
 
 A ballchasing-style tactical replay viewer at `/match/{id}/replay`: a whole-field
 angled/orthographic 3D view of car and ball movement, built from the per-frame
@@ -112,9 +116,9 @@ GET /api/matches/{id}/replay-frames.bin -> gzipped Float32 position buffer
 ```python
 @dataclass(frozen=True)
 class ActorSlot:
-    identity: tuple[str, str] | None   # None for unresolved cars (bots, odd platforms)
+    identity: PlayerIdentity | None    # None for unresolved cars (bots, odd platforms)
     name: str                          # display name > in-game name > "Player N"
-    team: int                          # 0 | 1  (from TeamPaint)
+    team: int | None                   # 0 | 1 for cars (from TeamPaint); None for the ball
     is_tracked: bool
     kind: str                          # "car" | "ball"
     segments: list[tuple[int, int]]    # (start_frame, end_frame) inclusive, frame-index space
@@ -122,8 +126,8 @@ class ActorSlot:
 @dataclass(frozen=True)
 class ReplayFrames:
     frame_times: list[float]           # length F, wall-clock seconds, non-uniform
-    slots: list[ActorSlot]             # ball slot(s) + one car slot per player
-    positions: bytes                   # F * N * 7 float32, row-major [frame][slot][x,y,z, qx,qy,qz,qw]
+    slots: list[ActorSlot]             # ball lane + one car lane per player
+    positions: bytes                   # F * N * 7 little-endian float32, row-major [frame][slot][x,y,z, qx,qy,qz,qw]
     tracked_team: int | None
     game_mode: str | None
 ```
@@ -139,25 +143,36 @@ endpoint returns `positions`.
 - **Every frame is recorded.** Unlike every existing handler, the walk does
   **not** gate on `ctx.is_playing` — decision 7 shows the full stream (warmup,
   countdowns, celebrations); the user scrubs past dead time.
-- **Slots keyed by identity.** Cars get a fresh actor id each life; all car
-  actor ids that resolve to the same `(platform, id)` feed one slot's
-  `segments`. A car whose PRI never resolves gets its **own anonymous slot**
-  (`identity=None`, `name="Player N"`, team from `TeamPaint`) — it is never
-  dropped. A resolved identity with no entry in `player_names` (a leaver missing
-  from the `PlayerStats` blob) falls back to a placeholder name rather than
-  raising.
-- **The ball is not special-cased as always-present.** The ball actor is
-  deleted and recreated around goals in many replays; it uses the same
-  slot/segment model.
+- **Actor lifecycle — what the frames actually look like** (established while
+  building step 1, correcting an earlier guess). A car keeps *one* network actor
+  id for the whole match. At every kickoff the replay **re-announces** that live
+  actor in `new_actors` with a fresh `initial_trajectory` and *no* preceding
+  `deleted_actors` entry — this is a position reset, not a new life. Genuine
+  despawns (demolitions) are rare and *do* come through `deleted_actors`. In the
+  fixture: 133 car `new_actors` across ~9 distinct ids, but only 5 deletes that
+  hit a live car. The ball behaves the same way (re-announced each kickoff).
+- **Segments.** A lane opens a segment when an id first appears and closes it on
+  a real `deleted_actors` entry (or at the last frame). A re-announcement of an
+  already-open id does **not** open a new segment — it just appends a positional
+  sample at the kickoff spawn point. So a clean match is one segment per lane;
+  each demolition splits a lane into two segments with a gap the client hides the
+  mesh across. New lives from a true delete + later recreate of the same id also
+  start a fresh segment.
+- **Slots keyed by identity.** All segments whose closing `resolve_car` gives the
+  same `(platform, id)` merge into one car lane. A car whose PRI never resolves
+  (bots, odd platforms) gets its **own anonymous lane**, one per segment —
+  without an identity its segments cannot be merged. A resolved identity with no
+  entry in `player_names` (a leaver missing from the `PlayerStats` blob) falls
+  back to `"Player N"` rather than raising.
 - **Carry-forward.** `positions` is dense: each frame holds a full pose for every
-  slot. Per slot, maintain the last-known `(x,y,z,qx,qy,qz,qw)` and re-emit it on
-  frames where the actor did not update. Seed it from the `new_actor`'s
-  `initial_trajectory.location`; `initial_trajectory.rotation` may be `null`, and
-  a `RigidBody` update may omit `rotation` / velocities — carry forward the
-  previous value, or the identity quaternion if none has been seen yet.
-- **Segment bounds.** A slot's segment starts at the frame index of its
-  `new_actor` and ends at the frame index of its `deleted_actor` (or the last
-  frame). The client hides a slot's mesh outside its segments.
+  lane. Per lane, maintain the last-known `(x,y,z,qx,qy,qz,qw)` and re-emit it on
+  frames where the actor did not update, within each of its segments; frames
+  outside every segment stay zero (the client hides the lane there). Seed a
+  segment from its `initial_trajectory.location` (note: `initial_trajectory`
+  carries Euler `yaw/pitch/roll`, often with `null` components — unusable as a
+  quaternion, so rotation is seeded to identity). A `RigidBody` update may omit
+  `rotation` / velocities — carry the previous quaternion forward, or identity if
+  none seen yet.
 
 ### Client (`static/replay.js`, module script)
 
@@ -210,7 +225,7 @@ Incremental commits, tests alongside each step.
 
 | Step | Deliverable | Metadata fields that land here |
 |------|-------------|-------------------------------|
-| 1 | `replay_frames.py` — `extract_replay_frames` + `ReplayFrames`; unit tests against `tests/data/team_size_2.json` | `frame_times`, `slots` (identity/name/team/tracked/kind/segments), `positions`, `tracked_team`, `game_mode` |
+| 1 ✅ | `replay_frames.py` — `extract_replay_frames` + `ReplayFrames`; unit tests against `tests/data/team_size_2.json` | `frame_times`, `slots` (identity/name/team/tracked/kind/segments), `positions`, `tracked_team`, `game_mode` |
 | 2 | Non-deleting rrrocket wrapper; the three routes; `replay_hash` read; link gating; tests for 404 / missing-file / failure | — |
 | 3 | Static page skeleton + importmap (+ CSP fix) + arena + static frame-0 pose, no playback | — |
 | 4 | Playback clock + lerp/slerp interpolation + scrub + speed | — |
