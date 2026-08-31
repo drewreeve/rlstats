@@ -40,6 +40,13 @@ const CAR_SIZE = [118, 84, 36]; // Octane hitbox, RL local axes (X fwd, Y left, 
 const BALL_RADIUS = 91.25;
 const FLOATS_PER_POSE = 7; // x, y, z, qx, qy, qz, qw
 
+// Soccar goal: 1786 uu mouth width, 643 uu tall, 880 uu deep behind the back
+// wall. Team 0 defends the −y goal, team 1 the +y goal (before the field flip).
+const GOAL_HW = 893;
+const GOAL_H = 643;
+const GOAL_DEPTH = 880;
+const GOAL_LINE = 0xaab8d8; // brighter than the arena edges so the frame reads
+
 const TEAM_OURS = 0x00e5ff;
 const TEAM_THEIRS = 0xff5a5a;
 const TEAM_UNKNOWN = 0x8585a0;
@@ -60,7 +67,7 @@ const CAM_PRESETS = {
     pos: [0, 20000, 0],
     target: [0, 0, 0],
     up: [0, 0, -1], // screen-up = far goal
-    size: 11500,
+    size: 12800, // field + both goals (y spans ±6000)
   },
 };
 
@@ -102,9 +109,15 @@ function poseOffset(slotCount, frame, slot) {
   return (frame * slotCount + slot) * FLOATS_PER_POSE;
 }
 
+// ours (tracked) vs theirs, keyed on RL team not screen side — the field flip
+// then puts "ours" on the same side of the screen every match.
+function teamTint(team, trackedTeam) {
+  if (team == null || trackedTeam == null) return TEAM_UNKNOWN;
+  return team === trackedTeam ? TEAM_OURS : TEAM_THEIRS;
+}
+
 function carColor(slot, trackedTeam) {
-  if (slot.team == null) return TEAM_UNKNOWN;
-  return slot.team === trackedTeam ? TEAM_OURS : TEAM_THEIRS;
+  return teamTint(slot.team, trackedTeam);
 }
 
 // Is this slot's actor live at frame index `frame`? Segments are inclusive
@@ -271,6 +284,60 @@ function buildArena(parent) {
       edgeMat,
     ),
   );
+}
+
+// An open wireframe box at each end: goal mouth on the back wall, matching
+// frame at full depth, four edges joining them. The mouth is filled with a
+// translucent plane in the defending team's colour — the clearest "which end
+// is whose" cue.
+function goalFrameSegments(gy, by, hw, ht) {
+  const P = (x, y, z) => new THREE.Vector3(x, y, z);
+  return [
+    P(-hw, gy, 0), P(hw, gy, 0), // mouth
+    P(-hw, gy, ht), P(hw, gy, ht),
+    P(-hw, gy, 0), P(-hw, gy, ht),
+    P(hw, gy, 0), P(hw, gy, ht),
+    P(-hw, by, 0), P(hw, by, 0), // back frame
+    P(-hw, by, ht), P(hw, by, ht),
+    P(-hw, by, 0), P(-hw, by, ht),
+    P(hw, by, 0), P(hw, by, ht),
+    P(-hw, gy, 0), P(-hw, by, 0), // depth edges
+    P(hw, gy, 0), P(hw, by, 0),
+    P(-hw, gy, ht), P(-hw, by, ht),
+    P(hw, gy, ht), P(hw, by, ht),
+  ];
+}
+
+function buildGoals(parent, trackedTeam) {
+  const frameMat = new THREE.LineBasicMaterial({ color: GOAL_LINE });
+  for (const sign of [-1, 1]) {
+    const team = sign < 0 ? 0 : 1; // team 0 defends −y, team 1 defends +y
+    const gy = sign * HY;
+    const by = sign * (HY + GOAL_DEPTH);
+
+    parent.add(
+      new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints(
+          goalFrameSegments(gy, by, GOAL_HW, GOAL_H),
+        ),
+        frameMat,
+      ),
+    );
+
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(2 * GOAL_HW, GOAL_H),
+      new THREE.MeshBasicMaterial({
+        color: teamTint(team, trackedTeam),
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    fill.rotation.x = Math.PI / 2; // stand it up in the x–z plane
+    fill.position.set(0, gy - sign * 2, GOAL_H / 2); // inset 2 uu off the wall
+    parent.add(fill);
+  }
 }
 
 function createActorMeshes(field, meta) {
@@ -520,6 +587,7 @@ function buildScene(meta, positions) {
   world.add(field);
 
   buildArena(field);
+  buildGoals(field, meta.tracked_team);
   const meshes = createActorMeshes(field, meta);
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
