@@ -64,6 +64,36 @@ html, body {
     height: 100%;
 }
 
+.replay-cam {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    display: flex;
+    gap: 2px;
+}
+
+.replay-cam button {
+    background: rgba(14, 14, 20, 0.7);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--font-display);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    padding: 0.3rem 0.55rem;
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.replay-cam button:hover {
+    color: var(--text-bright);
+}
+
+.replay-cam button.is-active {
+    color: var(--bg);
+    background: var(--cyan);
+    border-color: var(--cyan);
+}
+
 .replay-message {
     position: absolute;
     inset: 0;

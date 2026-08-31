@@ -1,12 +1,13 @@
 // Browser replay viewer — see docs/replay-viewer.md
 //
-// Steps 3–7: load a match's metadata + packed position buffer, build a Three.js
+// Steps 3–8: load a match's metadata + packed position buffer, build a Three.js
 // scene (wireframe soccar arena + box cars + sphere ball + name labels + motion
 // trails), and play it back on a real-time clock — play/pause, scrub, 0.5×–4×
 // speed. Poses are lerp/slerp'd between rrrocket's ~30 Hz samples using the real
 // (non-uniform) frame deltas. A slot's mesh is hidden while its actor is between
 // segments (demolitions). When the tracked team is team 1 the field is flipped
-// 180° so "our" half is always the same side of the screen.
+// 180° so "our" half is always the same side of the screen. Orthographic camera
+// with drag-orbit/zoom and BROADCAST / TOP presets.
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/+esm";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
@@ -24,10 +25,28 @@ const FLOATS_PER_POSE = 7; // x, y, z, qx, qy, qz, qw
 const TEAM_OURS = 0x00e5ff;
 const TEAM_THEIRS = 0xff5a5a;
 const TEAM_UNKNOWN = 0x8585a0;
-const VIEW_SIZE = 9800; // orthographic frustum height, uu — frames the field
 const SEEK_STEP = 5; // seconds, for arrow-key seeking
 const LABEL_HEIGHT = 150; // uu above a car's centre for its name label
 const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
+
+// Orthographic camera presets (world coords, Y-up). `size` is the frustum
+// height in uu; `resize()` derives the width from the viewport aspect.
+const CAM_PRESETS = {
+  broadcast: {
+    pos: [0, 7200, 14500],
+    target: [0, 600, 0],
+    up: [0, 1, 0],
+    size: 9800,
+  },
+  top: {
+    pos: [0, 20000, 0],
+    target: [0, 0, 0],
+    up: [0, 0, -1], // screen-up = far goal
+    size: 11500,
+  },
+};
+
+let viewSize = CAM_PRESETS.broadcast.size;
 
 const stage =
   document.querySelector('[data-role="stage"]') ||
@@ -39,6 +58,7 @@ const playBtn = document.querySelector('[data-role="playpause"]');
 const scrubEl = document.querySelector('[data-role="scrub"]');
 const clockEl = document.querySelector('[data-role="clock"]');
 const speedsEl = document.querySelector('[data-role="speeds"]');
+const camEl = document.querySelector('[data-role="cam"]');
 
 const matchId = location.pathname.split("/").filter(Boolean)[1];
 const backEl = document.querySelector('[data-role="back"]');
@@ -414,14 +434,12 @@ function buildScene(meta, positions) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200000);
-  // Elevated broadcast-ish angle behind one goal, looking down the length.
-  camera.position.set(0, 7200, 14500);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.target.set(0, 600, 0);
 
-  resize();
+  applyCamPreset("broadcast", controls);
+  wireCamera(controls);
   window.addEventListener("resize", resize);
 
   const playback = createPlayback(meta, positions, meshes);
@@ -451,7 +469,7 @@ function buildScene(meta, positions) {
   }
 
   if (location.search.includes("debug")) {
-    window.__replay = { playback, meshes, THREE };
+    window.__replay = { playback, meshes, camera, controls, THREE };
   }
 }
 
@@ -461,11 +479,38 @@ function resize() {
   const h = stage.clientHeight;
   renderer.setSize(w, h, false);
   const aspect = w / h || 1;
-  camera.left = (-VIEW_SIZE * aspect) / 2;
-  camera.right = (VIEW_SIZE * aspect) / 2;
-  camera.top = VIEW_SIZE / 2;
-  camera.bottom = -VIEW_SIZE / 2;
+  camera.left = (-viewSize * aspect) / 2;
+  camera.right = (viewSize * aspect) / 2;
+  camera.top = viewSize / 2;
+  camera.bottom = -viewSize / 2;
   camera.updateProjectionMatrix();
+}
+
+function applyCamPreset(name, controls) {
+  const p = CAM_PRESETS[name];
+  if (!p) return;
+  camera.up.set(...p.up);
+  camera.position.set(...p.pos);
+  controls.target.set(...p.target);
+  viewSize = p.size;
+  resize();
+  controls.update();
+}
+
+// Camera preset buttons, and clearing the active state once the user orbits.
+function wireCamera(controls) {
+  if (!camEl) return;
+  camEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-view]");
+    if (!btn) return;
+    applyCamPreset(btn.dataset.view, controls);
+    for (const b of camEl.querySelectorAll("button")) {
+      b.classList.toggle("is-active", b === btn);
+    }
+  });
+  controls.addEventListener("start", () => {
+    for (const b of camEl.querySelectorAll("button")) b.classList.remove("is-active");
+  });
 }
 
 async function main() {

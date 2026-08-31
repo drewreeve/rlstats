@@ -1,11 +1,11 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31). Steps 1–7 done —
+Status: **in progress** (build sequence started 2026-08-31). Steps 1–8 done —
 backend complete; the page renders the arena + actors (team-coloured, name
 labels, motion trails), plays back on a real-time clock (play/pause, scrub,
-0.5×–4×), hides a slot while its actor is between segments, and flips the field so
-the tracked team always attacks the same way. Step 8 onward: camera presets,
-event markers.
+0.5×–4×), hides a slot while its actor is between segments, flips the field so the
+tracked team always attacks the same way, and has BROADCAST / TOP camera presets
+plus drag-orbit/zoom. **Step 9 (last): scrub-bar event markers + scoreboard.**
 
 - Step 1 = `replay_frames.py`; measured on `tests/data/team_size_2.json` (a
   ~5-minute 2v2, 9113 frames), `extract_replay_frames` runs in ~40 ms and yields
@@ -269,6 +269,15 @@ moves meshes with sub-sample interpolation. **Headless Chromium
   `[2401, 6636]`) around a kickoff delete+immediate-recreate. Harmless —
   `slotLiveAt` still reads continuous — but the segment list is slightly
   redundant; worth tidying in `replay_frames` later.
+- **Camera (step 8).** One `THREE.OrthographicCamera` + `OrbitControls`
+  (drag-orbit/zoom, damping). `CAM_PRESETS` holds `broadcast` (default: elevated,
+  behind a goal, `size` 9800 uu) and `top` (straight overhead, `camera.up` set to
+  `(0, 0, -1)` so the far goal is screen-up, `size` 11500). `applyCamPreset` sets
+  position/target/up/`viewSize` and re-runs `resize()` — the frustum height is
+  now a mutable `viewSize`, not a const. Preset buttons overlay the stage
+  top-right; the active one clears on the `OrbitControls` `start` event. Verified
+  against match 1: both presets set the expected camera params and TOP renders
+  the field square-on from overhead with cars visible.
 
 ## Known wrinkles (carried into implementation)
 
@@ -312,5 +321,5 @@ Incremental commits, tests alongside each step.
 | 5 ✅ | `slotLiveAt` + `applyPoses` hides a slot between its segments; `ff` snaps to the live bracket end so no lerp toward the zero-pose | — |
 | 6 ✅ | `makeLabelSprite` canvas-texture name tags per car (team colour, `depthTest:false`), parked above the car; `field` group flipped 180° when `tracked_team === 1`; `document.fonts.ready` awaited | — |
 | 7 ✅ | `makeTrail` — one `THREE.Line` per actor, baked colour→bg fade, per-frame head = live position then walk back through the buffer (stops at demolition gaps), `setDrawRange` | — |
-| 8 | Camera presets + orbit | — |
+| 8 ✅ | `CAM_PRESETS` (broadcast / top) + `applyCamPreset` (mutable `viewSize`); overlay buttons, active state cleared on manual orbit; drag-orbit/zoom already wired | — |
 | 9 | Scrub-bar event markers + scoreboard | `events` (type + frame index), score timeline, per-frame game-clock seconds |
