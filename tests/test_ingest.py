@@ -384,6 +384,26 @@ def test_offensive_pairings_idempotent():
     assert count1 == count2
 
 
+def test_source_filename_is_recorded_on_the_match_row():
+    conn = in_memory_db()
+    result = analyze_replay(
+        parse_replay(load_replay("match.json")),
+        TRACKED_PLAYERS,
+        source_filename="2024-03-01_ranked.replay",
+    )
+    assert isinstance(result, Analyzed)
+    assert result.analysis.replay_filename == "2024-03-01_ranked.replay"
+    write_match(conn, result.analysis)
+    row = conn.execute("SELECT replay_filename FROM matches").fetchone()
+    assert row[0] == "2024-03-01_ranked.replay"
+
+
+def test_source_filename_defaults_to_none():
+    result = analyze_replay(parse_replay(load_replay("match.json")), TRACKED_PLAYERS)
+    assert isinstance(result, Analyzed)
+    assert result.analysis.replay_filename is None
+
+
 def _ev(
     event_type: str, game_seconds: float, platform: str, platform_id: str, team: int
 ) -> MatchEvent:

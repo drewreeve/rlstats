@@ -229,8 +229,9 @@ def test_process_unprocessed_end_to_end(tmp_path: Path):
     process_unprocessed(db_path, replay_dir, TRACKED_PLAYERS)
 
     conn = sqlite3.connect(db_path)
-    row = conn.execute("SELECT COUNT(*) FROM matches").fetchone()
+    row = conn.execute("SELECT COUNT(*), replay_filename FROM matches").fetchone()
     assert row[0] == 1
+    assert row[1] == "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
     assert replay_path.with_suffix(replay_path.suffix + ".ingested").exists()
 
 

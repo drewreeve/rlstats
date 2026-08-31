@@ -57,3 +57,7 @@ FROM match_players mp
 JOIN players p ON mp.player_id = p.id
 WHERE mp.match_id = :match_id
 ORDER BY mp.score DESC;
+
+-- name: match_replay_filename(match_id)^
+-- The source .replay filename for a match, used to locate the file on disk.
+SELECT replay_filename FROM matches WHERE id = :match_id;

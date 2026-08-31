@@ -1,10 +1,12 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31). Step 1 done:
-`replay_frames.py`. Measured on `tests/data/team_size_2.json` (a ~5-minute 2v2,
-9113 frames): `extract_replay_frames` runs in ~40 ms and yields a ~1.2 MiB raw
-position buffer (5 lanes). rrrocket + JSON parse on top of that is still well
-under a second, so decision 10 (no cache) holds.
+Status: **in progress** (build sequence started 2026-08-31). Steps 1 and 1.5
+done. Step 1 = `replay_frames.py`; measured on `tests/data/team_size_2.json` (a
+~5-minute 2v2, 9113 frames), `extract_replay_frames` runs in ~40 ms and yields a
+~1.2 MiB raw position buffer (5 lanes) — rrrocket + JSON parse on top is still
+well under a second, so decision 10 (no cache) holds. Step 1.5 = the
+`matches.replay_filename` column and backfill (see "Match id → `.replay` path"),
+without which the match cannot be resolved to its file at all.
 
 A ballchasing-style tactical replay viewer at `/match/{id}/replay`: a whole-field
 angled/orthographic 3D view of car and ball movement, built from the per-frame
@@ -50,7 +52,7 @@ there are working reference implementations on the same input.
 | 10 | Caching | None in v1. Measure first; add an in-process LRU only if click-to-view latency annoys. Never an on-disk sidecar (that is the persistence layer rejected in #2). |
 | 11 | Arena / mode coverage | Standard soccar arena only (covers 3v3, 2v2, and any other soccar-arena mode). Hoops/Dropshot matches get **no** viewer link in v1. Positions in the `.bin` are mode-agnostic, so a second arena is purely additive later. |
 | 12 | Orientation | Normalise: the tracked team always attacks the same on-screen direction, every match, regardless of which colour they were. |
-| 13 | Link availability & failure | Show "Watch replay" only when `replays/<hash>.replay` exists; route 404s otherwise. On a view-time parse failure, return an error payload the page renders — and **never delete the file** (unlike the ingest path). |
+| 13 | Link availability & failure | Show "Watch replay" only when `matches.replay_filename` is set and `replays/<that name>` exists; route 404s otherwise. On a view-time parse failure, return an error payload the page renders — and **never delete the file** (unlike the ingest path). See "Match id → `.replay` path" below: the original `replays/<hash>.replay` premise was wrong. |
 
 ### v1 feature scope (decision 7)
 
@@ -102,14 +104,18 @@ GET /api/matches/{id}/replay-frames.bin -> gzipped Float32 position buffer
   `parse_replay()` deletes the `.replay` on failure/timeout (`process.py:65,77`);
   the viewer must call a sibling that returns the error and leaves the file
   alone. It builds the `extract_replay_frames` inputs from `replay.properties`
-  via the cheap helpers `resolve_perspective`, `_build_player_stats`,
-  `_detect_game_mode` (currently private in `ingest.py` — un-privatise or lift as
-  part of step 2), **without** running `analyze_frames`.
+  via the cheap helpers `resolve_perspective`, `build_player_stats`,
+  `detect_game_mode` (un-privatised in step 1.5), **without** running
+  `analyze_frames`.
 
-- Match id → `.replay` path: `matches.replay_hash` is the replay's `MatchGUID`
-  and replay files are named `replays/<MatchGUID>.replay`. `match_metadata` in
-  `sql/match_detail.sql` does not currently select `replay_hash`; step 2 adds a
-  small `queries.py` read for it.
+- **Match id → `.replay` path** (corrected in step 1.5). Replay files are named
+  by the uploader (`secure_filename(file.filename)`), *not* by `MatchGUID`, and
+  `matches.replay_hash` stores the `MatchGUID` — the two never match, and there
+  is no other on-disk link. Step 1.5 adds a nullable `matches.replay_filename`
+  column (the source basename), populated by ingest and backfilled for the
+  existing corpus via `uv run python process.py --force`. The viewer resolves a
+  match to its file with `queries.match_replay_filename(match_id)` then
+  `replays/<that name>`.
 
 ### `ReplayFrames` shape
 
@@ -226,7 +232,8 @@ Incremental commits, tests alongside each step.
 | Step | Deliverable | Metadata fields that land here |
 |------|-------------|-------------------------------|
 | 1 ✅ | `replay_frames.py` — `extract_replay_frames` + `ReplayFrames`; unit tests against `tests/data/team_size_2.json` | `frame_times`, `slots` (identity/name/team/tracked/kind/segments), `positions`, `tracked_team`, `game_mode` |
-| 2 | Non-deleting rrrocket wrapper; the three routes; `replay_hash` read; link gating; tests for 404 / missing-file / failure | — |
+| 1.5 ✅ | `matches.replay_filename` (migration 020) + ingest wiring + `queries.match_replay_filename` + backfill. Un-privatise `build_player_stats` / `detect_game_mode`. | — |
+| 2 | Non-deleting rrrocket wrapper; the three routes; link gating in `match.js`; tests for 404 / missing-file / failure | — |
 | 3 | Static page skeleton + importmap (+ CSP fix) + arena + static frame-0 pose, no playback | — |
 | 4 | Playback clock + lerp/slerp interpolation + scrub + speed | — |
 | 5 | Actor lifecycle + segment-based hiding | — |

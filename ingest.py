@@ -39,6 +39,7 @@ class ReplayAnalysis:
     player_stats: dict[PlayerIdentity, PlayerStatEntry]
     tracked_names: dict[PlayerIdentity, str]
     perspective: MatchPerspective
+    replay_filename: str | None = None
 
 
 @dataclass(frozen=True)
@@ -152,7 +153,7 @@ def sync_tracked_players(
 _SQL_DT_FMT = "%Y-%m-%d %H:%M:%S"
 
 
-def _detect_game_mode(team_size: Any, map_name: Any) -> str | None:
+def detect_game_mode(team_size: Any, map_name: Any) -> str | None:
     if team_size == 3:
         return "3v3"
     if team_size == 2 and map_name and "hoop" in map_name.lower():
@@ -208,6 +209,7 @@ def resolve_perspective(
 
 class MatchRow(TypedDict):
     replay_hash: str
+    replay_filename: str | None
     played_at: str | None
     duration_seconds: int | None
     forfeit: int
@@ -289,6 +291,7 @@ def _upsert_match(
     conn: sqlite3.Connection,
     *,
     replay_hash: str,
+    replay_filename: str | None,
     played_at_sql: str | None,
     duration: int | None,
     forfeit: int,
@@ -305,6 +308,7 @@ def _upsert_match(
     fa = frame_analysis
     row = MatchRow(
         replay_hash=replay_hash,
+        replay_filename=replay_filename,
         played_at=played_at_sql,
         duration_seconds=duration,
         forfeit=forfeit,
@@ -364,7 +368,7 @@ def _insert_match_players(
         db.upsert(conn, "match_players", ["match_id", "player_id"], row)
 
 
-def _build_player_stats(
+def build_player_stats(
     props: ReplayProperties,
 ) -> dict[PlayerIdentity, PlayerStatEntry]:
     return {
@@ -383,7 +387,7 @@ def validate_replay(
     if replay.played_at is None:
         return SkipReason.MISSING_DATE
 
-    player_stats = _build_player_stats(replay.properties)
+    player_stats = build_player_stats(replay.properties)
     tracked_raw = [v for k, v in player_stats.items() if k in tracked_players]
     if not tracked_raw:
         return SkipReason.NO_TRACKED_PLAYERS
@@ -392,7 +396,10 @@ def validate_replay(
 
 
 def analyze_replay(
-    replay: ParsedReplay, tracked_players: dict[PlayerIdentity, str]
+    replay: ParsedReplay,
+    tracked_players: dict[PlayerIdentity, str],
+    *,
+    source_filename: str | None = None,
 ) -> AnalysisResult:
     skip = validate_replay(replay, tracked_players)
     if skip is not None:
@@ -409,9 +416,9 @@ def analyze_replay(
     forfeit = 1 if props.get("bForfeit") else 0
     team_size = props.get("TeamSize")
     map_name = props.get("MapName")
-    game_mode = _detect_game_mode(team_size, map_name)
+    game_mode = detect_game_mode(team_size, map_name)
 
-    player_stats = _build_player_stats(props)
+    player_stats = build_player_stats(props)
     perspective = resolve_perspective(
         player_stats,
         tracked_players,
@@ -441,6 +448,7 @@ def analyze_replay(
             player_stats=player_stats,
             tracked_names=tracked_names,
             perspective=perspective,
+            replay_filename=source_filename,
         )
     )
 
@@ -477,6 +485,7 @@ def _write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
     match_id = _upsert_match(
         conn,
         replay_hash=analysis.replay_hash,
+        replay_filename=analysis.replay_filename,
         played_at_sql=analysis.played_at_sql,
         duration=analysis.duration,
         forfeit=analysis.forfeit,

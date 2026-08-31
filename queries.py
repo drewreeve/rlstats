@@ -151,6 +151,10 @@ class MatchMetadataRow(TypedDict):
     opponent_boost_stolen: int | None
 
 
+class _ReplayFileRow(TypedDict):
+    replay_filename: str | None
+
+
 class MatchEventRow(TypedDict):
     event_type: str
     game_seconds: float
@@ -392,6 +396,12 @@ def match_players(conn: sqlite3.Connection, match_id: int) -> list[MatchPlayerRe
     return _rows(sql.match_players, MatchPlayerReadRow, conn, match_id=match_id)
 
 
+def match_replay_filename(conn: sqlite3.Connection, match_id: int) -> str | None:
+    """The basename of the .replay file this match was ingested from, or None."""
+    row = _one(sql.match_replay_filename, _ReplayFileRow, conn, match_id=match_id)
+    return row["replay_filename"] if row is not None else None
+
+
 def match_detail(conn: sqlite3.Connection, match_id: int) -> MatchDetail | None:
     meta = _one(sql.match_metadata, MatchMetadataRow, conn, match_id=match_id)
     if meta is None:
@@ -474,6 +484,7 @@ _NON_STAT_READ_ROW_TYPES: dict[Any, Any] = {
     sql.count_matches: _CountRow,
     sql.list_matches: MatchListRow,
     sql.match_metadata: MatchMetadataRow,
+    sql.match_replay_filename: _ReplayFileRow,
     sql.match_events: MatchEventRow,
     sql.match_players: MatchPlayerReadRow,
     sql.player_career_stats: PlayerCareerRow,

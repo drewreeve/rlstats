@@ -168,6 +168,20 @@ def test_match_detail_nonexistent_match_is_none():
     assert queries.match_detail(_db("zero_score.json"), 9999) is None
 
 
+# -- match_replay_filename --
+
+
+def test_match_replay_filename_returns_source_name():
+    conn = _db("zero_score.json")
+    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
+    # fixtures ingest with source_filename set to the fixture's own name
+    assert queries.match_replay_filename(conn, match_id) == "zero_score.json"
+
+
+def test_match_replay_filename_none_for_unknown_match():
+    assert queries.match_replay_filename(_db("zero_score.json"), 9999) is None
+
+
 # -- player_career --
 
 

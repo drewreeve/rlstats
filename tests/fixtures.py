@@ -34,7 +34,9 @@ def _cached_ingested_db(replay_names: tuple[str, ...]) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     apply_migrations(conn)
     for name in replay_names:
-        result = analyze_replay(parse_replay(load_replay(name)), TRACKED_PLAYERS)
+        result = analyze_replay(
+            parse_replay(load_replay(name)), TRACKED_PLAYERS, source_filename=name
+        )
         assert isinstance(result, Analyzed)
         write_match(conn, result.analysis)
     conn.commit()

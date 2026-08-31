@@ -15,11 +15,7 @@ from typing import cast
 
 import pytest
 
-from ingest import (
-    _build_player_stats,  # type: ignore[reportPrivateUsage]
-    _detect_game_mode,  # type: ignore[reportPrivateUsage]
-    resolve_perspective,
-)
+from ingest import build_player_stats, detect_game_mode, resolve_perspective
 from replay_frames import ReplayFrames, extract_replay_frames
 from rrrocket_schema import FrameData, ParsedReplay
 from rrrocket_schema import parse as parse_replay
@@ -222,7 +218,7 @@ def test_empty_when_no_network_data() -> None:
 def _real() -> ReplayFrames:
     replay = parse_replay(load_replay("team_size_2.json"))
     props = replay.properties
-    player_stats = _build_player_stats(props)
+    player_stats = build_player_stats(props)
     perspective = resolve_perspective(
         player_stats,
         TRACKED_PLAYERS,
@@ -239,7 +235,7 @@ def _real() -> ReplayFrames:
         tracked_team=perspective.team,
         tracked_identities=set(TRACKED_PLAYERS.keys()),
         player_names=player_names,
-        game_mode=_detect_game_mode(props.get("TeamSize"), props.get("MapName")),
+        game_mode=detect_game_mode(props.get("TeamSize"), props.get("MapName")),
     )
 
 

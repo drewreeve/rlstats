@@ -102,7 +102,7 @@ def _parse_and_analyze(
     replay, error = parse_replay(replay_path)
     if replay is None:
         return Failed(error or "parse failed")
-    return analyze_replay(replay, tracked_players)
+    return analyze_replay(replay, tracked_players, source_filename=replay_path.name)
 
 
 def parallel_parse(
