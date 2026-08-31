@@ -1,12 +1,12 @@
 // Browser replay viewer — see docs/replay-viewer.md
 //
-// Steps 3–6: load a match's metadata + packed position buffer, build a Three.js
-// scene (wireframe soccar arena + box cars + sphere ball + name labels), and
-// play it back on a real-time clock — play/pause, scrub, 0.5×–4× speed. Poses
-// are lerp/slerp'd between rrrocket's ~30 Hz samples using the real (non-uniform)
-// frame deltas. A slot's mesh is hidden while its actor is between segments
-// (demolitions). When the tracked team is team 1 the field is flipped 180° so
-// "our" half is always the same side of the screen.
+// Steps 3–7: load a match's metadata + packed position buffer, build a Three.js
+// scene (wireframe soccar arena + box cars + sphere ball + name labels + motion
+// trails), and play it back on a real-time clock — play/pause, scrub, 0.5×–4×
+// speed. Poses are lerp/slerp'd between rrrocket's ~30 Hz samples using the real
+// (non-uniform) frame deltas. A slot's mesh is hidden while its actor is between
+// segments (demolitions). When the tracked team is team 1 the field is flipped
+// 180° so "our" half is always the same side of the screen.
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/+esm";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
@@ -27,6 +27,7 @@ const TEAM_UNKNOWN = 0x8585a0;
 const VIEW_SIZE = 9800; // orthographic frustum height, uu — frames the field
 const SEEK_STEP = 5; // seconds, for arrow-key seeking
 const LABEL_HEIGHT = 150; // uu above a car's centre for its name label
+const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
 
 const stage =
   document.querySelector('[data-role="stage"]') ||
@@ -112,6 +113,41 @@ function makeLabelSprite(text, cssColor) {
   return sprite;
 }
 
+// A polyline motion tail. Head vertex is the live position; the rest walk
+// backward through the position buffer. Colour is baked once, head → background;
+// per frame only the vertex positions and draw range change.
+function makeTrail(colorHex) {
+  const n = TRAIL_FRAMES + 1;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array(n * 3), 3),
+  );
+  const colors = new Float32Array(n * 3);
+  const head = new THREE.Color(colorHex);
+  const tail = new THREE.Color(0x0b0d15);
+  const c = new THREE.Color();
+  for (let k = 0; k < n; k++) {
+    c.copy(head).lerp(tail, k / (n - 1));
+    colors[k * 3] = c.r;
+    colors[k * 3 + 1] = c.g;
+    colors[k * 3 + 2] = c.b;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geo.setDrawRange(0, 0);
+
+  const line = new THREE.Line(
+    geo,
+    new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.85,
+    }),
+  );
+  line.frustumCulled = false; // vertices move every frame
+  return line;
+}
+
 function formatClock(seconds) {
   const s = Math.max(0, Math.round(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -158,26 +194,29 @@ function buildArena(parent) {
 
 function createActorMeshes(field, meta) {
   return meta.slots.map((slot) => {
-    if (slot.kind === "ball") {
-      const ball = new THREE.Mesh(
-        new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
-        new THREE.MeshLambertMaterial({ color: 0xf0f0f4 }),
-      );
-      field.add(ball);
-      return ball;
-    }
-    const color = carColor(slot, meta.tracked_team);
+    const isBall = slot.kind === "ball";
+    const color = isBall ? 0xf0f0f4 : carColor(slot, meta.tracked_team);
+
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(...CAR_SIZE),
+      isBall
+        ? new THREE.SphereGeometry(BALL_RADIUS, 24, 16)
+        : new THREE.BoxGeometry(...CAR_SIZE),
       new THREE.MeshLambertMaterial({ color }),
     );
-    const label = makeLabelSprite(
-      slot.name,
-      "#" + color.toString(16).padStart(6, "0"),
-    );
-    mesh.userData.label = label;
     field.add(mesh);
-    field.add(label);
+
+    const trail = makeTrail(color);
+    mesh.userData.trail = trail;
+    field.add(trail);
+
+    if (!isBall) {
+      const label = makeLabelSprite(
+        slot.name,
+        "#" + color.toString(16).padStart(6, "0"),
+      );
+      mesh.userData.label = label;
+      field.add(label);
+    }
     return mesh;
   });
 }
@@ -196,11 +235,13 @@ function createPlayback(meta, positions, meshes) {
     for (let s = 0; s < meshes.length; s++) {
       const slot = meta.slots[s];
       const label = meshes[s].userData.label;
+      const trail = meshes[s].userData.trail;
       const liveI = slotLiveAt(slot, i);
       const liveJ = slotLiveAt(slot, j);
       if (!liveI && !liveJ) {
         meshes[s].visible = false;
         if (label) label.visible = false;
+        trail.visible = false;
         continue;
       }
       meshes[s].visible = true;
@@ -237,6 +278,28 @@ function createPlayback(meta, positions, meshes) {
           meshes[s].position.z + LABEL_HEIGHT,
         );
       }
+
+      // Trail: head = live position, then walk back through the buffer while
+      // this slot stays live (never across a demolition gap).
+      const tp = trail.geometry.attributes.position.array;
+      tp[0] = meshes[s].position.x;
+      tp[1] = meshes[s].position.y;
+      tp[2] = meshes[s].position.z;
+      let count = 1;
+      for (
+        let k = i;
+        k >= 0 && k > i - TRAIL_FRAMES && slotLiveAt(slot, k);
+        k--
+      ) {
+        const o = poseOffset(slotCount, k, s);
+        tp[count * 3] = positions[o];
+        tp[count * 3 + 1] = positions[o + 1];
+        tp[count * 3 + 2] = positions[o + 2];
+        count++;
+      }
+      trail.visible = count > 1;
+      trail.geometry.setDrawRange(0, count);
+      trail.geometry.attributes.position.needsUpdate = true;
     }
   }
 

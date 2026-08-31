@@ -1,11 +1,11 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31). Steps 1–6 done —
+Status: **in progress** (build sequence started 2026-08-31). Steps 1–7 done —
 backend complete; the page renders the arena + actors (team-coloured, name
-labels), plays back on a real-time clock (play/pause, scrub, 0.5×–4×), hides a
-slot while its actor is between segments, and flips the field so the tracked team
-always attacks the same way. Step 7 onward: trails, camera presets, event
-markers.
+labels, motion trails), plays back on a real-time clock (play/pause, scrub,
+0.5×–4×), hides a slot while its actor is between segments, and flips the field so
+the tracked team always attacks the same way. Step 8 onward: camera presets,
+event markers.
 
 - Step 1 = `replay_frames.py`; measured on `tests/data/team_size_2.json` (a
   ~5-minute 2v2, 9113 frames), `extract_replay_frames` runs in ~40 ms and yields
@@ -255,7 +255,20 @@ moves meshes with sub-sample interpolation. **Headless Chromium
   label text is not mirrored. Verified against match 1 (`tracked_team = 1`):
   Drew's raw `(-256, 3840, 17)` renders at world `(256, 17, 3840)` — the flip is
   applied and the label rides along.
-- Trails: a short ring-buffer `BufferGeometry` per car and the ball.
+- **Trails (step 7).** `makeTrail(colorHex)` builds one `THREE.Line` per actor
+  (ball included) with a `TRAIL_FRAMES + 1` (~1.5 s) `BufferGeometry`: colour
+  baked once from the actor's colour to the background, `frustumCulled = false`.
+  Per frame in `applyPoses`: vertex 0 = the live interpolated position, then walk
+  backward through the position buffer while `slotLiveAt` holds (so a trail never
+  jumps across a demolition gap), and `setDrawRange(0, count)`. Verified against
+  match 1: full 46-vertex trails mid-play, a 2-vertex nub at kickoff (no prior
+  motion), and the trail hidden with its actor in a multi-frame gap.
+
+  *Aside noticed here:* `replay_frames._walk` sometimes emits a tiny extra
+  segment sharing an endpoint with the next one (e.g. Drew: `[2398, 2401]` then
+  `[2401, 6636]`) around a kickoff delete+immediate-recreate. Harmless —
+  `slotLiveAt` still reads continuous — but the segment list is slightly
+  redundant; worth tidying in `replay_frames` later.
 
 ## Known wrinkles (carried into implementation)
 
@@ -298,6 +311,6 @@ Incremental commits, tests alongside each step.
 | 4 ✅ | `createPlayback` clock + `bracket` + lerp/slerp; transport bar (play/pause, scrub, `M:SS` clock, 0.5×–4×, space + arrow keys); `?debug` hook | — |
 | 5 ✅ | `slotLiveAt` + `applyPoses` hides a slot between its segments; `ff` snaps to the live bracket end so no lerp toward the zero-pose | — |
 | 6 ✅ | `makeLabelSprite` canvas-texture name tags per car (team colour, `depthTest:false`), parked above the car; `field` group flipped 180° when `tracked_team === 1`; `document.fonts.ready` awaited | — |
-| 7 | Trails | — |
+| 7 ✅ | `makeTrail` — one `THREE.Line` per actor, baked colour→bg fade, per-frame head = live position then walk back through the buffer (stops at demolition gaps), `setDrawRange` | — |
 | 8 | Camera presets + orbit | — |
 | 9 | Scrub-bar event markers + scoreboard | `events` (type + frame index), score timeline, per-frame game-clock seconds |
