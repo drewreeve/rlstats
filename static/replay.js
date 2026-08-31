@@ -1,10 +1,10 @@
 // Browser replay viewer — see docs/replay-viewer.md
 //
-// Steps 3–4: load a match's metadata + packed position buffer, build a Three.js
+// Steps 3–5: load a match's metadata + packed position buffer, build a Three.js
 // scene (wireframe soccar arena + box cars + sphere ball), and play it back on a
 // real-time clock — play/pause, scrub, 0.5×–4× speed. Poses are lerp/slerp'd
 // between rrrocket's ~30 Hz samples using the real (non-uniform) frame deltas.
-// Actor lifecycle / segment hiding is step 5; every slot stays visible for now.
+// A slot's mesh is hidden while its actor is between segments (demolitions).
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/+esm";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
@@ -61,6 +61,16 @@ function poseOffset(slotCount, frame, slot) {
 function carColor(slot, trackedTeam) {
   if (slot.team == null) return TEAM_UNKNOWN;
   return slot.team === trackedTeam ? TEAM_OURS : TEAM_THEIRS;
+}
+
+// Is this slot's actor live at frame index `frame`? Segments are inclusive
+// [start, end] ranges; between them (demolitions) the buffer holds zeros.
+function slotLiveAt(slot, frame) {
+  const segs = slot.segments;
+  for (let k = 0; k < segs.length; k++) {
+    if (frame >= segs[k][0] && frame <= segs[k][1]) return true;
+  }
+  return false;
 }
 
 function formatClock(seconds) {
@@ -138,12 +148,24 @@ function createPlayback(meta, positions, meshes) {
   function applyPoses() {
     const [i, j, f] = bracket(times, state.t);
     for (let s = 0; s < meshes.length; s++) {
+      const slot = meta.slots[s];
+      const liveI = slotLiveAt(slot, i);
+      const liveJ = slotLiveAt(slot, j);
+      if (!liveI && !liveJ) {
+        meshes[s].visible = false;
+        continue;
+      }
+      meshes[s].visible = true;
+      // Don't lerp toward the zero-pose of a frame the actor isn't live in:
+      // snap to whichever end is live when a segment boundary falls in [i, j].
+      const ff = !liveI ? 1 : !liveJ ? 0 : f;
+
       const a = poseOffset(slotCount, i, s);
       const b = poseOffset(slotCount, j, s);
       meshes[s].position.set(
-        positions[a] + (positions[b] - positions[a]) * f,
-        positions[a + 1] + (positions[b + 1] - positions[a + 1]) * f,
-        positions[a + 2] + (positions[b + 2] - positions[a + 2]) * f,
+        positions[a] + (positions[b] - positions[a]) * ff,
+        positions[a + 1] + (positions[b + 1] - positions[a + 1]) * ff,
+        positions[a + 2] + (positions[b + 2] - positions[a + 2]) * ff,
       );
       _qa.set(
         positions[a + 3],
@@ -157,7 +179,7 @@ function createPlayback(meta, positions, meshes) {
         positions[b + 5],
         positions[b + 6],
       );
-      meshes[s].quaternion.copy(_qa.slerp(_qb, f));
+      meshes[s].quaternion.copy(_qa.slerp(_qb, ff));
     }
   }
 

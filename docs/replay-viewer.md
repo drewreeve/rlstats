@@ -1,9 +1,9 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31). Steps 1–4 done —
-backend complete; the page renders the arena + actors and plays back on a
-real-time clock (play/pause, scrub, 0.5×–4×). Step 5 onward: lifecycle hiding,
-labels, trails, camera, event markers.
+Status: **in progress** (build sequence started 2026-08-31). Steps 1–5 done —
+backend complete; the page renders the arena + actors, plays back on a real-time
+clock (play/pause, scrub, 0.5×–4×), and hides a slot while its actor is between
+segments. Step 6 onward: labels, orientation, trails, camera, event markers.
 
 - Step 1 = `replay_frames.py`; measured on `tests/data/team_size_2.json` (a
   ~5-minute 2v2, 9113 frames), `extract_replay_frames` runs in ~40 ms and yields
@@ -215,8 +215,19 @@ motion is smooth between the ~30 Hz samples, and the non-uniform ~33 ms deltas
 are handled by using the real timestamps, not a fixed step. Transport: play/pause
 (also space), draggable scrub (`<input type=range>` 0–1000, paused-aware so the
 loop doesn't fight the drag), `M:SS / M:SS` clock, 0.5×/1×/2×/4× buttons, arrow
-keys seek ±5 s. **No lifecycle hiding yet** — a demolished car's buffer is zeros
-during the gap, so it interpolates toward the origin and back until step 5.
+keys seek ±5 s.
+
+**Lifecycle hiding (step 5).** `slotLiveAt(slot, frame)` scans the slot's
+inclusive `[start, end]` segments. In `applyPoses`, for a slot's bracket
+`[i, j]`: hidden when neither `i` nor `j` is live; otherwise `ff` is snapped to
+the live end (`0` if `j` is the dead one, `1` if `i` is) so the mesh never lerps
+toward the zero-pose of a frame the actor isn't in. A long gap (a real ~3 s
+demolition ≈ 90 frames) stays hidden throughout; the 1–2-frame gaps this
+match's kickoffs leave just hold at the boundary pose rather than flicker.
+(Verified against match 1: a full 1 s-step scan shows 0 spuriously-hidden
+samples; a seek into a 2-frame ball gap hides the ball and it returns one frame
+either side. This match happens to have no long demo gaps — recheck the hidden
+behaviour on a match with clear demolitions.)
 
 Verification: WebGL framebuffer readback confirms the frame-0 render (white ball
 centred, cyan/red cars in the kickoff ring, wireframe arena) and that seeking
@@ -281,7 +292,7 @@ Incremental commits, tests alongside each step.
 | 2 ✅ | `process.run_rrrocket` (non-deleting); `replay_view.py`; 4 routes (page + `has-replay` + meta + `.bin`); `GZipMiddleware`; `match.js` "Watch Replay" link; placeholder `replay.html`; 404 / missing-file / 422 tests | — |
 | 3 ✅ | `replay.html` / `replay.js` / `replay.css`; Three.js via jsdelivr `/+esm` (no importmap, no CSP change); wireframe arena + box cars + sphere ball at frame-0 pose; orbit camera; no playback | — |
 | 4 ✅ | `createPlayback` clock + `bracket` + lerp/slerp; transport bar (play/pause, scrub, `M:SS` clock, 0.5×–4×, space + arrow keys); `?debug` hook | — |
-| 5 | Actor lifecycle + segment-based hiding | — |
+| 5 ✅ | `slotLiveAt` + `applyPoses` hides a slot between its segments; `ff` snaps to the live bracket end so no lerp toward the zero-pose | — |
 | 6 | Player labels + team colours + orientation normalisation | — |
 | 7 | Trails | — |
 | 8 | Camera presets + orbit | — |
