@@ -34,10 +34,10 @@ const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
 // height in uu; `resize()` derives the width from the viewport aspect.
 const CAM_PRESETS = {
   broadcast: {
-    pos: [0, 7200, 14500],
-    target: [0, 600, 0],
+    pos: [0, 6400, 13000],
+    target: [0, 350, 0],
     up: [0, 1, 0],
-    size: 9800,
+    size: 8600,
   },
   top: {
     pos: [0, 20000, 0],
@@ -504,7 +504,7 @@ function buildScene(meta, positions) {
   }
 
   if (location.search.includes("debug")) {
-    window.__replay = { playback, meshes, camera, controls, THREE };
+    window.__replay = { playback, meshes, camera, controls, renderer, scene, THREE };
   }
 }
 

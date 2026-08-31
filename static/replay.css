@@ -1,5 +1,11 @@
 /* Browser replay viewer — see docs/replay-viewer.md */
 
+/* Our .replay-* rules set `display`, which ties `[hidden]` on specificity and
+   would otherwise defeat it (the overlay panels use the hidden attribute). */
+[hidden] {
+    display: none !important;
+}
+
 html, body {
     height: 100%;
     overflow: hidden;
