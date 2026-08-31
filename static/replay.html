@@ -18,6 +18,7 @@
         <header class="replay-bar">
             <a class="replay-back" href="#" data-role="back">&lsaquo; MATCH</a>
             <span class="replay-title" data-role="title">REPLAY</span>
+            <span class="replay-score" data-role="score"></span>
             <span class="replay-meta" data-role="meta"></span>
         </header>
 
@@ -32,7 +33,10 @@
 
         <div class="replay-controls" data-role="controls" hidden>
             <button class="replay-play" data-role="playpause" aria-label="Play or pause">&#9654;</button>
-            <input class="replay-scrub" type="range" data-role="scrub" min="0" max="1000" value="0" aria-label="Scrub timeline">
+            <div class="replay-scrub-wrap">
+                <input class="replay-scrub" type="range" data-role="scrub" min="0" max="1000" value="0" aria-label="Scrub timeline">
+                <div class="replay-marks" data-role="marks"></div>
+            </div>
             <span class="replay-clock" data-role="clock">0:00 / 0:00</span>
             <div class="replay-speeds" data-role="speeds">
                 <button data-speed="0.5">0.5&times;</button>

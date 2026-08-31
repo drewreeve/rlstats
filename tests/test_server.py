@@ -237,7 +237,7 @@ def test_replay_meta_shape(replay_client: TestClient) -> None:
     r = replay_client.get("/api/matches/1/replay")
     assert r.status_code == 200
     data: Any = r.json()
-    assert set(data) == {"frame_times", "tracked_team", "game_mode", "slots"}
+    assert set(data) == {"frame_times", "tracked_team", "game_mode", "slots", "goals"}
     assert isinstance(data["frame_times"], list) and data["frame_times"]
     assert data["frame_times"] == sorted(data["frame_times"])
     kinds = {s["kind"] for s in data["slots"]}
@@ -251,6 +251,11 @@ def test_replay_meta_shape(replay_client: TestClient) -> None:
             "kind",
             "segments",
         }
+    assert isinstance(data["goals"], list) and data["goals"]
+    last = len(data["frame_times"]) - 1
+    for g in data["goals"]:
+        assert set(g) == {"frame", "team"}
+        assert 0 <= g["frame"] <= last and g["team"] in (0, 1)
 
 
 def test_replay_frames_bin_length_matches_meta(replay_client: TestClient) -> None:

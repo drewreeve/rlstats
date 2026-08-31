@@ -343,6 +343,7 @@ def create_app(
             "tracked_team": frames.tracked_team,
             "game_mode": frames.game_mode,
             "slots": frames.slots,
+            "goals": frames.goals,
         }
 
     @app.get("/api/matches/{match_id}/replay-frames.bin")

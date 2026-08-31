@@ -1,11 +1,17 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31). Steps 1–8 done —
-backend complete; the page renders the arena + actors (team-coloured, name
-labels, motion trails), plays back on a real-time clock (play/pause, scrub,
-0.5×–4×), hides a slot while its actor is between segments, flips the field so the
-tracked team always attacks the same way, and has BROADCAST / TOP camera presets
-plus drag-orbit/zoom. **Step 9 (last): scrub-bar event markers + scoreboard.**
+Status: **v1 complete** (build sequence 2026-08-31). All nine steps done: the
+page renders the arena + actors (team-coloured, name labels, motion trails),
+plays back on a real-time clock (play/pause, scrub, 0.5×–4×), hides a slot while
+its actor is between segments, flips the field so the tracked team always attacks
+the same way, has BROADCAST / TOP camera presets plus drag-orbit/zoom, and shows
+goal ticks on the scrub bar with a running scoreboard.
+
+**Deferred from decision 7** (not blockers, sensible follow-ups): shot / save /
+demolition markers (need the `PRI_TA:Match*` counter port from
+`MatchEventsHandler`); an in-match game clock (needs the `SecondsRemaining`
+regulation/OT reconstruction). The scrub-bar clock currently shows replay-time
+elapsed / total.
 
 - Step 1 = `replay_frames.py`; measured on `tests/data/team_size_2.json` (a
   ~5-minute 2v2, 9113 frames), `extract_replay_frames` runs in ~40 ms and yields
@@ -87,7 +93,7 @@ heatmaps · Hoops / Dropshot arenas · any caching.
 ```
 GET /match/{id}/replay                   -> replay.html   (404 if no file on disk)
 GET /api/matches/{id}/has-replay         -> {"has_replay": bool}   (cheap: 1 query + stat, no parse)
-GET /api/matches/{id}/replay             -> metadata JSON  (404 no file / 422 unparseable)
+GET /api/matches/{id}/replay             -> metadata JSON: frame_times, slots, tracked_team, game_mode, goals  (404 no file / 422 unparseable)
 GET /api/matches/{id}/replay-frames.bin  -> Float32 position buffer, octet-stream
 ```
 
@@ -278,6 +284,19 @@ moves meshes with sub-sample interpolation. **Headless Chromium
   top-right; the active one clears on the `OrbitControls` `start` event. Verified
   against match 1: both presets set the expected camera params and TOP renders
   the field square-on from overhead with cars visible.
+- **Goals + scoreboard (step 9).** `replay_frames._scan_goals` does a second
+  light pass over the frames watching `TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam`:
+  the `Byte` attribute is the team *scored on* (0/1), re-sent a few times per
+  goal and reset to 255 between, so a goal is each rising edge into {0, 1}, and
+  `GoalMarker{frame, team = 1 - byte}` lands in `ReplayFrames.goals` (→ the
+  `/replay` `goals` array). This sidesteps wrinkle #2 entirely — no game-clock
+  inversion, the frame index maps straight to `frame_times`. Client:
+  `renderScrubMarks` places a colour-coded tick per goal on a `.replay-marks`
+  overlay above the range input (cyan = tracked team, red = opponent), and
+  `syncUI` counts goals with `time <= playback.t` into a `our – opp` scoreboard
+  in the top bar. Verified against match 1: 7 ticks at ascending positions with
+  the right colours, score `0 – 0` before the first goal → `3 – 4` after the
+  last (matching `_scan_goals` on `match.json` = the scoreline, in a unit test).
 
 ## Known wrinkles (carried into implementation)
 
@@ -285,11 +304,11 @@ moves meshes with sub-sample interpolation. **Headless Chromium
    importmap** — see decision 9. `replay.js` is an external same-origin module
    that imports Three + OrbitControls by full jsdelivr `/+esm` URL; the existing
    `script-src` already allows it, no CSP change.
-2. **Two time bases.** Frame `time` is seconds-from-replay-start; `match_events`
-   are on the game clock. `MatchEventsHandler.finalize` already reconstructs
-   game-clock seconds from `SecondsRemaining` (regulation counts down; OT resets
-   to 0 and counts up). Reuse that logic to place scrub-bar markers (build
-   step 9).
+2. ~~**Two time bases.**~~ **Sidestepped in step 9.** Goal markers come from
+   `_scan_goals` with a *frame index*, which maps directly to `frame_times` — no
+   game-clock inversion. The `SecondsRemaining` reconstruction is only needed if
+   the deferred in-match game clock or shot/save/demo markers (which come from
+   game-clock-stamped `match_events`) get built.
 3. **`process.py` deletes `.replay` on parse failure.** The view path must not
    (decision 13).
 4. **Frame-stream gaps** during countdowns and goal explosions — the client
@@ -322,4 +341,4 @@ Incremental commits, tests alongside each step.
 | 6 ✅ | `makeLabelSprite` canvas-texture name tags per car (team colour, `depthTest:false`), parked above the car; `field` group flipped 180° when `tracked_team === 1`; `document.fonts.ready` awaited | — |
 | 7 ✅ | `makeTrail` — one `THREE.Line` per actor, baked colour→bg fade, per-frame head = live position then walk back through the buffer (stops at demolition gaps), `setDrawRange` | — |
 | 8 ✅ | `CAM_PRESETS` (broadcast / top) + `applyCamPreset` (mutable `viewSize`); overlay buttons, active state cleared on manual orbit; drag-orbit/zoom already wired | — |
-| 9 | Scrub-bar event markers + scoreboard | `events` (type + frame index), score timeline, per-frame game-clock seconds |
+| 9 ✅ | `replay_frames._scan_goals` (`ReplicatedScoredOnTeam` rising edges → `GoalMarker{frame, team}`) → `/replay` `goals`; client draws colour-coded ticks on the scrub bar + a running `our – opp` scoreboard | `goals` (frame + team). Shots/saves/demos + game clock deferred. |

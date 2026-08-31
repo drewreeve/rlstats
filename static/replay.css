@@ -45,6 +45,23 @@ html, body {
     color: var(--text-bright);
 }
 
+.replay-score {
+    font-family: var(--font-display);
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-bright);
+}
+
+.replay-score .ours {
+    color: var(--cyan);
+}
+
+.replay-score .theirs {
+    color: #ff5a5a;
+}
+
 .replay-meta {
     margin-left: auto;
     font-family: var(--font-mono);
@@ -142,11 +159,37 @@ html, body {
     font-size: 0.9rem;
 }
 
-.replay-scrub {
+.replay-scrub-wrap {
+    position: relative;
     flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+}
+
+.replay-scrub {
+    width: 100%;
     height: 4px;
     accent-color: var(--cyan);
     cursor: pointer;
+}
+
+.replay-marks {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 14px;
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+
+.replay-marks span {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    margin-left: -1px;
+    border-radius: 1px;
 }
 
 .replay-clock {

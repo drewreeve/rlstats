@@ -31,6 +31,7 @@ _RB_STATE = "TAGame.RBActor_TA:ReplicatedRBState"
 _PAWN_PRI = "Engine.Pawn:PlayerReplicationInfo"
 _PRI_UID = "Engine.PlayerReplicationInfo:UniqueId"
 _CAR_TEAM_PAINT = "TAGame.Car_TA:TeamPaint"
+_SCORED_ON_TEAM = "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam"
 
 _FLOATS_PER_POSE = 7  # x, y, z, qx, qy, qz, qw
 _IDENTITY_POSE: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
@@ -57,6 +58,12 @@ class ActorSlot:
 
 
 @dataclass(frozen=True)
+class GoalMarker:
+    frame: int  # frame index the goal was scored on
+    team: int  # the team that scored (0 or 1)
+
+
+@dataclass(frozen=True)
 class ReplayFrames:
     frame_times: list[
         float
@@ -65,6 +72,7 @@ class ReplayFrames:
     positions: bytes  # F * N * 7 little-endian float32, row-major [frame][slot][x,y,z,qx,qy,qz,qw]
     tracked_team: int | None
     game_mode: str | None
+    goals: list[GoalMarker]  # in frame order
 
 
 @dataclass(eq=False)
@@ -78,6 +86,29 @@ class _Segment:
     team: int | None = None
     samples: list[_Sample] = field(default_factory=list[_Sample])
     slot: int = -1
+
+
+def _scan_goals(replay: ParsedReplay, scored_oid: int | None) -> list[GoalMarker]:
+    """Goal frames from ``ReplicatedScoredOnTeam`` rising edges.
+
+    The attribute carries the team that was *scored on* (0 or 1); it is re-sent a
+    few times per goal and reset to 255 in between, so a goal is each transition
+    into {0, 1} from anything else.
+    """
+    if scored_oid is None:
+        return []
+    goals: list[GoalMarker] = []
+    last = -1
+    for fidx, frame in enumerate(replay.frames):
+        for ua in frame.get("updated_actors", []):
+            if ua.get("object_id") != scored_oid:
+                continue
+            byte = ua.get("attribute", {}).get("Byte")
+            if byte in (0, 1) and last not in (0, 1):
+                goals.append(GoalMarker(frame=fidx, team=1 - byte))
+            if byte is not None:
+                last = byte
+    return goals
 
 
 def _first_team(segments: list[_Segment]) -> int | None:
@@ -372,7 +403,7 @@ def extract_replay_frames(
     rb_oid = obj.get(_RB_STATE)
 
     if not replay.frames or car_arch is None or ball_arch is None or rb_oid is None:
-        return ReplayFrames([], [], b"", tracked_team, game_mode)
+        return ReplayFrames([], [], b"", tracked_team, game_mode, [])
 
     segments = _walk(
         replay,
@@ -386,6 +417,7 @@ def extract_replay_frames(
     slots = _build_slots(segments, tracked_identities, player_names)
     frame_times = [float(f["time"]) for f in replay.frames]
     positions = _densify(segments, len(frame_times), len(slots))
+    goals = _scan_goals(replay, obj.get(_SCORED_ON_TEAM))
 
     return ReplayFrames(
         frame_times=frame_times,
@@ -393,4 +425,5 @@ def extract_replay_frames(
         positions=positions,
         tracked_team=tracked_team,
         game_mode=game_mode,
+        goals=goals,
     )

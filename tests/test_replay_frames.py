@@ -16,7 +16,11 @@ from typing import cast
 import pytest
 
 from ingest import build_player_stats, detect_game_mode, resolve_perspective
-from replay_frames import ReplayFrames, extract_replay_frames
+from replay_frames import (
+    ReplayFrames,
+    _scan_goals,  # type: ignore[reportPrivateUsage]
+    extract_replay_frames,
+)
 from rrrocket_schema import FrameData, ParsedReplay
 from rrrocket_schema import parse as parse_replay
 from tests.fixtures import TRACKED_PLAYERS, load_replay
@@ -28,8 +32,9 @@ _OBJECTS = [
     "Engine.Pawn:PlayerReplicationInfo",
     "Engine.PlayerReplicationInfo:UniqueId",
     "TAGame.Car_TA:TeamPaint",
+    "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam",
 ]
-_CAR, _BALL, _RB, _PRI, _UID, _PAINT = range(6)
+_CAR, _BALL, _RB, _PRI, _UID, _PAINT, _SCORED = range(7)
 
 
 def _replay(frames: list[FrameData]) -> ParsedReplay:
@@ -209,7 +214,54 @@ def test_deleted_actor_ends_segment_and_leaves_gap() -> None:
 
 def test_empty_when_no_network_data() -> None:
     rf = _extract(_replay([]))
-    assert rf == ReplayFrames([], [], b"", None, None)
+    assert rf == ReplayFrames([], [], b"", None, None, [])
+
+
+# --- goal markers ---
+
+
+def _scored(byte: int):
+    return cast(
+        FrameData,
+        {
+            "time": 0.0,
+            "updated_actors": [
+                {"actor_id": 2, "object_id": _SCORED, "attribute": {"Byte": byte}}
+            ],
+        },
+    )
+
+
+def test_scan_goals_counts_rising_edges_into_0_or_1() -> None:
+    # team 0 scored on, re-sent, reset; then team 1 scored on
+    frames = [
+        _scored(0),
+        _scored(0),  # re-send, not a new goal
+        _scored(255),  # reset
+        _scored(1),
+        _scored(255),
+    ]
+    goals = _scan_goals(_replay(frames), _SCORED)
+    assert [(g.frame, g.team) for g in goals] == [(0, 1), (3, 0)]
+
+
+def test_scan_goals_empty_without_the_object() -> None:
+    assert _scan_goals(_replay([_scored(0)]), None) == []
+
+
+def test_scan_goals_on_a_real_replay_matches_the_scoreline() -> None:
+    replay = parse_replay(load_replay("match.json"))
+    goals = _scan_goals(
+        replay,
+        replay.object_index.get("TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam"),
+    )
+    team0 = replay.properties.get("Team0Score", 0)
+    team1 = replay.properties.get("Team1Score", 0)
+    assert len(goals) == team0 + team1
+    assert sum(g.team == 0 for g in goals) == team0
+    assert sum(g.team == 1 for g in goals) == team1
+    frames = [g.frame for g in goals]
+    assert frames == sorted(frames)
 
 
 # --- integration: a real 2v2 replay ---

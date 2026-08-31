@@ -1,13 +1,14 @@
 // Browser replay viewer — see docs/replay-viewer.md
 //
-// Steps 3–8: load a match's metadata + packed position buffer, build a Three.js
+// Steps 3–9: load a match's metadata + packed position buffer, build a Three.js
 // scene (wireframe soccar arena + box cars + sphere ball + name labels + motion
 // trails), and play it back on a real-time clock — play/pause, scrub, 0.5×–4×
-// speed. Poses are lerp/slerp'd between rrrocket's ~30 Hz samples using the real
-// (non-uniform) frame deltas. A slot's mesh is hidden while its actor is between
-// segments (demolitions). When the tracked team is team 1 the field is flipped
-// 180° so "our" half is always the same side of the screen. Orthographic camera
-// with drag-orbit/zoom and BROADCAST / TOP presets.
+// speed, goal ticks on the scrub bar and a running scoreboard. Poses are
+// lerp/slerp'd between rrrocket's ~30 Hz samples using the real (non-uniform)
+// frame deltas. A slot's mesh is hidden while its actor is between segments
+// (demolitions). When the tracked team is team 1 the field is flipped 180° so
+// "our" half is always the same side of the screen. Orthographic camera with
+// drag-orbit/zoom and BROADCAST / TOP presets.
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/+esm";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
@@ -59,6 +60,8 @@ const scrubEl = document.querySelector('[data-role="scrub"]');
 const clockEl = document.querySelector('[data-role="clock"]');
 const speedsEl = document.querySelector('[data-role="speeds"]');
 const camEl = document.querySelector('[data-role="cam"]');
+const scoreEl = document.querySelector('[data-role="score"]');
+const marksEl = document.querySelector('[data-role="marks"]');
 
 const matchId = location.pathname.split("/").filter(Boolean)[1];
 const backEl = document.querySelector('[data-role="back"]');
@@ -350,8 +353,26 @@ function createPlayback(meta, positions, meshes) {
   };
 }
 
-function wireControls(playback) {
+// Goal ticks on the scrub bar, positioned by replay-time fraction.
+function renderScrubMarks(meta, playback) {
+  if (!marksEl) return;
+  marksEl.replaceChildren();
+  const span = playback.duration() || 1;
+  for (const g of meta.goals) {
+    const el = document.createElement("span");
+    el.style.left = `${((meta.frame_times[g.frame] - playback.t0) / span) * 100}%`;
+    el.style.background =
+      g.team === meta.tracked_team ? "#00e5ff" : "#ff5a5a";
+    marksEl.appendChild(el);
+  }
+}
+
+function wireControls(playback, meta) {
   let scrubbing = false;
+  const goals = meta.goals.map((g) => ({
+    t: meta.frame_times[g.frame],
+    ours: g.team === meta.tracked_team,
+  }));
 
   function setPlaying(on) {
     if (on && playback.atEnd()) playback.seek(playback.t0);
@@ -400,6 +421,19 @@ function wireControls(playback) {
     if (!playback.state.playing && playBtn.textContent !== "▶") {
       playBtn.textContent = "▶";
     }
+    if (scoreEl) {
+      let ours = 0;
+      let theirs = 0;
+      for (const g of goals) {
+        if (g.t > playback.state.t) continue;
+        if (g.ours) ours++;
+        else theirs++;
+      }
+      scoreEl.innerHTML =
+        `<span class="ours">${ours}</span>` +
+        ` &ndash; ` +
+        `<span class="theirs">${theirs}</span>`;
+    }
   };
 }
 
@@ -443,7 +477,8 @@ function buildScene(meta, positions) {
   window.addEventListener("resize", resize);
 
   const playback = createPlayback(meta, positions, meshes);
-  const syncUI = wireControls(playback);
+  const syncUI = wireControls(playback, meta);
+  renderScrubMarks(meta, playback);
   playback.applyPoses();
   syncUI();
   controlsEl.hidden = false;
