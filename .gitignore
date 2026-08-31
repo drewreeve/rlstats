@@ -20,3 +20,6 @@ wheels/
 
 # Ignore folder for quirky replay files
 problematic/
+
+# Playwright MCP scratch output (screenshots, page snapshots)
+.playwright-mcp/
