@@ -278,9 +278,11 @@ moves meshes with sub-sample interpolation. **Headless Chromium
   `slotLiveAt` still reads continuous — but the segment list is slightly
   redundant; worth tidying in `replay_frames` later.
 - **Camera (step 8).** One `THREE.OrthographicCamera` + `OrbitControls`
-  (drag-orbit/zoom, damping). `CAM_PRESETS` holds `broadcast` (default: elevated,
-  behind a goal, `size` 9800 uu) and `top` (straight overhead, `camera.up` set to
-  `(0, 0, -1)` so the far goal is screen-up, `size` 11500). `applyCamPreset` sets
+  (drag-orbit/zoom, damping). `CAM_PRESETS` holds `broadcast` (default: a 3/4
+  isometric corner view — offset toward `+x` and the tracked team's end, ~30°
+  elevation, `size` 10200 uu; retuned in the arena schematic pass from the old
+  straight-behind-the-goal angle) and `top` (straight overhead, `camera.up` set
+  to `(0, 0, -1)` so the far goal is screen-up, `size` 12800). `applyCamPreset` sets
   position/target/up/`viewSize` and re-runs `resize()` — the frustum height is
   now a mutable `viewSize`, not a const. Preset buttons overlay the stage
   top-right; the active one clears on the `OrbitControls` `start` event. Verified
@@ -316,6 +318,10 @@ moves meshes with sub-sample interpolation. **Headless Chromium
   3. **Half tint.** `buildHalfTint` — a faint (`0.10`) `ShapeGeometry` wash over
      each half of the octagon (split at `y = 0`) in the defending team's colour.
      Carries the TOP view, where the vertical goal fills are edge-on.
+  4. **BROADCAST angle.** Swapped the straight-behind-the-goal preset for a 3/4
+     isometric corner view (ballchasing-style): `pos [10500, 9600, 13000]`,
+     `target [0, 700, 0]`, `size 10200`. Cyan (tracked) goal reads lower-left,
+     opponent's upper-right.
   `teamTint(team, trackedTeam)` is the shared colour rule (`carColor` now
   delegates to it). Verified in both presets against match 17 (`tracked_team =
   0`) and match 38 (`tracked_team = 1`): our team is always on the near/cyan
