@@ -490,6 +490,29 @@ async function loadMatch() {
   }
 
   document.getElementById("match-content").innerHTML = html;
+
+  addReplayLink(matchId);
+}
+
+// Show a "Watch Replay" link on the match header only when the source .replay
+// file is still on disk (cheap probe — no parse). The viewer page is built in a
+// later step; the link is harmless until then.
+async function addReplayLink(matchId) {
+  try {
+    const res = await fetch(`/api/matches/${matchId}/has-replay`);
+    if (!res.ok) return;
+    const { has_replay } = await res.json();
+    if (!has_replay) return;
+    const header = document.querySelector(".match-header");
+    if (!header) return;
+    const link = document.createElement("a");
+    link.href = `/match/${matchId}/replay`;
+    link.className = "replay-link";
+    link.textContent = "▶ WATCH REPLAY";
+    header.appendChild(link);
+  } catch {
+    /* leave the link off */
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {

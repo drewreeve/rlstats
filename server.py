@@ -10,12 +10,14 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 import config
 import queries
+import replay_view
 from db import apply_migrations
 from process import process_unprocessed
 from upload_processor import UploadProcessor
@@ -92,6 +94,7 @@ def create_app(
 
     if settings is None:
         settings = config.load_settings()
+    tracked_players = settings.players
     tracked_player_names = set(settings.players.values())
     upload_password = settings.upload_password
 
@@ -107,6 +110,7 @@ def create_app(
     match_html = _versioned_html(STATIC_DIR / "match.html", version)
     player_html = _versioned_html(STATIC_DIR / "player.html", version)
     upload_html = _versioned_html(STATIC_DIR / "upload.html", version)
+    replay_html = _versioned_html(STATIC_DIR / "replay.html", version)
 
     def get_conn() -> Generator[sqlite3.Connection, None, None]:
         conn = _get_conn(db_path)
@@ -160,6 +164,9 @@ def create_app(
         secret_key=secret_key,
         https_only=True,
     )
+    # Outermost: compresses the large replay-viewer payloads (position buffer,
+    # frame-time array) and every other response over the threshold.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     # -- HTML page routes --
 
@@ -181,6 +188,14 @@ def create_app(
     @app.get("/match/{match_id}")
     async def match_page(match_id: int):
         return HTMLResponse(match_html)
+
+    @app.get("/match/{match_id}/replay")
+    async def replay_page(
+        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
+    ):
+        if replay_view.replay_path_for(conn, upload_dir, match_id) is None:
+            raise HTTPException(status_code=404, detail="No replay for this match")
+        return HTMLResponse(replay_html)
 
     # -- Auth routes --
 
@@ -296,6 +311,48 @@ def create_app(
         if data is None:
             raise HTTPException(status_code=404, detail="Not found")
         return data
+
+    # -- Replay viewer routes --
+
+    @app.get("/api/matches/{match_id}/has-replay")
+    async def match_has_replay(
+        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
+    ) -> Any:
+        """Cheap probe for link-gating on the match page: no rrrocket, no parse."""
+        path = replay_view.replay_path_for(conn, upload_dir, match_id)
+        return {"has_replay": path is not None}
+
+    def _replay_frames_or_404(conn: sqlite3.Connection, match_id: int):
+        path = replay_view.replay_path_for(conn, upload_dir, match_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="No replay for this match")
+        frames = replay_view.build_replay_frames(path, tracked_players)
+        if frames is None:
+            raise HTTPException(status_code=422, detail="Replay could not be read")
+        return frames
+
+    @app.get("/api/matches/{match_id}/replay")
+    async def match_replay_meta(
+        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
+    ) -> Any:
+        frames = _replay_frames_or_404(conn, match_id)
+        return {
+            "frame_times": frames.frame_times,
+            "tracked_team": frames.tracked_team,
+            "game_mode": frames.game_mode,
+            "slots": frames.slots,
+        }
+
+    @app.get("/api/matches/{match_id}/replay-frames.bin")
+    async def match_replay_frames_bin(
+        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
+    ) -> Response:
+        frames = _replay_frames_or_404(conn, match_id)
+        return Response(
+            content=frames.positions,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "no-store"},
+        )
 
     # -- Stats routes --
 

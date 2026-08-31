@@ -47,11 +47,12 @@ def open_write_conn(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
-    """Run rrrocket on a .replay file and return the parsed JSON.
+def run_rrrocket(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
+    """Run ``rrrocket -n`` on a .replay file and parse its output.
 
-    Returns (parsed_dict, None) on success. On failure, removes the corrupt
-    .replay file and returns (None, error_message).
+    Returns ``(parsed, None)`` on success, ``(None, error_message)`` on a
+    subprocess/timeout/exit failure. Never touches the file — callers that want
+    a corrupt replay removed do that themselves (see :func:`parse_replay`).
     """
     try:
         result = subprocess.run(
@@ -60,24 +61,32 @@ def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
             timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        msg = f"rrrocket failed: {exc}"
         logger.warning("rrrocket failed for %s: %s", replay_path.name, exc)
-        replay_path.unlink(missing_ok=True)
-        return None, msg
+        return None, f"rrrocket failed: {exc}"
 
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace").strip()
-        msg = f"rrrocket failed (exit {result.returncode}): {stderr}"
         logger.warning(
             "rrrocket failed for %s (exit %d): %s",
             replay_path.name,
             result.returncode,
             stderr,
         )
-        replay_path.unlink(missing_ok=True)
-        return None, msg
+        return None, f"rrrocket failed (exit {result.returncode}): {stderr}"
 
     return _parse_rrrocket(cast(ReplayJSON, orjson.loads(result.stdout))), None
+
+
+def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
+    """Run rrrocket on a .replay file and return the parsed JSON.
+
+    Returns (parsed_dict, None) on success. On failure, removes the corrupt
+    .replay file and returns (None, error_message).
+    """
+    replay, error = run_rrrocket(replay_path)
+    if replay is None:
+        replay_path.unlink(missing_ok=True)
+    return replay, error
 
 
 def _finalize_batch(

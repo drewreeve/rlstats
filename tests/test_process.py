@@ -11,6 +11,7 @@ from process import (
     _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
     parse_replay,
     process_unprocessed,
+    run_rrrocket,
     write_parsed_batch,
 )
 from rrrocket_schema import parse as parse_rrrocket
@@ -62,6 +63,21 @@ def test_parse_replay_failure(tmp_path: Path):
     assert error is not None
     assert "rrrocket failed" in error
     assert not replay_path.exists()
+
+
+def test_run_rrrocket_leaves_the_file_on_failure(tmp_path: Path):
+    """Unlike parse_replay, run_rrrocket never deletes — the replay viewer
+    depends on a failed re-parse not destroying an already-ingested replay."""
+    replay_path = tmp_path / "keep.replay"
+    replay_path.write_bytes(b"\x00" * 1024)
+
+    failed = subprocess.CompletedProcess(["rrrocket"], 1, stderr=b"boom")
+    with patch("process.subprocess.run", return_value=failed):
+        result, error = run_rrrocket(replay_path)
+
+    assert result is None
+    assert error is not None and "rrrocket failed" in error
+    assert replay_path.exists()
 
 
 def test_write_parsed_batch_commits(tmp_path: Path):

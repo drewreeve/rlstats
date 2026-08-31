@@ -6,8 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 import queries
+from process import process_unprocessed
 from server import create_app
-from tests.fixtures import cached_db, file_db
+from tests.fixtures import TEST_DATA_DIR, TRACKED_PLAYERS, cached_db, file_db
 
 
 @pytest.fixture
@@ -181,3 +182,93 @@ def test_match_players_include_is_tracked(match_client: TestClient) -> None:
     data: Any = response.json()
     for player in data["team_players"] + data["opponent_players"]:
         assert "is_tracked" in player
+
+
+# -- replay viewer routes --
+
+_REAL_REPLAY = "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
+
+
+@pytest.fixture
+def replay_client(tmp_path: Path) -> TestClient:
+    """A client whose match 1 was ingested from a real .replay still on disk."""
+    db_path = file_db(tmp_path)
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    (replay_dir / _REAL_REPLAY).write_bytes((TEST_DATA_DIR / _REAL_REPLAY).read_bytes())
+    process_unprocessed(db_path, replay_dir, TRACKED_PLAYERS)
+    app = create_app(db_path, replay_dir=replay_dir)
+    return TestClient(app, base_url="https://testserver")
+
+
+def test_has_replay_true_when_file_present(replay_client: TestClient) -> None:
+    r = replay_client.get("/api/matches/1/has-replay")
+    assert r.status_code == 200
+    assert r.json() == {"has_replay": True}
+
+
+def test_has_replay_false_for_unknown_match(replay_client: TestClient) -> None:
+    assert replay_client.get("/api/matches/9999/has-replay").json() == {
+        "has_replay": False
+    }
+
+
+def test_has_replay_false_when_file_missing(replay_client: TestClient, tmp_path: Path):
+    conn = sqlite3.connect(tmp_path / "test.sqlite")
+    conn.execute(
+        "INSERT INTO matches "
+        "(replay_hash, replay_filename, team, team_score, opponent_score, result) "
+        "VALUES ('GHOST', 'ghost.replay', 0, 1, 0, 'win')"
+    )
+    conn.commit()
+    ghost_id = conn.execute(
+        "SELECT id FROM matches WHERE replay_hash='GHOST'"
+    ).fetchone()[0]
+    conn.close()
+
+    assert replay_client.get(f"/api/matches/{ghost_id}/has-replay").json() == {
+        "has_replay": False
+    }
+    assert replay_client.get(f"/api/matches/{ghost_id}/replay").status_code == 404
+    assert replay_client.get(f"/match/{ghost_id}/replay").status_code == 404
+
+
+def test_replay_meta_shape(replay_client: TestClient) -> None:
+    r = replay_client.get("/api/matches/1/replay")
+    assert r.status_code == 200
+    data: Any = r.json()
+    assert set(data) == {"frame_times", "tracked_team", "game_mode", "slots"}
+    assert isinstance(data["frame_times"], list) and data["frame_times"]
+    assert data["frame_times"] == sorted(data["frame_times"])
+    kinds = {s["kind"] for s in data["slots"]}
+    assert kinds == {"car", "ball"}
+    for slot in data["slots"]:
+        assert set(slot) == {
+            "identity",
+            "name",
+            "team",
+            "is_tracked",
+            "kind",
+            "segments",
+        }
+
+
+def test_replay_frames_bin_length_matches_meta(replay_client: TestClient) -> None:
+    meta: Any = replay_client.get("/api/matches/1/replay").json()
+    r = replay_client.get("/api/matches/1/replay-frames.bin")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/octet-stream"
+    expected = 4 * len(meta["frame_times"]) * len(meta["slots"]) * 7
+    assert len(r.content) == expected
+
+
+def test_replay_routes_404_for_unknown_match(replay_client: TestClient) -> None:
+    assert replay_client.get("/api/matches/9999/replay").status_code == 404
+    assert replay_client.get("/api/matches/9999/replay-frames.bin").status_code == 404
+    assert replay_client.get("/match/9999/replay").status_code == 404
+
+
+def test_replay_page_served_when_file_present(replay_client: TestClient) -> None:
+    r = replay_client.get("/match/1/replay")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
