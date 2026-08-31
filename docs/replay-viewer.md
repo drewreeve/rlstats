@@ -5,7 +5,9 @@ page renders the arena + actors (team-coloured, name labels, motion trails),
 plays back on a real-time clock (play/pause, scrub, 0.5×–4×), hides a slot while
 its actor is between segments, flips the field so the tracked team always attacks
 the same way, has BROADCAST / TOP camera presets plus drag-orbit/zoom, and shows
-goal ticks on the scrub bar with a running scoreboard.
+goal ticks on the scrub bar with a running scoreboard. A follow-up pass
+(2026-08-31) gave the arena its chamfered corners, rendered goals, and a
+per-half colour wash — see "Arena schematic pass" below.
 
 **Deferred from decision 7** (not blockers, sensible follow-ups): shot / save /
 demolition markers (need the `PRI_TA:Match*` counter port from
@@ -297,6 +299,27 @@ moves meshes with sub-sample interpolation. **Headless Chromium
   in the top bar. Verified against match 1: 7 ticks at ascending positions with
   the right colours, score `0 – 0` before the first goal → `3 – 4` after the
   last (matching `_scan_goals` on `match.json` = the scoreline, in a unit test).
+- **Arena schematic pass (follow-up, 2026-08-31).** Three client-only commits,
+  no server/`.bin`/test change, from a second grilling session:
+  1. **Chamfered footprint.** `buildArena` drew a `BoxGeometry` wireframe; the
+     real soccar field cuts all four corners at 45° (`CORNER = 1152` uu on each
+     axis, `|x| + |y| = 8064`). Replaced with the eight-point `ARENA_OUTLINE`
+     (module-level, shared) — floor loop + ceiling loop + a vertical per corner
+     — and a floor grid clipped to that octagon (`outlineHalfWidth`) so it no
+     longer overhangs the side walls like the old `GridHelper(10240)`.
+  2. **Goals.** `buildGoals` — an open wireframe box at `y = ±5120`: mouth
+     (`GOAL_HW*2 = 1786` × `GOAL_H = 643` uu) + a matching frame `GOAL_DEPTH =
+     880` uu back + four depth edges, in a bright-neutral `GOAL_LINE`. The mouth
+     is filled with a translucent (`0.35`) `DoubleSide` plane in the defending
+     team's colour. `top` preset frustum bumped 11500 → 12800 so both goals stay
+     in frame.
+  3. **Half tint.** `buildHalfTint` — a faint (`0.10`) `ShapeGeometry` wash over
+     each half of the octagon (split at `y = 0`) in the defending team's colour.
+     Carries the TOP view, where the vertical goal fills are edge-on.
+  `teamTint(team, trackedTeam)` is the shared colour rule (`carColor` now
+  delegates to it). Verified in both presets against match 17 (`tracked_team =
+  0`) and match 38 (`tracked_team = 1`): our team is always on the near/cyan
+  half, goals and tint agree.
 
 ## Known wrinkles (carried into implementation)
 
@@ -318,6 +341,14 @@ moves meshes with sub-sample interpolation. **Headless Chromium
 6. **Little-endian buffer.** `array.array('f').tobytes()` writes native byte
    order; JS `Float32Array` reads little-endian. True on every target platform;
    recorded here so it is an assumption, not an accident.
+7. **Anchor arena geometry by RL team, colour by `teamTint`.** All static field
+   geometry lives inside the `field` group, which is rotated 180° when
+   `tracked_team === 1` (decision 12). So place a half / goal by its raw RL side
+   (team 0 defends `−y`, team 1 defends `+y`) and colour it with
+   `teamTint(team, trackedTeam)` — never by "screen side". The flip then puts
+   "ours" on the same side of the screen every match, exactly as it already does
+   for cars. Hardcoding "ours = the −y half" renders correctly for one
+   `tracked_team` value and mirror-wrong for the other.
 
 ## Assumptions (stated, not grilled)
 
