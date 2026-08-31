@@ -1,8 +1,10 @@
 // Browser replay viewer — see docs/replay-viewer.md
 //
-// Step 3: load the metadata + packed position buffer for a match, build a
-// Three.js scene (wireframe soccar arena + box cars + sphere ball) and place
-// every actor at its frame-0 pose. No playback yet — an orbitable static shot.
+// Steps 3–4: load a match's metadata + packed position buffer, build a Three.js
+// scene (wireframe soccar arena + box cars + sphere ball), and play it back on a
+// real-time clock — play/pause, scrub, 0.5×–4× speed. Poses are lerp/slerp'd
+// between rrrocket's ~30 Hz samples using the real (non-uniform) frame deltas.
+// Actor lifecycle / segment hiding is step 5; every slot stays visible for now.
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/+esm";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
@@ -21,15 +23,25 @@ const TEAM_OURS = 0x00e5ff;
 const TEAM_THEIRS = 0xff5a5a;
 const TEAM_UNKNOWN = 0x8585a0;
 const VIEW_SIZE = 9800; // orthographic frustum height, uu — frames the field
+const SEEK_STEP = 5; // seconds, for arrow-key seeking
 
-const stage = document.querySelector('[data-role="stage"]') ||
+const stage =
+  document.querySelector('[data-role="stage"]') ||
   document.querySelector(".replay-stage");
 const canvas = document.querySelector('[data-role="scene"]');
 const messageEl = document.querySelector('[data-role="message"]');
+const controlsEl = document.querySelector('[data-role="controls"]');
+const playBtn = document.querySelector('[data-role="playpause"]');
+const scrubEl = document.querySelector('[data-role="scrub"]');
+const clockEl = document.querySelector('[data-role="clock"]');
+const speedsEl = document.querySelector('[data-role="speeds"]');
 
 const matchId = location.pathname.split("/").filter(Boolean)[1];
 const backEl = document.querySelector('[data-role="back"]');
 if (backEl) backEl.href = `/match/${matchId}`;
+
+const _qa = new THREE.Quaternion();
+const _qb = new THREE.Quaternion();
 
 let renderer;
 let camera;
@@ -42,18 +54,34 @@ function showMessage(text) {
   }
 }
 
-function poseAt(positions, slotCount, frame, slot) {
-  const base = (frame * slotCount + slot) * FLOATS_PER_POSE;
-  return positions.subarray(base, base + FLOATS_PER_POSE);
-}
-
-function segmentsCover(slot, frame) {
-  return slot.segments.some(([start, end]) => start <= frame && frame <= end);
+function poseOffset(slotCount, frame, slot) {
+  return (frame * slotCount + slot) * FLOATS_PER_POSE;
 }
 
 function carColor(slot, trackedTeam) {
   if (slot.team == null) return TEAM_UNKNOWN;
   return slot.team === trackedTeam ? TEAM_OURS : TEAM_THEIRS;
+}
+
+function formatClock(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// Largest i with times[i] <= t, its successor j, and the [0,1] blend between.
+function bracket(times, t) {
+  const n = times.length;
+  if (n < 2 || t <= times[0]) return [0, 0, 0];
+  if (t >= times[n - 1]) return [n - 1, n - 1, 0];
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] <= t) lo = mid;
+    else hi = mid;
+  }
+  const span = times[hi] - times[lo];
+  return [lo, hi, span > 0 ? (t - times[lo]) / span : 0];
 }
 
 function buildArena(world) {
@@ -79,29 +107,138 @@ function buildArena(world) {
   world.add(halfLine);
 }
 
-function buildActors(world, meta, positions) {
-  const slotCount = meta.slots.length;
-  meta.slots.forEach((slot, i) => {
-    let mesh;
-    if (slot.kind === "ball") {
-      mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
-        new THREE.MeshLambertMaterial({ color: 0xf0f0f4 }),
-      );
-    } else {
-      mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(...CAR_SIZE),
-        new THREE.MeshLambertMaterial({
-          color: carColor(slot, meta.tracked_team),
-        }),
-      );
-    }
-    const p = poseAt(positions, slotCount, 0, i);
-    mesh.position.set(p[0], p[1], p[2]);
-    mesh.quaternion.set(p[3], p[4], p[5], p[6]);
-    mesh.visible = segmentsCover(slot, 0);
+function createActorMeshes(world, meta) {
+  return meta.slots.map((slot) => {
+    const mesh =
+      slot.kind === "ball"
+        ? new THREE.Mesh(
+            new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
+            new THREE.MeshLambertMaterial({ color: 0xf0f0f4 }),
+          )
+        : new THREE.Mesh(
+            new THREE.BoxGeometry(...CAR_SIZE),
+            new THREE.MeshLambertMaterial({
+              color: carColor(slot, meta.tracked_team),
+            }),
+          );
     world.add(mesh);
+    return mesh;
   });
+}
+
+// The playback clock + per-frame pose application, over one match's data.
+function createPlayback(meta, positions, meshes) {
+  const times = meta.frame_times;
+  const slotCount = meta.slots.length;
+  const t0 = times[0];
+  const tN = times[times.length - 1];
+
+  const state = { t: t0, playing: false, speed: 1 };
+
+  function applyPoses() {
+    const [i, j, f] = bracket(times, state.t);
+    for (let s = 0; s < meshes.length; s++) {
+      const a = poseOffset(slotCount, i, s);
+      const b = poseOffset(slotCount, j, s);
+      meshes[s].position.set(
+        positions[a] + (positions[b] - positions[a]) * f,
+        positions[a + 1] + (positions[b + 1] - positions[a + 1]) * f,
+        positions[a + 2] + (positions[b + 2] - positions[a + 2]) * f,
+      );
+      _qa.set(
+        positions[a + 3],
+        positions[a + 4],
+        positions[a + 5],
+        positions[a + 6],
+      );
+      _qb.set(
+        positions[b + 3],
+        positions[b + 4],
+        positions[b + 5],
+        positions[b + 6],
+      );
+      meshes[s].quaternion.copy(_qa.slerp(_qb, f));
+    }
+  }
+
+  function seek(t) {
+    state.t = Math.min(tN, Math.max(t0, t));
+  }
+
+  function advance(dt) {
+    if (!state.playing) return;
+    state.t += dt * state.speed;
+    if (state.t >= tN) {
+      state.t = tN;
+      state.playing = false;
+    }
+  }
+
+  return {
+    state,
+    t0,
+    tN,
+    applyPoses,
+    seek,
+    advance,
+    elapsed: () => state.t - t0,
+    duration: () => tN - t0,
+    progress: () => (tN > t0 ? (state.t - t0) / (tN - t0) : 0),
+    atEnd: () => state.t >= tN,
+  };
+}
+
+function wireControls(playback) {
+  let scrubbing = false;
+
+  function setPlaying(on) {
+    if (on && playback.atEnd()) playback.seek(playback.t0);
+    playback.state.playing = on;
+    playBtn.textContent = on ? "⏸" : "▶";
+  }
+
+  playBtn.addEventListener("click", () => setPlaying(!playback.state.playing));
+
+  scrubEl.addEventListener("pointerdown", () => {
+    scrubbing = true;
+  });
+  window.addEventListener("pointerup", () => {
+    scrubbing = false;
+  });
+  scrubEl.addEventListener("input", () => {
+    playback.seek(playback.t0 + (scrubEl.valueAsNumber / 1000) * playback.duration());
+  });
+
+  speedsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-speed]");
+    if (!btn) return;
+    playback.state.speed = Number(btn.dataset.speed);
+    for (const b of speedsEl.querySelectorAll("button")) {
+      b.classList.toggle("is-active", b === btn);
+    }
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === " ") {
+      e.preventDefault();
+      setPlaying(!playback.state.playing);
+    } else if (e.key === "ArrowLeft") {
+      playback.seek(playback.state.t - SEEK_STEP);
+    } else if (e.key === "ArrowRight") {
+      playback.seek(playback.state.t + SEEK_STEP);
+    }
+  });
+
+  // Reflect clock state back into the DOM each frame.
+  return function syncUI() {
+    if (!scrubbing) scrubEl.value = String(Math.round(playback.progress() * 1000));
+    clockEl.textContent = `${formatClock(playback.elapsed())} / ${formatClock(
+      playback.duration(),
+    )}`;
+    if (!playback.state.playing && playBtn.textContent !== "▶") {
+      playBtn.textContent = "▶";
+    }
+  };
 }
 
 function buildScene(meta, positions) {
@@ -121,7 +258,7 @@ function buildScene(meta, positions) {
   scene.add(world);
 
   buildArena(world);
-  buildActors(world, meta, positions);
+  const meshes = createActorMeshes(world, meta);
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -137,21 +274,34 @@ function buildScene(meta, positions) {
   resize();
   window.addEventListener("resize", resize);
 
-  function tick() {
-    requestAnimationFrame(tick);
+  const playback = createPlayback(meta, positions, meshes);
+  const syncUI = wireControls(playback);
+  playback.applyPoses();
+  syncUI();
+  controlsEl.hidden = false;
+
+  let lastNow = null;
+  function frameLoop(now) {
+    requestAnimationFrame(frameLoop);
+    const dt = lastNow == null ? 0 : (now - lastNow) / 1000;
+    lastNow = now;
+    playback.advance(dt);
+    playback.applyPoses();
+    syncUI();
     controls.update();
     renderer.render(scene, camera);
   }
-  tick();
+  requestAnimationFrame(frameLoop);
 
-  const seconds = meta.frame_times.at(-1) ?? 0;
   const metaEl = document.querySelector('[data-role="meta"]');
   if (metaEl) {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60).toString().padStart(2, "0");
-    metaEl.textContent = [meta.game_mode, `${mins}:${secs}`]
+    metaEl.textContent = [meta.game_mode, formatClock(playback.duration())]
       .filter(Boolean)
       .join("  ·  ");
+  }
+
+  if (location.search.includes("debug")) {
+    window.__replay = { playback, meshes, THREE };
   }
 }
 

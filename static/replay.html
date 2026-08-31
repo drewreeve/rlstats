@@ -25,6 +25,18 @@
             <canvas data-role="scene"></canvas>
             <div class="replay-message" data-role="message" hidden></div>
         </div>
+
+        <div class="replay-controls" data-role="controls" hidden>
+            <button class="replay-play" data-role="playpause" aria-label="Play or pause">&#9654;</button>
+            <input class="replay-scrub" type="range" data-role="scrub" min="0" max="1000" value="0" aria-label="Scrub timeline">
+            <span class="replay-clock" data-role="clock">0:00 / 0:00</span>
+            <div class="replay-speeds" data-role="speeds">
+                <button data-speed="0.5">0.5&times;</button>
+                <button data-speed="1" class="is-active">1&times;</button>
+                <button data-speed="2">2&times;</button>
+                <button data-speed="4">4&times;</button>
+            </div>
+        </div>
     </div>
 
     <script type="module" src="/static/replay.js"></script>

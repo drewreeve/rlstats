@@ -1,8 +1,9 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31). Steps 1, 1.5, 2 and
-3 done — backend complete, and the page renders the arena + actors at frame 0.
-Step 4 onward is playback.
+Status: **in progress** (build sequence started 2026-08-31). Steps 1–4 done —
+backend complete; the page renders the arena + actors and plays back on a
+real-time clock (play/pause, scrub, 0.5×–4×). Step 5 onward: lifecycle hiding,
+labels, trails, camera, event markers.
 
 - Step 1 = `replay_frames.py`; measured on `tests/data/team_size_2.json` (a
   ~5-minute 2v2, 9113 frames), `extract_replay_frames` runs in ~40 ms and yields
@@ -199,15 +200,30 @@ endpoint returns `positions`.
 
 ### Client (`static/replay.js`, module script)
 
-**Step 3 built the skeleton:** `replay.html` / `replay.js` / `replay.css` (the last
-two in `_VERSIONED_ASSETS`), the page fetches `/replay` + `/replay-frames.bin`,
-builds the scene, and places every actor at its **frame-0 pose** with an
-orbitable orthographic camera. No playback yet. Coordinates stay in unreal
-units — no world scaling; the camera frustum (`VIEW_SIZE ≈ 9800 uu`) does the
-framing. The scene renders (verified by WebGL framebuffer readback: white ball
-centred, cyan/red cars in the kickoff ring, wireframe arena); note **headless
-Chromium `page.screenshot()` returns black for a WebGL canvas** even with
-`preserveDrawingBuffer` — verify via `gl.readPixels`, not screenshots.
+**Steps 3–4 built the page:** `replay.html` / `replay.js` / `replay.css` (the
+last two in `_VERSIONED_ASSETS`), the page fetches `/replay` +
+`/replay-frames.bin`, builds the scene, and plays it back. Coordinates stay in
+unreal units — no world scaling; the camera frustum (`VIEW_SIZE ≈ 9800 uu`) does
+the framing.
+
+**Playback (step 4).** `createPlayback(meta, positions, meshes)` owns a clock:
+`state.t` in `frame_times` space (starts at `frame_times[0]`, not 0), advanced
+each rAF by `realDeltaSeconds * speed` while playing, clamped and auto-paused at
+the end. `bracket(times, t)` binary-searches for `[i, j, f]`; per slot the pose
+is `lerp` on position + `slerp` on quaternion between frames `i` and `j` — so
+motion is smooth between the ~30 Hz samples, and the non-uniform ~33 ms deltas
+are handled by using the real timestamps, not a fixed step. Transport: play/pause
+(also space), draggable scrub (`<input type=range>` 0–1000, paused-aware so the
+loop doesn't fight the drag), `M:SS / M:SS` clock, 0.5×/1×/2×/4× buttons, arrow
+keys seek ±5 s. **No lifecycle hiding yet** — a demolished car's buffer is zeros
+during the gap, so it interpolates toward the origin and back until step 5.
+
+Verification: WebGL framebuffer readback confirms the frame-0 render (white ball
+centred, cyan/red cars in the kickoff ring, wireframe arena) and that seeking
+moves meshes with sub-sample interpolation. **Headless Chromium
+`page.screenshot()` returns black for a WebGL canvas** even with
+`preserveDrawingBuffer` — verify via `gl.readPixels` or the `?debug` hook
+(`window.__replay = { playback, meshes, THREE }`), not screenshots.
 
 - Three.js scene: wireframe soccar arena (8192 × 10240 × 2044 uu), box cars,
   sphere ball. RL is Z-up; Three.js is Y-up — actors and arena live in a parent
@@ -264,7 +280,7 @@ Incremental commits, tests alongside each step.
 | 1.5 ✅ | `matches.replay_filename` (migration 020) + ingest wiring + `queries.match_replay_filename` + backfill. Un-privatise `build_player_stats` / `detect_game_mode`. | — |
 | 2 ✅ | `process.run_rrrocket` (non-deleting); `replay_view.py`; 4 routes (page + `has-replay` + meta + `.bin`); `GZipMiddleware`; `match.js` "Watch Replay" link; placeholder `replay.html`; 404 / missing-file / 422 tests | — |
 | 3 ✅ | `replay.html` / `replay.js` / `replay.css`; Three.js via jsdelivr `/+esm` (no importmap, no CSP change); wireframe arena + box cars + sphere ball at frame-0 pose; orbit camera; no playback | — |
-| 4 | Playback clock + lerp/slerp interpolation + scrub + speed | — |
+| 4 ✅ | `createPlayback` clock + `bracket` + lerp/slerp; transport bar (play/pause, scrub, `M:SS` clock, 0.5×–4×, space + arrow keys); `?debug` hook | — |
 | 5 | Actor lifecycle + segment-based hiding | — |
 | 6 | Player labels + team colours + orientation normalisation | — |
 | 7 | Trails | — |
