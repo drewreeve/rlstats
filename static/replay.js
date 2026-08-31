@@ -18,6 +18,23 @@ import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/exampl
 const FIELD_X = 8192;
 const FIELD_Y = 10240;
 const FIELD_Z = 2044;
+const CORNER = 1152; // 45° chamfer span on each axis at the four field corners
+const HX = FIELD_X / 2;
+const HY = FIELD_Y / 2;
+
+// Chamfered soccar footprint in the RL XY plane: the rectangle with all four
+// corners cut at 45° (|x| + |y| = 8064 along each diagonal). CCW from +x/+y.
+// Shared by the arena wireframe, the floor grid clip, and the half-pitch tint.
+const ARENA_OUTLINE = [
+  [HX, HY - CORNER],
+  [HX - CORNER, HY],
+  [-(HX - CORNER), HY],
+  [-HX, HY - CORNER],
+  [-HX, -(HY - CORNER)],
+  [-(HX - CORNER), -HY],
+  [HX - CORNER, -HY],
+  [HX, -(HY - CORNER)],
+];
 
 const CAR_SIZE = [118, 84, 36]; // Octane hitbox, RL local axes (X fwd, Y left, Z up)
 const BALL_RADIUS = 91.25;
@@ -192,27 +209,68 @@ function bracket(times, t) {
   return [lo, hi, span > 0 ? (t - times[lo]) / span : 0];
 }
 
+// How far the flat wall reaches on the perpendicular axis before the chamfer
+// starts. Used to clip the floor grid to the octagon.
+function outlineHalfWidth(x, y) {
+  // On the flat back walls (|x| small) the limit is HY; into a corner it is the
+  // chamfer line |x| + |y| = HX + HY - CORNER. Mirror for the side walls.
+  return {
+    x: Math.abs(y) > HY - CORNER ? HX + HY - CORNER - Math.abs(y) : HX,
+    y: Math.abs(x) > HX - CORNER ? HX + HY - CORNER - Math.abs(x) : HY,
+  };
+}
+
 function buildArena(parent) {
-  const box = new THREE.BoxGeometry(FIELD_X, FIELD_Y, FIELD_Z);
-  const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(box),
-    new THREE.LineBasicMaterial({ color: 0x4a5d82 }),
-  );
-  edges.position.set(0, 0, FIELD_Z / 2); // floor at z = 0
-  parent.add(edges);
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x4a5d82 });
 
-  const grid = new THREE.GridHelper(FIELD_Y, 20, 0x2e3d5c, 0x1e2842);
-  grid.rotation.x = Math.PI / 2; // GridHelper lies in XZ; rotate onto the RL floor (XY)
-  parent.add(grid);
-
-  const halfLine = new THREE.LineSegments(
-    new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-FIELD_X / 2, 0, 2),
-      new THREE.Vector3(FIELD_X / 2, 0, 2),
-    ]),
-    new THREE.LineBasicMaterial({ color: 0x4a5d82 }),
+  // Chamfered octagon: floor loop (z = 0), ceiling loop (z = FIELD_Z), and a
+  // vertical edge at each of the eight corners.
+  const floor = ARENA_OUTLINE.map(([x, y]) => new THREE.Vector3(x, y, 0));
+  const ceil = ARENA_OUTLINE.map(([x, y]) => new THREE.Vector3(x, y, FIELD_Z));
+  parent.add(
+    new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(floor), edgeMat),
   );
-  parent.add(halfLine);
+  parent.add(
+    new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(ceil), edgeMat),
+  );
+  const verticals = [];
+  for (const [x, y] of ARENA_OUTLINE) {
+    verticals.push(new THREE.Vector3(x, y, 0), new THREE.Vector3(x, y, FIELD_Z));
+  }
+  parent.add(
+    new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(verticals),
+      edgeMat,
+    ),
+  );
+
+  // Floor grid, ~1024 uu spacing, clipped to the octagon so nothing overhangs.
+  const gridPts = [];
+  for (let x = -HX; x <= HX + 1; x += 1024) {
+    const lim = outlineHalfWidth(x, 0).y;
+    gridPts.push(new THREE.Vector3(x, -lim, 0.5), new THREE.Vector3(x, lim, 0.5));
+  }
+  for (let y = -HY; y <= HY + 1; y += 1024) {
+    const lim = outlineHalfWidth(0, y).x;
+    gridPts.push(new THREE.Vector3(-lim, y, 0.5), new THREE.Vector3(lim, y, 0.5));
+  }
+  parent.add(
+    new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(gridPts),
+      new THREE.LineBasicMaterial({ color: 0x1e2842 }),
+    ),
+  );
+
+  // Centre line (wall to wall at y = 0, just above the floor).
+  parent.add(
+    new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-HX, 0, 2),
+        new THREE.Vector3(HX, 0, 2),
+      ]),
+      edgeMat,
+    ),
+  );
 }
 
 function createActorMeshes(field, meta) {
