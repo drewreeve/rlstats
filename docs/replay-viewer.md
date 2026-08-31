@@ -1,7 +1,8 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31). Steps 1, 1.5 and 2
-done — the backend is complete; step 3 onward is the browser page.
+Status: **in progress** (build sequence started 2026-08-31). Steps 1, 1.5, 2 and
+3 done — backend complete, and the page renders the arena + actors at frame 0.
+Step 4 onward is playback.
 
 - Step 1 = `replay_frames.py`; measured on `tests/data/team_size_2.json` (a
   ~5-minute 2v2, 9113 frames), `extract_replay_frames` runs in ~40 ms and yields
@@ -10,6 +11,8 @@ done — the backend is complete; step 3 onward is the browser page.
 - Step 1.5 = the `matches.replay_filename` column and backfill (see "Match id →
   `.replay` path"), without which a match cannot be resolved to its file at all.
 - Step 2 = `process.run_rrrocket`, `replay_view.py`, and the four routes below.
+- Step 3 = `replay.html` / `replay.js` / `replay.css`; Three.js via jsdelivr
+  `/+esm` (no importmap needed — decision 9); frame-0 static render.
 
 A ballchasing-style tactical replay viewer at `/match/{id}/replay`: a whole-field
 angled/orthographic 3D view of car and ball movement, built from the per-frame
@@ -51,7 +54,7 @@ there are working reference implementations on the same input.
 | 6 | Player identity | Full identity in v1: each car labelled with the player's name, coloured tracked-team vs opponent. Reuses the `car → PRI → (platform, id)` chain from `frame_analysis.py`. |
 | 7 | v1 feature scope | See below. |
 | 8 | Transport | Hybrid: small JSON metadata doc (like the other `/api` routes) + a separate packed `Float32` `.bin` of positions. One-shot, server gzip. No chunking. |
-| 9 | Three.js delivery | Inline `<script type="importmap">` → `three` + `three/addons/` from `cdn.jsdelivr.net`, pinned exact version, consumed by one `<script type="module">` on the replay page. Resolve the inline-importmap CSP question (nonce/hash) during step 3. |
+| 9 | Three.js delivery | **Simplified in step 3, no importmap.** `static/replay.js` (external module, same-origin `'self'`) imports Three + `OrbitControls` by full URL from jsdelivr's `/+esm` endpoints (`three@0.170.0/+esm`, `.../examples/jsm/controls/OrbitControls.js/+esm`), which pre-resolve all bare specifiers. Both loads are covered by the existing `script-src cdn.jsdelivr.net` — **no inline importmap, no CSP change.** |
 | 10 | Caching | None in v1. Measure first; add an in-process LRU only if click-to-view latency annoys. Never an on-disk sidecar (that is the persistence layer rejected in #2). |
 | 11 | Arena / mode coverage | Standard soccar arena only (covers 3v3, 2v2, and any other soccar-arena mode). Hoops/Dropshot matches get **no** viewer link in v1. Positions in the `.bin` are mode-agnostic, so a second arena is purely additive later. |
 | 12 | Orientation | Normalise: the tracked team always attacks the same on-screen direction, every match, regardless of which colour they were. |
@@ -196,9 +199,20 @@ endpoint returns `positions`.
 
 ### Client (`static/replay.js`, module script)
 
-- Three.js scene: wireframe soccar arena (8192 × 10240 × 2044 uu, scaled), box
-  cars, sphere ball. RL is Z-up; Three.js is Y-up — the frame data is loaded into
-  a parent group rotated −90° about X (or coordinates are swapped on load).
+**Step 3 built the skeleton:** `replay.html` / `replay.js` / `replay.css` (the last
+two in `_VERSIONED_ASSETS`), the page fetches `/replay` + `/replay-frames.bin`,
+builds the scene, and places every actor at its **frame-0 pose** with an
+orbitable orthographic camera. No playback yet. Coordinates stay in unreal
+units — no world scaling; the camera frustum (`VIEW_SIZE ≈ 9800 uu`) does the
+framing. The scene renders (verified by WebGL framebuffer readback: white ball
+centred, cyan/red cars in the kickoff ring, wireframe arena); note **headless
+Chromium `page.screenshot()` returns black for a WebGL canvas** even with
+`preserveDrawingBuffer` — verify via `gl.readPixels`, not screenshots.
+
+- Three.js scene: wireframe soccar arena (8192 × 10240 × 2044 uu), box cars,
+  sphere ball. RL is Z-up; Three.js is Y-up — actors and arena live in a parent
+  `Group` with `rotation.x = -π/2`, so RL `(x, y, z)` renders at world
+  `(x, z, -y)`.
 - **Orientation normalisation mechanism (decision 12):** the server emits **raw
   world coordinates** plus `tracked_team`. Team 0 attacks +y (per the
   stolen-boost comment in `frame_analysis.py`). When `tracked_team == 1` the
@@ -214,9 +228,10 @@ endpoint returns `positions`.
 
 ## Known wrinkles (carried into implementation)
 
-1. **Inline importmap vs CSP.** `server.py`'s CSP (`script-src cdn.jsdelivr.net`)
-   may reject an inline `<script type="importmap">`; it may need a nonce or hash.
-   Resolve in step 3.
+1. ~~**Inline importmap vs CSP.**~~ **Resolved in step 3 by not using an
+   importmap** — see decision 9. `replay.js` is an external same-origin module
+   that imports Three + OrbitControls by full jsdelivr `/+esm` URL; the existing
+   `script-src` already allows it, no CSP change.
 2. **Two time bases.** Frame `time` is seconds-from-replay-start; `match_events`
    are on the game clock. `MatchEventsHandler.finalize` already reconstructs
    game-clock seconds from `SecondsRemaining` (regulation counts down; OT resets
@@ -248,7 +263,7 @@ Incremental commits, tests alongside each step.
 | 1 ✅ | `replay_frames.py` — `extract_replay_frames` + `ReplayFrames`; unit tests against `tests/data/team_size_2.json` | `frame_times`, `slots` (identity/name/team/tracked/kind/segments), `positions`, `tracked_team`, `game_mode` |
 | 1.5 ✅ | `matches.replay_filename` (migration 020) + ingest wiring + `queries.match_replay_filename` + backfill. Un-privatise `build_player_stats` / `detect_game_mode`. | — |
 | 2 ✅ | `process.run_rrrocket` (non-deleting); `replay_view.py`; 4 routes (page + `has-replay` + meta + `.bin`); `GZipMiddleware`; `match.js` "Watch Replay" link; placeholder `replay.html`; 404 / missing-file / 422 tests | — |
-| 3 | Static page skeleton + importmap (+ CSP fix) + arena + static frame-0 pose, no playback | — |
+| 3 ✅ | `replay.html` / `replay.js` / `replay.css`; Three.js via jsdelivr `/+esm` (no importmap, no CSP change); wireframe arena + box cars + sphere ball at frame-0 pose; orbit camera; no playback | — |
 | 4 | Playback clock + lerp/slerp interpolation + scrub + speed | — |
 | 5 | Actor lifecycle + segment-based hiding | — |
 | 6 | Player labels + team colours + orientation normalisation | — |

@@ -55,6 +55,8 @@ _VERSIONED_ASSETS = [
     "app.js",
     "match.js",
     "player.js",
+    "replay.css",
+    "replay.js",
     "style.css",
     "upload.js",
     "utils.js",

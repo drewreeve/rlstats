@@ -272,3 +272,17 @@ def test_replay_page_served_when_file_present(replay_client: TestClient) -> None
     r = replay_client.get("/match/1/replay")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
+
+
+def test_replay_page_references_versioned_module_and_css(
+    replay_client: TestClient,
+) -> None:
+    html = replay_client.get("/match/1/replay").text
+    assert 'type="module" src="/static/replay.js?v=' in html
+    assert "/static/replay.css?v=" in html
+
+
+@pytest.mark.parametrize("asset", ["replay.js", "replay.css"])
+def test_replay_static_assets_served(match_client: TestClient, asset: str) -> None:
+    r = match_client.get(f"/static/{asset}")
+    assert r.status_code == 200

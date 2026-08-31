@@ -9,15 +9,24 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/replay.css">
 </head>
 <body>
     <div class="noise"></div>
 
-    <main class="match-detail">
-        <!-- The 3D viewer is built in step 3 (see docs/replay-viewer.md). -->
-        <p style="text-align:center;padding:3rem;color:var(--text-dim)">
-            Replay viewer coming soon.
-        </p>
-    </main>
+    <div class="replay-shell">
+        <header class="replay-bar">
+            <a class="replay-back" href="#" data-role="back">&lsaquo; MATCH</a>
+            <span class="replay-title" data-role="title">REPLAY</span>
+            <span class="replay-meta" data-role="meta"></span>
+        </header>
+
+        <div class="replay-stage" data-role="stage">
+            <canvas data-role="scene"></canvas>
+            <div class="replay-message" data-role="message" hidden></div>
+        </div>
+    </div>
+
+    <script type="module" src="/static/replay.js"></script>
 </body>
 </html>
