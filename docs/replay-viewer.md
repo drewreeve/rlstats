@@ -1,9 +1,11 @@
 # Browser Replay Viewer — Design
 
-Status: **in progress** (build sequence started 2026-08-31). Steps 1–5 done —
-backend complete; the page renders the arena + actors, plays back on a real-time
-clock (play/pause, scrub, 0.5×–4×), and hides a slot while its actor is between
-segments. Step 6 onward: labels, orientation, trails, camera, event markers.
+Status: **in progress** (build sequence started 2026-08-31). Steps 1–6 done —
+backend complete; the page renders the arena + actors (team-coloured, name
+labels), plays back on a real-time clock (play/pause, scrub, 0.5×–4×), hides a
+slot while its actor is between segments, and flips the field so the tracked team
+always attacks the same way. Step 7 onward: trails, camera presets, event
+markers.
 
 - Step 1 = `replay_frames.py`; measured on `tests/data/team_size_2.json` (a
   ~5-minute 2v2, 9113 frames), `extract_replay_frames` runs in ~40 ms and yields
@@ -240,17 +242,19 @@ moves meshes with sub-sample interpolation. **Headless Chromium
   sphere ball. RL is Z-up; Three.js is Y-up — actors and arena live in a parent
   `Group` with `rotation.x = -π/2`, so RL `(x, y, z)` renders at world
   `(x, z, -y)`.
-- **Orientation normalisation mechanism (decision 12):** the server emits **raw
-  world coordinates** plus `tracked_team`. Team 0 attacks +y (per the
-  stolen-boost comment in `frame_analysis.py`). When `tracked_team == 1` the
-  client rotates the whole field group 180° about the vertical axis, so the
-  tracked team always attacks the same way on screen. The flip is one transform
-  on a parent group; the `.bin` stays raw.
-- Cars coloured tracked-team vs opponent; each labelled with `slot.name`.
-- Playback: one clock; `frame_times` drives a binary-search from elapsed seconds
-  to a frame index; position is lerp'd and rotation slerp'd between the two
-  bounding samples using the **real** (non-uniform, ~33 ms) delta.
-- A slot whose current frame is outside all its `segments` is hidden.
+- **Labels + orientation (step 6).** Each car carries a `THREE.Sprite` name tag
+  (`makeLabelSprite` draws `slot.name` to a canvas texture in the car's colour,
+  `depthTest: false` so it stays on top); `applyPoses` parks it `LABEL_HEIGHT` uu
+  above the car and hides it with the car. `main` awaits `document.fonts.ready`
+  so the tag renders in DM Mono, not the fallback. **Orientation normalisation
+  (decision 12):** the `.bin` stays raw; arena + actors + labels live in an inner
+  `field` group inside the axis-remap `world` group, and `field.rotation.z = π`
+  when `meta.tracked_team === 1` — a 180° spin in RL's horizontal plane. Net
+  effect for both tracked configurations: the tracked team defends world **+z**
+  (near the camera) and attacks toward **−z**. Sprites ignore parent rotation, so
+  label text is not mirrored. Verified against match 1 (`tracked_team = 1`):
+  Drew's raw `(-256, 3840, 17)` renders at world `(256, 17, 3840)` — the flip is
+  applied and the label rides along.
 - Trails: a short ring-buffer `BufferGeometry` per car and the ball.
 
 ## Known wrinkles (carried into implementation)
@@ -293,7 +297,7 @@ Incremental commits, tests alongside each step.
 | 3 ✅ | `replay.html` / `replay.js` / `replay.css`; Three.js via jsdelivr `/+esm` (no importmap, no CSP change); wireframe arena + box cars + sphere ball at frame-0 pose; orbit camera; no playback | — |
 | 4 ✅ | `createPlayback` clock + `bracket` + lerp/slerp; transport bar (play/pause, scrub, `M:SS` clock, 0.5×–4×, space + arrow keys); `?debug` hook | — |
 | 5 ✅ | `slotLiveAt` + `applyPoses` hides a slot between its segments; `ff` snaps to the live bracket end so no lerp toward the zero-pose | — |
-| 6 | Player labels + team colours + orientation normalisation | — |
+| 6 ✅ | `makeLabelSprite` canvas-texture name tags per car (team colour, `depthTest:false`), parked above the car; `field` group flipped 180° when `tracked_team === 1`; `document.fonts.ready` awaited | — |
 | 7 | Trails | — |
 | 8 | Camera presets + orbit | — |
 | 9 | Scrub-bar event markers + scoreboard | `events` (type + frame index), score timeline, per-frame game-clock seconds |

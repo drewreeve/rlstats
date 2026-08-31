@@ -1,10 +1,12 @@
 // Browser replay viewer — see docs/replay-viewer.md
 //
-// Steps 3–5: load a match's metadata + packed position buffer, build a Three.js
-// scene (wireframe soccar arena + box cars + sphere ball), and play it back on a
-// real-time clock — play/pause, scrub, 0.5×–4× speed. Poses are lerp/slerp'd
-// between rrrocket's ~30 Hz samples using the real (non-uniform) frame deltas.
-// A slot's mesh is hidden while its actor is between segments (demolitions).
+// Steps 3–6: load a match's metadata + packed position buffer, build a Three.js
+// scene (wireframe soccar arena + box cars + sphere ball + name labels), and
+// play it back on a real-time clock — play/pause, scrub, 0.5×–4× speed. Poses
+// are lerp/slerp'd between rrrocket's ~30 Hz samples using the real (non-uniform)
+// frame deltas. A slot's mesh is hidden while its actor is between segments
+// (demolitions). When the tracked team is team 1 the field is flipped 180° so
+// "our" half is always the same side of the screen.
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/+esm";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
@@ -24,6 +26,7 @@ const TEAM_THEIRS = 0xff5a5a;
 const TEAM_UNKNOWN = 0x8585a0;
 const VIEW_SIZE = 9800; // orthographic frustum height, uu — frames the field
 const SEEK_STEP = 5; // seconds, for arrow-key seeking
+const LABEL_HEIGHT = 150; // uu above a car's centre for its name label
 
 const stage =
   document.querySelector('[data-role="stage"]') ||
@@ -73,6 +76,42 @@ function slotLiveAt(slot, frame) {
   return false;
 }
 
+// A camera-facing name tag drawn to a canvas texture. Sprites ignore parent
+// rotation, so the text reads normally even inside the flipped field group.
+function makeLabelSprite(text, cssColor) {
+  const font = "600 40px 'DM Mono', ui-monospace, monospace";
+  const measure = document.createElement("canvas").getContext("2d");
+  measure.font = font;
+  const padX = 12;
+  const w = Math.ceil(measure.measureText(text).width) + padX * 2;
+  const h = 56;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d");
+  ctx.font = font;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "rgba(8, 10, 18, 0.7)";
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = cssColor;
+  ctx.fillText(text, padX, h / 2 + 2);
+
+  const texture = new THREE.CanvasTexture(c);
+  texture.anisotropy = 4;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  const height = 260; // uu
+  sprite.scale.set((w / h) * height, height, 1);
+  sprite.renderOrder = 10;
+  return sprite;
+}
+
 function formatClock(seconds) {
   const s = Math.max(0, Math.round(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -94,18 +133,18 @@ function bracket(times, t) {
   return [lo, hi, span > 0 ? (t - times[lo]) / span : 0];
 }
 
-function buildArena(world) {
+function buildArena(parent) {
   const box = new THREE.BoxGeometry(FIELD_X, FIELD_Y, FIELD_Z);
   const edges = new THREE.LineSegments(
     new THREE.EdgesGeometry(box),
     new THREE.LineBasicMaterial({ color: 0x4a5d82 }),
   );
   edges.position.set(0, 0, FIELD_Z / 2); // floor at z = 0
-  world.add(edges);
+  parent.add(edges);
 
   const grid = new THREE.GridHelper(FIELD_Y, 20, 0x2e3d5c, 0x1e2842);
   grid.rotation.x = Math.PI / 2; // GridHelper lies in XZ; rotate onto the RL floor (XY)
-  world.add(grid);
+  parent.add(grid);
 
   const halfLine = new THREE.LineSegments(
     new THREE.BufferGeometry().setFromPoints([
@@ -114,24 +153,31 @@ function buildArena(world) {
     ]),
     new THREE.LineBasicMaterial({ color: 0x4a5d82 }),
   );
-  world.add(halfLine);
+  parent.add(halfLine);
 }
 
-function createActorMeshes(world, meta) {
+function createActorMeshes(field, meta) {
   return meta.slots.map((slot) => {
-    const mesh =
-      slot.kind === "ball"
-        ? new THREE.Mesh(
-            new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
-            new THREE.MeshLambertMaterial({ color: 0xf0f0f4 }),
-          )
-        : new THREE.Mesh(
-            new THREE.BoxGeometry(...CAR_SIZE),
-            new THREE.MeshLambertMaterial({
-              color: carColor(slot, meta.tracked_team),
-            }),
-          );
-    world.add(mesh);
+    if (slot.kind === "ball") {
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
+        new THREE.MeshLambertMaterial({ color: 0xf0f0f4 }),
+      );
+      field.add(ball);
+      return ball;
+    }
+    const color = carColor(slot, meta.tracked_team);
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(...CAR_SIZE),
+      new THREE.MeshLambertMaterial({ color }),
+    );
+    const label = makeLabelSprite(
+      slot.name,
+      "#" + color.toString(16).padStart(6, "0"),
+    );
+    mesh.userData.label = label;
+    field.add(mesh);
+    field.add(label);
     return mesh;
   });
 }
@@ -149,10 +195,12 @@ function createPlayback(meta, positions, meshes) {
     const [i, j, f] = bracket(times, state.t);
     for (let s = 0; s < meshes.length; s++) {
       const slot = meta.slots[s];
+      const label = meshes[s].userData.label;
       const liveI = slotLiveAt(slot, i);
       const liveJ = slotLiveAt(slot, j);
       if (!liveI && !liveJ) {
         meshes[s].visible = false;
+        if (label) label.visible = false;
         continue;
       }
       meshes[s].visible = true;
@@ -180,6 +228,15 @@ function createPlayback(meta, positions, meshes) {
         positions[b + 6],
       );
       meshes[s].quaternion.copy(_qa.slerp(_qb, ff));
+
+      if (label) {
+        label.visible = true;
+        label.position.set(
+          meshes[s].position.x,
+          meshes[s].position.y,
+          meshes[s].position.z + LABEL_HEIGHT,
+        );
+      }
     }
   }
 
@@ -279,8 +336,16 @@ function buildScene(meta, positions) {
   world.rotation.x = -Math.PI / 2;
   scene.add(world);
 
-  buildArena(world);
-  const meshes = createActorMeshes(world, meta);
+  // Orientation normalisation (decision 12): when the tracked team is team 1,
+  // spin the field 180° in RL's horizontal plane so "our" half of the pitch is
+  // always on the same side of the screen. Label sprites stay camera-facing, so
+  // their text is not mirrored.
+  const field = new THREE.Group();
+  if (meta.tracked_team === 1) field.rotation.z = Math.PI;
+  world.add(field);
+
+  buildArena(field);
+  const meshes = createActorMeshes(field, meta);
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -364,6 +429,7 @@ async function main() {
     }
     const positions = new Float32Array(await binRes.arrayBuffer());
 
+    await document.fonts.ready; // so name labels render in DM Mono, not fallback
     buildScene(meta, positions);
   } catch (err) {
     console.error(err);
