@@ -1,0 +1,221 @@
+# Browser Replay Viewer — Design
+
+Status: **in progress** (build sequence started 2026-08-31)
+
+A ballchasing-style tactical replay viewer at `/match/{id}/replay`: a whole-field
+angled/orthographic 3D view of car and ball movement, built from the per-frame
+positional data that `rrrocket -n` already produces. It is an **analysis tool**
+for spotting the tracked team's positional habits across many matches, not a
+game-like re-render.
+
+This document is the durable record of the design decisions and their rationale.
+It was produced by a grilling session on 2026-08-31; the numbered decisions below
+are the settled branches of that design tree.
+
+## How comparable viewers work
+
+- **ballchasing.com** — solo-built, proprietary, no public code. Server-side
+  network-parses each uploaded `.replay` into per-frame positions, then renders a
+  deliberately *un*-game-like WebGL scene: field outline, simple car markers,
+  ball, boost pads, motion trails, whole field visible at once. It explicitly
+  does not reproduce the game camera. **This is the model we are copying.**
+- **calculated.gg** — the opposite choice: full 3D game-like replication with
+  ripped field/car models (`SaltieRL/WebReplayViewer`, MIT, React + Three.js).
+  Org dormant since 2023. Useful only as an interpolation / camera reference.
+- **foppage/replay-viewer** (Svelte) and **Longi94/rocket-viewer** (Three.js,
+  boxcars-WASM) — both consume essentially the `rrrocket -n` JSON we already
+  produce. Closest architectural precedents.
+
+Feasibility is not in question: the data already exists (`frame_analysis.py`
+parses every frame's `RigidBody` state and discards it), the parse is ~0.1 s, and
+there are working reference implementations on the same input.
+
+## Settled decisions
+
+| # | Decision | Choice |
+|---|----------|--------|
+| 1 | Purpose / fidelity | Ballchasing-style tactical overview; primitive shapes only. An analysis tool, not a toy. |
+| 2 | Frame-data source | Re-parse the stored `.replay` on demand at view time. No persistence, no migration, no backfill. |
+| 3 | UI placement | New dedicated route `/match/{id}/replay` + its own static HTML/JS/CSS, linked from the match detail page. |
+| 4 | Rendering tech | Three.js with primitive meshes (box cars, sphere ball, wireframe arena). Orthographic/high camera so it reads like ballchasing. Keeps the Z axis — height and aerials matter. |
+| 5 | Server extraction architecture | New `replay_frames.py` — a pure reshape function over a `ParsedReplay`, plus (step 2) a **non-deleting** rrrocket wrapper. Not routed through `queries.py` (not a DB read) and not through `analyze_frames` (not the aggregate pipeline). |
+| 6 | Player identity | Full identity in v1: each car labelled with the player's name, coloured tracked-team vs opponent. Reuses the `car → PRI → (platform, id)` chain from `frame_analysis.py`. |
+| 7 | v1 feature scope | See below. |
+| 8 | Transport | Hybrid: small JSON metadata doc (like the other `/api` routes) + a separate packed `Float32` `.bin` of positions. One-shot, server gzip. No chunking. |
+| 9 | Three.js delivery | Inline `<script type="importmap">` → `three` + `three/addons/` from `cdn.jsdelivr.net`, pinned exact version, consumed by one `<script type="module">` on the replay page. Resolve the inline-importmap CSP question (nonce/hash) during step 3. |
+| 10 | Caching | None in v1. Measure first; add an in-process LRU only if click-to-view latency annoys. Never an on-disk sidecar (that is the persistence layer rejected in #2). |
+| 11 | Arena / mode coverage | Standard soccar arena only (covers 3v3, 2v2, and any other soccar-arena mode). Hoops/Dropshot matches get **no** viewer link in v1. Positions in the `.bin` are mode-agnostic, so a second arena is purely additive later. |
+| 12 | Orientation | Normalise: the tracked team always attacks the same on-screen direction, every match, regardless of which colour they were. |
+| 13 | Link availability & failure | Show "Watch replay" only when `replays/<hash>.replay` exists; route 404s otherwise. On a view-time parse failure, return an error payload the page renders — and **never delete the file** (unlike the ingest path). |
+
+### v1 feature scope (decision 7)
+
+**In:**
+
+- Play / pause, draggable scrub bar, speed control (0.5× / 1× / 2× / 4×), one animation clock
+- Camera: 2 presets (broadcast-high, top-down) + drag to orbit/zoom. No follow-cam, no player POV.
+- Motion trails — short fading tail per car and the ball
+- Event markers on the scrub bar — goals / shots / saves / demos, from `match_events.game_seconds`
+- Scoreboard readout: score, game clock
+- Actor lifecycle (spawn/despawn) — **mandatory**: a demoed car's actor leaves the
+  frame stream for ~3 s; the slot's mesh is hidden while it is gone, so the car
+  does not teleport on respawn
+
+**Deferred (in rough priority order):** boost amounts + pad respawn timers ·
+demolition effects · per-player POV · follow-cam feel · goal-replay cutaways ·
+heatmaps · Hoops / Dropshot arenas · any caching.
+
+## Architecture
+
+### Server
+
+```
+GET /match/{id}/replay            -> static replay.html
+GET /api/matches/{id}/replay      -> metadata JSON  (gated on .replay presence; 404 otherwise)
+GET /api/matches/{id}/replay-frames.bin -> gzipped Float32 position buffer
+```
+
+- **`replay_frames.py`** — the reshape layer. Its core is a pure function whose
+  signature mirrors `analyze_frames`:
+
+  ```python
+  def extract_replay_frames(
+      replay: ParsedReplay,
+      *,
+      tracked_team: int | None,
+      tracked_identities: set[PlayerIdentity],
+      player_names: dict[PlayerIdentity, str],   # display name preferred, else in-game
+      game_mode: str | None,
+  ) -> ReplayFrames
+  ```
+
+  It does its own lean single pass over `replay.frames` (it does **not** call
+  `analyze_frames`; decision 5). It reuses `IdentityResolver` and
+  `from_network_frame` from the existing modules for the `car → PRI → identity`
+  chain, and `_resolve_obj_ids`'s pattern for name→object-id resolution.
+
+- The route layer (step 2) adds a **non-deleting** rrrocket call. `process.py`'s
+  `parse_replay()` deletes the `.replay` on failure/timeout (`process.py:65,77`);
+  the viewer must call a sibling that returns the error and leaves the file
+  alone. It builds the `extract_replay_frames` inputs from `replay.properties`
+  via the cheap helpers `resolve_perspective`, `_build_player_stats`,
+  `_detect_game_mode` (currently private in `ingest.py` — un-privatise or lift as
+  part of step 2), **without** running `analyze_frames`.
+
+- Match id → `.replay` path: `matches.replay_hash` is the replay's `MatchGUID`
+  and replay files are named `replays/<MatchGUID>.replay`. `match_metadata` in
+  `sql/match_detail.sql` does not currently select `replay_hash`; step 2 adds a
+  small `queries.py` read for it.
+
+### `ReplayFrames` shape
+
+```python
+@dataclass(frozen=True)
+class ActorSlot:
+    identity: tuple[str, str] | None   # None for unresolved cars (bots, odd platforms)
+    name: str                          # display name > in-game name > "Player N"
+    team: int                          # 0 | 1  (from TeamPaint)
+    is_tracked: bool
+    kind: str                          # "car" | "ball"
+    segments: list[tuple[int, int]]    # (start_frame, end_frame) inclusive, frame-index space
+
+@dataclass(frozen=True)
+class ReplayFrames:
+    frame_times: list[float]           # length F, wall-clock seconds, non-uniform
+    slots: list[ActorSlot]             # ball slot(s) + one car slot per player
+    positions: bytes                   # F * N * 7 float32, row-major [frame][slot][x,y,z, qx,qy,qz,qw]
+    tracked_team: int | None
+    game_mode: str | None
+```
+
+The JSON metadata endpoint serialises everything except `positions`; the `.bin`
+endpoint returns `positions`.
+
+### Extraction rules (the lean frame walk)
+
+- **Phase ordering is preserved** from `_process_frame`: new_actors →
+  updated_actors → deleted_actors, within each frame. A car spawned and
+  PRI-linked in the same frame must keep its link.
+- **Every frame is recorded.** Unlike every existing handler, the walk does
+  **not** gate on `ctx.is_playing` — decision 7 shows the full stream (warmup,
+  countdowns, celebrations); the user scrubs past dead time.
+- **Slots keyed by identity.** Cars get a fresh actor id each life; all car
+  actor ids that resolve to the same `(platform, id)` feed one slot's
+  `segments`. A car whose PRI never resolves gets its **own anonymous slot**
+  (`identity=None`, `name="Player N"`, team from `TeamPaint`) — it is never
+  dropped. A resolved identity with no entry in `player_names` (a leaver missing
+  from the `PlayerStats` blob) falls back to a placeholder name rather than
+  raising.
+- **The ball is not special-cased as always-present.** The ball actor is
+  deleted and recreated around goals in many replays; it uses the same
+  slot/segment model.
+- **Carry-forward.** `positions` is dense: each frame holds a full pose for every
+  slot. Per slot, maintain the last-known `(x,y,z,qx,qy,qz,qw)` and re-emit it on
+  frames where the actor did not update. Seed it from the `new_actor`'s
+  `initial_trajectory.location`; `initial_trajectory.rotation` may be `null`, and
+  a `RigidBody` update may omit `rotation` / velocities — carry forward the
+  previous value, or the identity quaternion if none has been seen yet.
+- **Segment bounds.** A slot's segment starts at the frame index of its
+  `new_actor` and ends at the frame index of its `deleted_actor` (or the last
+  frame). The client hides a slot's mesh outside its segments.
+
+### Client (`static/replay.js`, module script)
+
+- Three.js scene: wireframe soccar arena (8192 × 10240 × 2044 uu, scaled), box
+  cars, sphere ball. RL is Z-up; Three.js is Y-up — the frame data is loaded into
+  a parent group rotated −90° about X (or coordinates are swapped on load).
+- **Orientation normalisation mechanism (decision 12):** the server emits **raw
+  world coordinates** plus `tracked_team`. Team 0 attacks +y (per the
+  stolen-boost comment in `frame_analysis.py`). When `tracked_team == 1` the
+  client rotates the whole field group 180° about the vertical axis, so the
+  tracked team always attacks the same way on screen. The flip is one transform
+  on a parent group; the `.bin` stays raw.
+- Cars coloured tracked-team vs opponent; each labelled with `slot.name`.
+- Playback: one clock; `frame_times` drives a binary-search from elapsed seconds
+  to a frame index; position is lerp'd and rotation slerp'd between the two
+  bounding samples using the **real** (non-uniform, ~33 ms) delta.
+- A slot whose current frame is outside all its `segments` is hidden.
+- Trails: a short ring-buffer `BufferGeometry` per car and the ball.
+
+## Known wrinkles (carried into implementation)
+
+1. **Inline importmap vs CSP.** `server.py`'s CSP (`script-src cdn.jsdelivr.net`)
+   may reject an inline `<script type="importmap">`; it may need a nonce or hash.
+   Resolve in step 3.
+2. **Two time bases.** Frame `time` is seconds-from-replay-start; `match_events`
+   are on the game clock. `MatchEventsHandler.finalize` already reconstructs
+   game-clock seconds from `SecondsRemaining` (regulation counts down; OT resets
+   to 0 and counts up). Reuse that logic to place scrub-bar markers (build
+   step 9).
+3. **`process.py` deletes `.replay` on parse failure.** The view path must not
+   (decision 13).
+4. **Frame-stream gaps** during countdowns and goal explosions — the client
+   holds last state / interpolates across; no special handling server-side.
+5. **Non-uniform deltas** — the clock integrates real frame deltas, it never
+   assumes a fixed step.
+6. **Little-endian buffer.** `array.array('f').tobytes()` writes native byte
+   order; JS `Float32Array` reads little-endian. True on every target platform;
+   recorded here so it is an assumption, not an accident.
+
+## Assumptions (stated, not grilled)
+
+- Desktop-first; no mobile/touch tuning in v1.
+- The new read endpoints follow the same auth posture as the existing
+  `/api/matches/{id}`.
+- The full frame stream is shown (warmup + celebrations); the user scrubs past.
+
+## Build sequence
+
+Incremental commits, tests alongside each step.
+
+| Step | Deliverable | Metadata fields that land here |
+|------|-------------|-------------------------------|
+| 1 | `replay_frames.py` — `extract_replay_frames` + `ReplayFrames`; unit tests against `tests/data/team_size_2.json` | `frame_times`, `slots` (identity/name/team/tracked/kind/segments), `positions`, `tracked_team`, `game_mode` |
+| 2 | Non-deleting rrrocket wrapper; the three routes; `replay_hash` read; link gating; tests for 404 / missing-file / failure | — |
+| 3 | Static page skeleton + importmap (+ CSP fix) + arena + static frame-0 pose, no playback | — |
+| 4 | Playback clock + lerp/slerp interpolation + scrub + speed | — |
+| 5 | Actor lifecycle + segment-based hiding | — |
+| 6 | Player labels + team colours + orientation normalisation | — |
+| 7 | Trails | — |
+| 8 | Camera presets + orbit | — |
+| 9 | Scrub-bar event markers + scoreboard | `events` (type + frame index), score timeline, per-frame game-clock seconds |
