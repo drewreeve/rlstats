@@ -4,11 +4,13 @@ Processes rrrocket network frame data into aggregate match stats.  Each frame
 carries three actor-lifecycle lists: new_actors (spawned), updated_actors
 (attribute changed), and deleted_actors (despawned).
 
-Identity resolution chain — the central indirection in this file:
+Identity resolution chain:
   car_actor_id  →  pri_actor_id    (Engine.Pawn:PlayerReplicationInfo)
   pri_actor_id  →  (platform, id)  (Engine.PlayerReplicationInfo:UniqueId)
 Cars get a new actor ID each life; PRIs persist the whole match; (platform, id)
-is the stable key that joins to the `players` table.
+is the stable key that joins to the `players` table. `IdentityResolver` owns
+this chain and is also imported by `replay_frames.py`; the per-frame wiring
+that feeds it is deliberately not shared between the two frame walks (ADR-0003).
 
 Per-frame processing order enforced by analyze_frames:
   1. new_actors    — register car/ball/boost archetypes into FrameContext
@@ -25,7 +27,7 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 
 from player_identity import PlayerIdentity, from_network_frame
-from rrrocket_schema import FrameData, ParsedReplay, UpdatedActor
+from rrrocket_schema import FrameData, NetObj, ParsedReplay, UpdatedActor
 
 # Coordinates are taken from wiki.rlbot.org
 # https://wiki.rlbot.org/v4/botmaking/useful-game-values/
@@ -280,31 +282,13 @@ def _parse_pickup(
 
 
 def _resolve_obj_ids(replay: ParsedReplay) -> dict[str, int | None]:
-    """Resolve handler-relevant object names to IDs via the replay's object index."""
-    names = {
-        "TAGame.Ball_TA:HitTeamNum",
-        "Archetypes.Ball.Ball_Default",
-        "Archetypes.Car.Car_Default",
-        "Archetypes.CarComponents.CarComponent_Boost",
-        "TAGame.RBActor_TA:ReplicatedRBState",
-        "TAGame.CarComponent_Boost_TA:ReplicatedBoost",
-        "TAGame.CarComponent_TA:Vehicle",
-        "Engine.Pawn:PlayerReplicationInfo",
-        "Engine.PlayerReplicationInfo:UniqueId",
-        "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam",
-        "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",
-        "TAGame.VehiclePickup_TA:NewReplicatedPickupData",
-        "TAGame.Car_TA:TeamPaint",
-        "TAGame.PRI_TA:MatchDemolishes",
-        "TAGame.Car_TA:ReplicatedDemolishExtended",
-        "TAGame.GameEvent_Soccar_TA:SecondsRemaining",
-        "Engine.PlayerReplicationInfo:Team",
-        "TAGame.PRI_TA:MatchGoals",
-        "TAGame.PRI_TA:MatchShots",
-        "TAGame.PRI_TA:MatchSaves",
-        "TAGame.PRI_TA:MatchAssists",
-    }
-    return {name: replay.object_index.get(name) for name in names}
+    """Resolve every `NetObj` name to its ID via the replay's object index.
+
+    The set is enum-driven, not curated here: a new `NetObj` member is picked
+    up automatically. Keyed by the raw name (`NetObj.value`) so callers may
+    index with either a member or a plain string.
+    """
+    return {obj.value: replay.object_index.get(obj) for obj in NetObj}
 
 
 # -- Handlers --
@@ -319,7 +303,7 @@ class PossessionHandler(FrameHandler):
     ) -> "PossessionHandler | None":
         if tracked_team is None:
             return None
-        hit_team_obj_id = obj_ids.get("TAGame.Ball_TA:HitTeamNum")
+        hit_team_obj_id = obj_ids.get(NetObj.BALL_HIT_TEAM)
         if hit_team_obj_id is None:
             return None
         return cls(hit_team_obj_id, tracked_team)
@@ -388,8 +372,8 @@ class BallZonesHandler(FrameHandler):
     ) -> "BallZonesHandler | None":
         if tracked_team is None:
             return None
-        rb_obj_id = obj_ids.get("TAGame.RBActor_TA:ReplicatedRBState")
-        ball_archetype = obj_ids.get("Archetypes.Ball.Ball_Default")
+        rb_obj_id = obj_ids.get(NetObj.RB_STATE)
+        ball_archetype = obj_ids.get(NetObj.BALL_ARCHETYPE)
         if rb_obj_id is None or ball_archetype is None:
             return None
         return cls(rb_obj_id, tracked_team)
@@ -426,7 +410,7 @@ class PlayerZonesHandler(FrameHandler):
     ) -> "PlayerZonesHandler | None":
         if tracked_team is None:
             return None
-        rb_obj_id = obj_ids.get("TAGame.RBActor_TA:ReplicatedRBState")
+        rb_obj_id = obj_ids.get(NetObj.RB_STATE)
         if rb_obj_id is None:
             return None
         return cls(rb_obj_id, tracked_team)
@@ -486,7 +470,7 @@ class DemolitionsHandler(FrameHandler):
 
     @classmethod
     def create(cls, obj_ids: dict[str, int | None]) -> "DemolitionsHandler | None":
-        demo_obj_id = obj_ids.get("TAGame.PRI_TA:MatchDemolishes")
+        demo_obj_id = obj_ids.get(NetObj.MATCH_DEMOLISHES)
         if demo_obj_id is None:
             return None
         return cls(demo_obj_id)
@@ -512,7 +496,7 @@ class DemosReceivedHandler(FrameHandler):
 
     @classmethod
     def create(cls, obj_ids: dict[str, int | None]) -> "DemosReceivedHandler | None":
-        demolish_obj_id = obj_ids.get("TAGame.Car_TA:ReplicatedDemolishExtended")
+        demolish_obj_id = obj_ids.get(NetObj.DEMOLISH_EXTENDED)
         if demolish_obj_id is None:
             return None
         return cls(demolish_obj_id)
@@ -564,7 +548,7 @@ class BoostStatsHandler(FrameHandler):
     ) -> "BoostStatsHandler | None":
         if tracked_team is None:
             return None
-        pickup_obj_id = obj_ids.get("TAGame.VehiclePickup_TA:NewReplicatedPickupData")
+        pickup_obj_id = obj_ids.get(NetObj.PICKUP_DATA)
         if pickup_obj_id is None:
             return None
         return cls(pickup_obj_id, tracked_team, big_pads)
@@ -625,9 +609,9 @@ class MovementHandler(FrameHandler):
     ) -> "MovementHandler | None":
         if not duration or duration <= 0:
             return None
-        rb_obj_id = obj_ids.get("TAGame.RBActor_TA:ReplicatedRBState")
-        boost_obj_id = obj_ids.get("TAGame.CarComponent_Boost_TA:ReplicatedBoost")
-        pickup_obj_id = obj_ids.get("TAGame.VehiclePickup_TA:NewReplicatedPickupData")
+        rb_obj_id = obj_ids.get(NetObj.RB_STATE)
+        boost_obj_id = obj_ids.get(NetObj.REPLICATED_BOOST)
+        pickup_obj_id = obj_ids.get(NetObj.PICKUP_DATA)
         if rb_obj_id is None or boost_obj_id is None or pickup_obj_id is None:
             return None
         return cls(rb_obj_id, boost_obj_id, pickup_obj_id, duration, big_pads)
@@ -805,11 +789,11 @@ class MatchEventsHandler(FrameHandler):
     with game-clock-anchored timestamps."""
 
     _COUNTER_NAMES = {
-        "TAGame.PRI_TA:MatchGoals": "goal",
-        "TAGame.PRI_TA:MatchShots": "shot",
-        "TAGame.PRI_TA:MatchSaves": "save",
-        "TAGame.PRI_TA:MatchDemolishes": "demo",
-        "TAGame.PRI_TA:MatchAssists": "assist",
+        NetObj.MATCH_GOALS: "goal",
+        NetObj.MATCH_SHOTS: "shot",
+        NetObj.MATCH_SAVES: "save",
+        NetObj.MATCH_DEMOLISHES: "demo",
+        NetObj.MATCH_ASSISTS: "assist",
     }
 
     @classmethod
@@ -821,8 +805,8 @@ class MatchEventsHandler(FrameHandler):
     ) -> "MatchEventsHandler | None":
         if tracked_team is None:
             return None
-        sr_obj_id = obj_ids.get("TAGame.GameEvent_Soccar_TA:SecondsRemaining")
-        team_obj_id = obj_ids.get("Engine.PlayerReplicationInfo:Team")
+        sr_obj_id = obj_ids.get(NetObj.SECONDS_REMAINING)
+        team_obj_id = obj_ids.get(NetObj.PRI_TEAM)
         if sr_obj_id is None or team_obj_id is None:
             return None
         counter_obj_ids: dict[int, str] = {}
@@ -1063,18 +1047,16 @@ def analyze_frames(
     obj_ids = _resolve_obj_ids(replay)
 
     loop_obj_ids = _FrameLoopObjectIds(
-        car_archetype=obj_ids.get("Archetypes.Car.Car_Default"),
-        ball_archetype=obj_ids.get("Archetypes.Ball.Ball_Default"),
-        boost_comp_archetype=obj_ids.get("Archetypes.CarComponents.CarComponent_Boost"),
-        scored_obj_id=obj_ids.get("TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam"),
-        countdown_obj_id=obj_ids.get(
-            "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber"
-        ),
-        vehicle_obj_id=obj_ids.get("TAGame.CarComponent_TA:Vehicle"),
-        pri_obj_id=obj_ids.get("Engine.Pawn:PlayerReplicationInfo"),
-        uid_obj_id=obj_ids.get("Engine.PlayerReplicationInfo:UniqueId"),
-        team_paint_obj_id=obj_ids.get("TAGame.Car_TA:TeamPaint"),
-        rb_obj_id=obj_ids.get("TAGame.RBActor_TA:ReplicatedRBState"),
+        car_archetype=obj_ids.get(NetObj.CAR_ARCHETYPE),
+        ball_archetype=obj_ids.get(NetObj.BALL_ARCHETYPE),
+        boost_comp_archetype=obj_ids.get(NetObj.BOOST_COMPONENT_ARCHETYPE),
+        scored_obj_id=obj_ids.get(NetObj.SCORED_ON_TEAM),
+        countdown_obj_id=obj_ids.get(NetObj.COUNTDOWN),
+        vehicle_obj_id=obj_ids.get(NetObj.VEHICLE),
+        pri_obj_id=obj_ids.get(NetObj.PAWN_PRI),
+        uid_obj_id=obj_ids.get(NetObj.PRI_UNIQUE_ID),
+        team_paint_obj_id=obj_ids.get(NetObj.TEAM_PAINT),
+        rb_obj_id=obj_ids.get(NetObj.RB_STATE),
     )
 
     big_pads = BIG_PAD_POSITIONS["hoops" if game_mode == "hoops" else "standard"]

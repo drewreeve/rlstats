@@ -13,11 +13,48 @@ Call `parse(raw)` to convert a raw `ReplayJSON` dict into a `ParsedReplay`
 dataclass. All downstream consumers (ingest.py, frame_analysis.py) accept
 `ParsedReplay`; `ReplayJSON` is only used at the boundary where rrrocket JSON
 is first read.
+
+`NetObj` is the single vocabulary of network object names the frame walks
+resolve against `ParsedReplay.object_index`; `frame_analysis.py` and
+`replay_frames.py` reference its members instead of bare string literals.
 """
 
 import datetime
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, NotRequired, TypedDict
+
+
+class NetObj(StrEnum):
+    """Network object names the frame walks look up in `ParsedReplay.object_index`.
+
+    Members are plain strings (``StrEnum``), so ``obj_index.get(NetObj.RB_STATE)``
+    and ``NetObj.RB_STATE == "TAGame.RBActor_TA:ReplicatedRBState"`` both work.
+    The values are rrrocket wire-format facts; `tests/test_rrrocket_schema.py`
+    guards them against drift.
+    """
+
+    BALL_HIT_TEAM = "TAGame.Ball_TA:HitTeamNum"
+    BALL_ARCHETYPE = "Archetypes.Ball.Ball_Default"
+    CAR_ARCHETYPE = "Archetypes.Car.Car_Default"
+    BOOST_COMPONENT_ARCHETYPE = "Archetypes.CarComponents.CarComponent_Boost"
+    RB_STATE = "TAGame.RBActor_TA:ReplicatedRBState"
+    REPLICATED_BOOST = "TAGame.CarComponent_Boost_TA:ReplicatedBoost"
+    VEHICLE = "TAGame.CarComponent_TA:Vehicle"
+    PAWN_PRI = "Engine.Pawn:PlayerReplicationInfo"
+    PRI_UNIQUE_ID = "Engine.PlayerReplicationInfo:UniqueId"
+    SCORED_ON_TEAM = "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam"
+    COUNTDOWN = "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber"
+    PICKUP_DATA = "TAGame.VehiclePickup_TA:NewReplicatedPickupData"
+    TEAM_PAINT = "TAGame.Car_TA:TeamPaint"
+    MATCH_DEMOLISHES = "TAGame.PRI_TA:MatchDemolishes"
+    DEMOLISH_EXTENDED = "TAGame.Car_TA:ReplicatedDemolishExtended"
+    SECONDS_REMAINING = "TAGame.GameEvent_Soccar_TA:SecondsRemaining"
+    PRI_TEAM = "Engine.PlayerReplicationInfo:Team"
+    MATCH_GOALS = "TAGame.PRI_TA:MatchGoals"
+    MATCH_SHOTS = "TAGame.PRI_TA:MatchShots"
+    MATCH_SAVES = "TAGame.PRI_TA:MatchSaves"
+    MATCH_ASSISTS = "TAGame.PRI_TA:MatchAssists"
 
 
 class PlayerStatEntry(TypedDict, total=False):

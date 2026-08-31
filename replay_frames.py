@@ -24,15 +24,7 @@ from dataclasses import dataclass, field
 
 from frame_analysis import IdentityResolver
 from player_identity import PlayerIdentity, from_network_frame
-from rrrocket_schema import ParsedReplay
-
-_CAR_ARCHETYPE = "Archetypes.Car.Car_Default"
-_BALL_ARCHETYPE = "Archetypes.Ball.Ball_Default"
-_RB_STATE = "TAGame.RBActor_TA:ReplicatedRBState"
-_PAWN_PRI = "Engine.Pawn:PlayerReplicationInfo"
-_PRI_UID = "Engine.PlayerReplicationInfo:UniqueId"
-_CAR_TEAM_PAINT = "TAGame.Car_TA:TeamPaint"
-_SCORED_ON_TEAM = "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam"
+from rrrocket_schema import NetObj, ParsedReplay
 
 _FLOATS_PER_POSE = 7  # x, y, z, qx, qy, qz, qw
 _IDENTITY_POSE: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
@@ -399,9 +391,9 @@ def extract_replay_frames(
     network data (mirrors ``analyze_frames``).
     """
     obj = replay.object_index
-    car_arch = obj.get(_CAR_ARCHETYPE)
-    ball_arch = obj.get(_BALL_ARCHETYPE)
-    rb_oid = obj.get(_RB_STATE)
+    car_arch = obj.get(NetObj.CAR_ARCHETYPE)
+    ball_arch = obj.get(NetObj.BALL_ARCHETYPE)
+    rb_oid = obj.get(NetObj.RB_STATE)
 
     if not replay.frames or car_arch is None or ball_arch is None or rb_oid is None:
         return ReplayFrames([], [], b"", tracked_team, game_mode, [])
@@ -411,14 +403,14 @@ def extract_replay_frames(
         car_arch,
         ball_arch,
         rb_oid,
-        obj.get(_PAWN_PRI),
-        obj.get(_PRI_UID),
-        obj.get(_CAR_TEAM_PAINT),
+        obj.get(NetObj.PAWN_PRI),
+        obj.get(NetObj.PRI_UNIQUE_ID),
+        obj.get(NetObj.TEAM_PAINT),
     )
     slots = _build_slots(segments, tracked_identities, player_names)
     frame_times = [float(f["time"]) for f in replay.frames]
     positions = _densify(segments, len(frame_times), len(slots))
-    goals = _scan_goals(replay, obj.get(_SCORED_ON_TEAM))
+    goals = _scan_goals(replay, obj.get(NetObj.SCORED_ON_TEAM))
 
     return ReplayFrames(
         frame_times=frame_times,
