@@ -661,6 +661,52 @@ function wireControls(playback, meta) {
   };
 }
 
+// A ?debug-gated HUD: rolling rAF frame time and time spent inside frameLoop's
+// JS, so a smoothness change reads as numbers, not just feel. If JS time is a
+// couple of ms and frame time sits near the display interval, the main thread
+// is idle and the stutter is interpolation, not scheduling. Updates its own DOM
+// on a 250 ms timer — a per-rAF textContent write would be exactly the kind of
+// main-thread churn this is here to detect.
+function createDebugHud() {
+  const N = 120; // ~2 s at 60 Hz
+  const frameMs = new Float32Array(N);
+  const jsMs = new Float32Array(N);
+  let head = 0;
+  let filled = 0;
+
+  const el = document.createElement("div");
+  el.className = "replay-hud";
+  stage.appendChild(el);
+
+  function stats(buf, n) {
+    let sum = 0;
+    for (let k = 0; k < n; k++) sum += buf[k];
+    const sorted = Array.prototype.slice.call(buf, 0, n).sort((a, b) => a - b);
+    return {
+      mean: sum / n,
+      p95: sorted[Math.min(n - 1, Math.floor(n * 0.95))],
+      max: sorted[n - 1],
+    };
+  }
+
+  setInterval(() => {
+    if (!filled) return;
+    const f = stats(frameMs, filled);
+    const j = stats(jsMs, filled);
+    el.textContent =
+      `fps    ${(1000 / f.mean).toFixed(0)}\n` +
+      `frame  ${f.mean.toFixed(1)} mean · ${f.p95.toFixed(1)} p95 · ${f.max.toFixed(1)} max ms\n` +
+      `js     ${j.mean.toFixed(2)} mean · ${j.p95.toFixed(2)} p95 ms`;
+  }, 250);
+
+  return function record(frameDelta, jsDelta) {
+    frameMs[head] = frameDelta;
+    jsMs[head] = jsDelta;
+    head = (head + 1) % N;
+    if (filled < N) filled++;
+  };
+}
+
 function buildScene(meta, positions) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b0d15);
@@ -710,6 +756,7 @@ function buildScene(meta, positions) {
   syncUI();
   controlsEl.hidden = false;
 
+  const hud = location.search.includes("debug") ? createDebugHud() : null;
   let lastNow = null;
   function frameLoop(now) {
     requestAnimationFrame(frameLoop);
@@ -720,6 +767,7 @@ function buildScene(meta, positions) {
     syncUI();
     controls.update();
     renderer.render(scene, camera);
+    if (hud && dt > 0) hud(dt * 1000, performance.now() - now);
   }
   requestAnimationFrame(frameLoop);
 

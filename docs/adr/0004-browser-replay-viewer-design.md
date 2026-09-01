@@ -176,10 +176,15 @@ endpoint returns `positions`.
 
 The page fetches `/replay` + `/replay-frames.bin`, builds the scene, and plays it
 back. Coordinates stay in unreal units — no world scaling; the camera frustum
-does the framing. **Headless Chromium `page.screenshot()` returns black for a
-WebGL canvas** even with `preserveDrawingBuffer` — verify renders via
-`gl.readPixels` or the `?debug` hook (`window.__replay = { playback, meshes,
-camera, controls, renderer, scene, THREE }`), not screenshots.
+does the framing. The `?debug` query flag exposes `window.__replay = { playback,
+meshes, camera, controls, renderer, scene, THREE }` plus a rolling frame-time
+HUD (`createDebugHud`). An earlier note here claimed headless Chromium
+`page.screenshot()` returns black for a WebGL canvas — that held for the old
+SwiftShader `--headless`, but `--headless=new` (Chrome's default since 112)
+composites WebGL through ANGLE and `page.screenshot()` via the Playwright MCP
+captures the viewer correctly. `gl.readPixels` after a paint is in fact the less
+reliable check: with `preserveDrawingBuffer` unset the buffer is cleared post
+composite, so a later read returns zeros while the screenshot is fine.
 
 - **Scene / axes.** Wireframe soccar arena (8192 × 10240 × 2044 uu), box cars,
   sphere ball. RL is Z-up, Three.js is Y-up: everything lives in a parent `world`

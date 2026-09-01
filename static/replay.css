@@ -117,6 +117,24 @@ html, body {
     border-color: var(--cyan);
 }
 
+/* ?debug frame-time HUD (createDebugHud). Bottom-left so it clears .replay-cam. */
+.replay-hud {
+    position: absolute;
+    left: 0.75rem;
+    bottom: 0.75rem;
+    padding: 0.5rem 0.65rem;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    line-height: 1.5;
+    white-space: pre;
+    color: var(--text-dim);
+    background: rgba(14, 14, 20, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+}
+
 .replay-message {
     position: absolute;
     inset: 0;
