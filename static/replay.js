@@ -661,6 +661,18 @@ function wireControls(playback, meta) {
   };
 }
 
+// mean / p95 / max over the first `n` entries of a numeric buffer.
+function windowStats(buf, n) {
+  let sum = 0;
+  for (let k = 0; k < n; k++) sum += buf[k];
+  const sorted = Array.prototype.slice.call(buf, 0, n).sort((a, b) => a - b);
+  return {
+    mean: sum / n,
+    p95: sorted[Math.min(n - 1, Math.floor(n * 0.95))],
+    max: sorted[n - 1],
+  };
+}
+
 // A ?debug-gated HUD: rolling rAF frame time, time spent inside frameLoop's JS,
 // and a motion-continuity readout. If JS time is a couple of ms and frame time
 // sits near the display interval, the main thread is idle and the stutter is
@@ -669,7 +681,7 @@ function wireControls(playback, meta) {
 // (the carry-forward freeze-then-lurch); `maxjump` is the worst single-frame
 // actor step. Updates its own DOM on a 250 ms timer — a per-rAF textContent
 // write would be exactly the kind of main-thread churn this is here to detect.
-function createDebugHud() {
+function createDebugHud(meshes) {
   const N = 120; // ~2 s at 60 Hz
   const EPS = 1; // uu; a moving actor clears this every frame, a held one is at 0
   const frameMs = new Float32Array(N);
@@ -677,7 +689,7 @@ function createDebugHud() {
   const freezeFlag = new Float32Array(N); // 1 = a stall was seen this frame
   const evalFlag = new Float32Array(N); // 1 = frame was playing + evaluable
   const jumpUu = new Float32Array(N);
-  const trail = []; // per slot: flat [ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz], d newest
+  const trail = meshes.map(() => []); // per slot: up to the last 4 positions
   let head = 0;
   let filled = 0;
 
@@ -685,24 +697,10 @@ function createDebugHud() {
   el.className = "replay-hud";
   stage.appendChild(el);
 
-  function stats(buf, n) {
-    let sum = 0;
-    for (let k = 0; k < n; k++) sum += buf[k];
-    const sorted = Array.prototype.slice.call(buf, 0, n).sort((a, b) => a - b);
-    return {
-      mean: sum / n,
-      p95: sorted[Math.min(n - 1, Math.floor(n * 0.95))],
-      max: sorted[n - 1],
-    };
-  }
-
-  const seg = (h, a, b) =>
-    Math.hypot(h[b] - h[a], h[b + 1] - h[a + 1], h[b + 2] - h[a + 2]);
-
   setInterval(() => {
     if (!filled) return;
-    const f = stats(frameMs, filled);
-    const j = stats(jsMs, filled);
+    const f = windowStats(frameMs, filled);
+    const j = windowStats(jsMs, filled);
     let stalls = 0;
     let evald = 0;
     let jmax = 0;
@@ -719,11 +717,10 @@ function createDebugHud() {
       `freeze  ${freezePct.toFixed(1)}%  ·  maxjump ${jmax.toFixed(0)} uu`;
   }, 250);
 
-  return function record(frameDelta, jsDelta, meshes, playing) {
+  return function record(frameDelta, jsDelta, playing) {
     frameMs[head] = frameDelta;
     jsMs[head] = jsDelta;
 
-    while (trail.length < meshes.length) trail.push([]);
     let stalled = 0;
     let evaluable = 0;
     let jump = 0;
@@ -733,14 +730,13 @@ function createDebugHud() {
         h.length = 0; // don't measure across a pause or a lifecycle gap
         continue;
       }
-      const p = meshes[s].position;
-      h.push(p.x, p.y, p.z);
-      if (h.length > 12) h.splice(0, h.length - 12);
-      if (h.length < 12) continue;
+      h.push(meshes[s].position.clone());
+      if (h.length > 4) h.shift();
+      if (h.length < 4) continue;
       evaluable = 1;
-      const dAB = seg(h, 0, 3);
-      const dBC = seg(h, 3, 6);
-      const dCD = seg(h, 6, 9);
+      const dAB = h[0].distanceTo(h[1]);
+      const dBC = h[1].distanceTo(h[2]);
+      const dCD = h[2].distanceTo(h[3]);
       if (dAB > EPS && dBC < EPS && dCD > EPS) stalled = 1; // moving, held, moving
       if (dCD > jump) jump = dCD;
     }
@@ -802,7 +798,12 @@ function buildScene(meta, positions) {
   syncUI();
   controlsEl.hidden = false;
 
-  const hud = location.search.includes("debug") ? createDebugHud() : null;
+  const debug = location.search.includes("debug");
+  const hud = debug ? createDebugHud(meshes) : null;
+  if (debug) {
+    window.__replay = { playback, meshes, camera, controls, renderer, scene, THREE };
+  }
+
   let lastNow = null;
   function frameLoop(now) {
     requestAnimationFrame(frameLoop);
@@ -814,7 +815,7 @@ function buildScene(meta, positions) {
     controls.update();
     renderer.render(scene, camera);
     if (hud && dt > 0) {
-      hud(dt * 1000, performance.now() - now, meshes, playback.state.playing);
+      hud(dt * 1000, performance.now() - now, playback.state.playing);
     }
   }
   requestAnimationFrame(frameLoop);
@@ -824,10 +825,6 @@ function buildScene(meta, positions) {
     metaEl.textContent = [meta.game_mode, formatClock(playback.duration())]
       .filter(Boolean)
       .join("  ·  ");
-  }
-
-  if (location.search.includes("debug")) {
-    window.__replay = { playback, meshes, camera, controls, renderer, scene, THREE };
   }
 }
 

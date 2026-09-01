@@ -14,8 +14,9 @@ Divergences from the ``frame_analysis`` handlers, both deliberate:
 
 * **No ``is_playing`` gate.** The viewer shows the whole stream — warmup,
   countdowns, celebrations — and lets the user scrub past dead time.
-* **Poses are kept per frame.** Carried forward into a dense buffer so the
-  client can lerp/slerp between rrrocket's ~30 Hz samples.
+* **Poses are kept per frame.** rrrocket's ~30 Hz samples are densified to one
+  pose per frame per lane, interpolating (lerp / slerp) across the frames a lane
+  did not update so the client can play the buffer back straight.
 """
 
 import math
@@ -28,10 +29,13 @@ from player_identity import PlayerIdentity, from_network_frame
 from rrrocket_schema import NetObj, ParsedReplay
 
 _FLOATS_PER_POSE = 7  # x, y, z, qx, qy, qz, qw
-_IDENTITY_POSE: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
 
 # (frame_idx, x, y, z, qx, qy, qz, qw)
 _Sample = tuple[int, float, float, float, float, float, float, float]
+# (x, y, z, qx, qy, qz, qw) — one row of the position buffer
+_Pose = tuple[float, float, float, float, float, float, float]
+
+_IDENTITY_POSE: _Pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
 
 
 @dataclass(frozen=True)
@@ -385,9 +389,7 @@ def _slerp(
     )
 
 
-def _lerp_pose(
-    a: tuple[float, ...], b: tuple[float, ...], w: float
-) -> tuple[float, ...]:
+def _lerp_pose(a: _Pose, b: _Pose, w: float) -> _Pose:
     """Linear on position, slerp on rotation; ``w`` clamped to [0, 1]."""
     w = 0.0 if w < 0.0 else 1.0 if w > 1.0 else w
     qx, qy, qz, qw = _slerp((a[3], a[4], a[5], a[6]), (b[3], b[4], b[5], b[6]), w)
@@ -402,24 +404,47 @@ def _lerp_pose(
     )
 
 
-def _keyframes(seg: _Segment) -> list[tuple[int, tuple[float, ...]]]:
-    """The poses the fill interpolates between: every real sample, preceded by
-    a seed keyframe at ``seg.start`` when the first sample lands later.
+def _sample_pose(s: _Sample) -> _Pose:
+    """A sample's 7-float pose, without its leading frame index."""
+    return s[1], s[2], s[3], s[4], s[5], s[6], s[7]
 
-    ``initial_trajectory`` never carries a usable rotation, so the seed
-    keyframe borrows the first sample's quaternion — held back to the segment
-    start rather than slerped up from identity.
+
+def _keyframes(seg: _Segment) -> list[tuple[int, _Pose]]:
+    """The poses the fill interpolates between: every real sample, always
+    preceded by a keyframe at ``seg.start`` so the list spans the whole segment.
+
+    When the first real sample lands after ``seg.start``, that leading keyframe
+    takes its position from ``initial_trajectory`` if there is one (it carries no
+    usable rotation) and otherwise holds the first sample's position back; its
+    rotation is the first sample's, held back rather than slerped up from
+    identity.
     """
-    samples = seg.samples
-    kf: list[tuple[int, tuple[float, ...]]] = [(s[0], s[1:]) for s in samples]
-    if seg.seed is not None and (not kf or kf[0][0] > seg.start):
-        rot = (
-            (samples[0][4], samples[0][5], samples[0][6], samples[0][7])
-            if samples
-            else (0.0, 0.0, 0.0, 1.0)
+    kf: list[tuple[int, _Pose]] = [(s[0], _sample_pose(s)) for s in seg.samples]
+    if not kf:
+        s = seg.seed
+        pose: _Pose = (
+            (s[0], s[1], s[2], 0.0, 0.0, 0.0, 1.0) if s is not None else _IDENTITY_POSE
         )
-        kf.insert(0, (seg.start, (*seg.seed, *rot)))
-    return kf or [(seg.start, _IDENTITY_POSE)]
+        return [(seg.start, pose)]
+    if kf[0][0] > seg.start:
+        p = kf[0][1]
+        x, y, z = seg.seed if seg.seed is not None else (p[0], p[1], p[2])
+        kf.insert(0, (seg.start, (x, y, z, p[3], p[4], p[5], p[6])))
+    return kf
+
+
+def _fill(
+    buf: "array[float]",
+    lane_off: int,
+    stride: int,
+    lo: int,
+    hi: int,
+    row: "array[float]",
+) -> None:
+    """Write the 7-float ``row`` into one lane's frames ``[lo, hi)``."""
+    for fidx in range(lo, hi):
+        off = fidx * stride + lane_off
+        buf[off : off + _FLOATS_PER_POSE] = row
 
 
 def _densify(
@@ -427,38 +452,37 @@ def _densify(
 ) -> bytes:
     """Fill a dense F*N*7 float32 buffer.
 
-    Within a lane's segment, a frame with no ``RigidBody`` sample is filled by
-    interpolating between the two real samples bracketing it — linear on
-    position, slerp on rotation, weighted by wall-clock time — so a held actor
-    glides instead of freezing then lurching to the next sample. Two runs hold
-    the previous pose instead: up to a kickoff re-announcement (``seg.resets``,
-    a cut not motion) and after a lane's final sample. Frames outside every
-    segment stay zero; the client hides the lane there.
+    Per lane, ``_keyframes`` gives the segment's real samples spanning
+    ``[start, end]``. Between consecutive keyframes a frame with no sample of its
+    own is interpolated — linear on position, slerp on rotation, weighted by
+    wall-clock time — so a held actor glides rather than freezing then lurching
+    to the next sample. A gap whose closing keyframe is a kickoff re-announcement
+    (``seg.resets`` — a cut, not motion) holds the earlier pose instead, as does
+    the tail past the final sample. Frames outside every segment stay zero; the
+    client hides the lane there.
     """
-    frame_count = len(frame_times)
     row_stride = slot_count * _FLOATS_PER_POSE
-
-    buf = array("f", bytes(4 * frame_count * row_stride))
+    buf = array("f", bytes(4 * len(frame_times) * row_stride))
 
     for seg in segments:
         if seg.slot < 0:
             continue
         kf = _keyframes(seg)
-        off0 = seg.slot * _FLOATS_PER_POSE
-        ki = 0
-        for fidx in range(seg.start, seg.end + 1):
-            while ki + 1 < len(kf) and kf[ki + 1][0] <= fidx:
-                ki += 1
-            fa, pa = kf[ki]
-            if ki + 1 < len(kf) and kf[ki + 1][0] not in seg.resets:
-                fb, pb = kf[ki + 1]
-                ta, tb = frame_times[fa], frame_times[fb]
-                w = (frame_times[fidx] - ta) / (tb - ta) if tb > ta else 0.0
-                pose = _lerp_pose(pa, pb, w)
-            else:
-                pose = pa  # trailing hold, or the run up to a reset cut
-            base = fidx * row_stride + off0
-            buf[base : base + _FLOATS_PER_POSE] = array("f", pose)
+        lane_off = seg.slot * _FLOATS_PER_POSE
+
+        for (fa, pa), (fb, pb) in zip(kf, kf[1:], strict=False):
+            ta = frame_times[fa]
+            span = frame_times[fb] - ta
+            if span <= 0.0 or fb in seg.resets:
+                _fill(buf, lane_off, row_stride, fa, fb, array("f", pa))
+                continue
+            for fidx in range(fa, fb):
+                w = (frame_times[fidx] - ta) / span
+                off = fidx * row_stride + lane_off
+                buf[off : off + _FLOATS_PER_POSE] = array("f", _lerp_pose(pa, pb, w))
+
+        last_f, last_p = kf[-1]
+        _fill(buf, lane_off, row_stride, last_f, seg.end + 1, array("f", last_p))
 
     return buf.tobytes()
 
