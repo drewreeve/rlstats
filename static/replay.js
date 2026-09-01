@@ -495,7 +495,48 @@ function createPlayback(meta, positions, meshes) {
   const t0 = times[0];
   const tN = times[times.length - 1];
 
-  const state = { t: t0, playing: false, speed: 1 };
+  // Timeline remap: the clock still runs in real `frame_times` seconds (so
+  // bracket()/applyPoses are untouched), but the transport UI runs on a
+  // *compressed* axis with every dead_periods span — goal replay, actor reset,
+  // frozen-at-spawn wait — removed. `dead` is those spans as real intervals
+  // [a, b) plus `len` and `c`, the span's coordinate on the compressed axis
+  // (`c === toCompressed(a)`). The server (replay_frames._dead_periods)
+  // guarantees them ascending and non-overlapping.
+  const dead = (meta.dead_periods || [])
+    .map(([sf, ef]) => ({ a: times[sf], b: times[ef + 1] ?? tN }))
+    .filter((d) => d.b > d.a);
+  let cut = 0;
+  for (const d of dead) {
+    d.len = d.b - d.a;
+    d.c = d.a - t0 - cut;
+    cut += d.len;
+  }
+
+  // real seconds -> compressed seconds (0 at t0, dead spans removed)
+  function toCompressed(t) {
+    let c = t - t0;
+    for (const d of dead) {
+      if (t <= d.a) break;
+      c -= Math.min(t, d.b) - d.a;
+    }
+    return c;
+  }
+
+  // compressed seconds -> real seconds. A `c` on a dead span's edge resolves to
+  // the span's END (the resume frame), so nothing lands inside a gap.
+  function toReal(c) {
+    let t = c + t0;
+    for (const d of dead) {
+      if (c < d.c) break;
+      t += d.len;
+    }
+    return t;
+  }
+
+  const compressedEnd = toCompressed(tN);
+  const tStart = toReal(0); // first kept instant — past any pre-match warmup
+
+  const state = { t: tStart, playing: false, speed: 1 };
 
   function applyPoses() {
     const [i, j, f] = bracket(times, state.t);
@@ -570,41 +611,54 @@ function createPlayback(meta, positions, meshes) {
     }
   }
 
-  function seek(t) {
-    state.t = Math.min(tN, Math.max(t0, t));
+  // Transport is compressed-axis: `seek`/`nudge` take compressed seconds, and
+  // `toReal` already resolves a seam to the resume frame so seeks never land in
+  // a gap. Only `advance` steps raw real time, so only it needs the snap.
+  function seek(c) {
+    state.t = toReal(Math.min(compressedEnd, Math.max(0, c)));
+  }
+
+  function nudge(deltaCompressed) {
+    seek(toCompressed(state.t) + deltaCompressed);
   }
 
   function advance(dt) {
     if (!state.playing) return;
-    state.t += dt * state.speed;
-    if (state.t >= tN) {
-      state.t = tN;
+    let t = state.t + dt * state.speed;
+    for (const d of dead) if (t >= d.a && t < d.b) { t = d.b; break; }
+    if (t >= tN) {
+      t = tN;
       state.playing = false;
     }
+    state.t = t;
   }
+
+  // real seconds -> [0,1] position on the compressed axis (scrub bar, goal ticks)
+  const fractionAt = (t) => (compressedEnd > 0 ? toCompressed(t) / compressedEnd : 0);
 
   return {
     state,
-    t0,
     tN,
     applyPoses,
     seek,
+    nudge,
     advance,
-    elapsed: () => state.t - t0,
-    duration: () => tN - t0,
-    progress: () => (tN > t0 ? (state.t - t0) / (tN - t0) : 0),
+    fractionAt,
+    elapsed: () => toCompressed(state.t),
+    duration: () => compressedEnd,
+    progress: () => fractionAt(state.t),
     atEnd: () => state.t >= tN,
   };
 }
 
-// Goal ticks on the scrub bar, positioned by replay-time fraction.
+// Goal ticks on the scrub bar, positioned by compressed-time fraction (a goal
+// sits at the leading edge of its dead span, so its tick lands on the seam).
 function renderScrubMarks(meta, playback) {
   if (!marksEl) return;
   marksEl.replaceChildren();
-  const span = playback.duration() || 1;
   for (const g of meta.goals) {
     const el = document.createElement("span");
-    el.style.left = `${((meta.frame_times[g.frame] - playback.t0) / span) * 100}%`;
+    el.style.left = `${playback.fractionAt(meta.frame_times[g.frame]) * 100}%`;
     el.style.background =
       g.team === meta.tracked_team ? "#00e5ff" : "#ff5a5a";
     marksEl.appendChild(el);
@@ -619,7 +673,7 @@ function wireControls(playback, meta) {
   }));
 
   function setPlaying(on) {
-    if (on && playback.atEnd()) playback.seek(playback.t0);
+    if (on && playback.atEnd()) playback.seek(0);
     playback.state.playing = on;
     playBtn.textContent = on ? "⏸" : "▶";
   }
@@ -633,7 +687,7 @@ function wireControls(playback, meta) {
     scrubbing = false;
   });
   scrubEl.addEventListener("input", () => {
-    playback.seek(playback.t0 + (scrubEl.valueAsNumber / 1000) * playback.duration());
+    playback.seek((scrubEl.valueAsNumber / 1000) * playback.duration());
   });
 
   speedsEl.addEventListener("click", (e) => {
@@ -650,9 +704,9 @@ function wireControls(playback, meta) {
       e.preventDefault();
       setPlaying(!playback.state.playing);
     } else if (e.key === "ArrowLeft") {
-      playback.seek(playback.state.t - SEEK_STEP);
+      playback.nudge(-SEEK_STEP);
     } else if (e.key === "ArrowRight") {
-      playback.seek(playback.state.t + SEEK_STEP);
+      playback.nudge(SEEK_STEP);
     }
   });
 

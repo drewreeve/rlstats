@@ -57,8 +57,8 @@ does not teleport on respawn).
 port from `MatchEventsHandler`) · an in-match game clock (needs the
 `SecondsRemaining` regulation/OT reconstruction) · boost amounts + pad respawn
 timers · per-player POV · follow-cam · goal-replay cutaways · heatmaps ·
-Hoops / Dropshot arenas · any caching. The scrub-bar clock currently shows
-replay-time elapsed / total.
+Hoops / Dropshot arenas · any caching. The scrub-bar clock shows elapsed /
+total on the dead-time-compressed axis (see "Dead-time remap" below).
 
 ## Architecture
 
@@ -148,7 +148,8 @@ endpoint returns `positions`.
   PRI-linked in the same frame must keep its link.
 - **Every frame is recorded.** Unlike every `frame_analysis` handler, the walk
   does **not** gate on `ctx.is_playing` — decision 7 shows the full stream
-  (warmup, countdowns, celebrations); the user scrubs past dead time.
+  (warmup, countdowns, celebrations). The client keeps the countdowns but
+  collapses the post-goal dead spans out of the transport (`dead_periods`).
 - **Actor lifecycle.** A car keeps *one* network actor id for the whole match.
   At every kickoff the replay **re-announces** that live actor in `new_actors`
   with a fresh `initial_trajectory` and *no* preceding `deleted_actors` entry —
@@ -210,6 +211,17 @@ composite, so a later read returns zeros while the screenshot is fine.
   play/pause (also space), draggable scrub (`<input type=range>` 0–1000,
   paused-aware so the loop doesn't fight the drag), `M:SS / M:SS` clock,
   0.5×/1×/2×/4× buttons, arrow keys seek ±5 s.
+- **Dead-time remap.** `state.t` stays in real `frame_times` seconds (so
+  `bracket`/`applyPoses` are untouched), but `createPlayback`'s **public axis is
+  compressed** — every `meta.dead_periods` span removed. Each `[startFrame,
+  endFrame]` becomes a real interval `[frame_times[start], frame_times[end + 1])`
+  with `.c` = its compressed coordinate; `toCompressed(t) = (t - t0) - Σ cuts
+  before t` and `toReal` inverts it, resolving a seam to the span's *end* (the
+  resume frame) so a seek can't land in a gap. `seek(c)` / `nudge(Δ)` /
+  `elapsed()` / `duration()` / `progress()` / `fractionAt(realT)` are all
+  compressed; only `advance` steps raw real time, so only it snaps forward out of
+  a span. The playhead starts at `toReal(0)` — past the pre-match warmup. Always
+  on; no toggle.
 - **Lifecycle hiding.** `slotLiveAt(slot, frame)` scans the slot's inclusive
   `[start, end]` segments. In `applyPoses`, for a slot's bracket `[i, j]`: hidden
   when neither `i` nor `j` is live; otherwise `ff` is snapped to the live end
