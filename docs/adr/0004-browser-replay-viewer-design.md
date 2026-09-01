@@ -251,6 +251,17 @@ composite, so a later read returns zeros while the screenshot is fine.
   overlay above the range input (cyan = tracked team, red = opponent), and
   `syncUI` counts goals with `time <= playback.t` into a `our – opp` scoreboard
   in the top bar.
+- **Kickoff countdown.** `replay_frames._scan_countdowns` records every
+  `ReplicatedRoundCountDownNumber` tick as `(frame, n)` — one `3 → 2 → 1 → 0`
+  run per kickoff (pre-match, each goal, OT), `n == 0` being the frame live play
+  resumes (`frame_analysis` flips `is_playing` there). `_scan_goals` +
+  `_scan_countdowns` also yield `ReplayFrames.dead_periods` — the frame spans the
+  viewer collapses (see the timeline-remap client note). Client:
+  `countdownLabelAt(frame_times, meta.countdowns, t)` returns the numeral (or
+  `"GO!"` for the ~0.6 s after `n == 0`, else null) and `syncUI` writes it to the
+  `.replay-countdown` overlay only on change — a large centred numeral so a still
+  kickoff does not read as a frozen viewer. Playback is untouched; the overlay is
+  pure presentation.
 - **Arena schematic.** `buildArena` draws the chamfered soccar footprint (all
   four corners cut at 45°, `CORNER = 1152` uu per axis, `|x| + |y| = 8064`) as
   the module-level eight-point `ARENA_OUTLINE` — floor loop + ceiling loop + a

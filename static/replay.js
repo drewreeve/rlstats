@@ -111,6 +111,7 @@ const speedsEl = document.querySelector('[data-role="speeds"]');
 const camEl = document.querySelector('[data-role="cam"]');
 const scoreEl = document.querySelector('[data-role="score"]');
 const marksEl = document.querySelector('[data-role="marks"]');
+const countdownEl = document.querySelector('[data-role="countdown"]');
 
 const matchId = location.pathname.split("/").filter(Boolean)[1];
 const backEl = document.querySelector('[data-role="back"]');
@@ -229,6 +230,25 @@ function makeTrail(colorHex) {
 function formatClock(seconds) {
   const s = Math.max(0, Math.round(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// Ticks sit ~1 s apart; hold each numeral a touch longer so a dropped or
+// aborted sequence clears itself rather than sticking on screen.
+const COUNTDOWN_TICK_HOLD = 1.4; // s
+const COUNTDOWN_GO_HOLD = 0.6; // s — "GO!" flashes, then clears. Keep in sync with
+// the `replay-countdown-go` animation duration in replay.css.
+
+// The kickoff countdown text to show at replay-time `t` ("3" / "2" / "1" /
+// "GO!"), or null when no countdown is active. `countdowns` is [[frame, n], …]
+// in frame order (server: replay_frames._scan_countdowns) — one 3→2→1→0 run per
+// kickoff.
+function countdownLabelAt(times, countdowns, t) {
+  const tick = countdowns.findLast(([f]) => times[f] <= t);
+  if (!tick) return null;
+  const [frame, n] = tick;
+  const dt = t - times[frame];
+  if (n === 0) return dt >= 0 && dt < COUNTDOWN_GO_HOLD ? "GO!" : null;
+  return dt < COUNTDOWN_TICK_HOLD ? String(n) : null;
 }
 
 // Largest i with times[i] <= t, its successor j, and the [0,1] blend between.
@@ -636,8 +656,29 @@ function wireControls(playback, meta) {
     }
   });
 
+  const countdowns = meta.countdowns || [];
+  let shownCountdown; // last label written, so the DOM is only touched on change
+
+  function showCountdown(label) {
+    if (label === shownCountdown) return;
+    shownCountdown = label;
+    countdownEl.hidden = label == null;
+    if (label == null) return;
+    countdownEl.textContent = label;
+    countdownEl.classList.toggle("is-go", label === "GO!");
+    countdownEl.classList.remove("is-anim");
+    void countdownEl.offsetWidth; // reflow so the pop / fade restarts
+    countdownEl.classList.add("is-anim");
+  }
+
   // Reflect clock state back into the DOM each frame.
   return function syncUI() {
+    if (countdownEl) {
+      showCountdown(
+        countdownLabelAt(meta.frame_times, countdowns, playback.state.t),
+      );
+    }
+
     if (!scrubbing) scrubEl.value = String(Math.round(playback.progress() * 1000));
     clockEl.textContent = `${formatClock(playback.elapsed())} / ${formatClock(
       playback.duration(),
@@ -801,7 +842,17 @@ function buildScene(meta, positions) {
   const debug = location.search.includes("debug");
   const hud = debug ? createDebugHud(meshes) : null;
   if (debug) {
-    window.__replay = { playback, meshes, camera, controls, renderer, scene, THREE };
+    window.__replay = {
+      playback,
+      meshes,
+      camera,
+      controls,
+      renderer,
+      scene,
+      THREE,
+      meta,
+      countdownLabelAt,
+    };
   }
 
   let lastNow = null;
