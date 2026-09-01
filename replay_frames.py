@@ -18,6 +18,7 @@ Divergences from the ``frame_analysis`` handlers, both deliberate:
   client can lerp/slerp between rrrocket's ~30 Hz samples.
 """
 
+import math
 from array import array
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
@@ -78,6 +79,7 @@ class _Segment:
     identity: PlayerIdentity | None = None  # resolved when the segment closes
     team: int | None = None
     samples: list[_Sample] = field(default_factory=list[_Sample])
+    resets: set[int] = field(default_factory=set[int])  # kickoff re-announce frames
     slot: int = -1
 
 
@@ -182,6 +184,9 @@ def _walk(
                             qw,
                         )
                     )
+                    # A kickoff reset is a cut: the fill holds the pre-kickoff
+                    # pose up to here rather than gliding the lane to spawn.
+                    seg.resets.add(fidx)
                 continue
             seed = (
                 (float(loc["x"]), float(loc["y"]), float(loc["z"]))
@@ -349,25 +354,111 @@ def _build_slots(
     return slots
 
 
-def _densify(segments: list[_Segment], frame_count: int, slot_count: int) -> bytes:
-    """Fill a dense F*N*7 float32 buffer, carrying each lane's last pose forward."""
+def _slerp(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+    t: float,
+) -> tuple[float, float, float, float]:
+    """Spherical linear interpolation between two unit quaternions."""
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    dot = ax * bx + ay * by + az * bz + aw * bw
+    if dot < 0.0:  # take the shorter arc
+        bx, by, bz, bw, dot = -bx, -by, -bz, -bw, -dot
+    if dot > 0.9995:  # almost parallel — normalised lerp dodges sin(θ₀)→0
+        rx, ry, rz, rw = (
+            ax + t * (bx - ax),
+            ay + t * (by - ay),
+            az + t * (bz - az),
+            aw + t * (bw - aw),
+        )
+        n = math.sqrt(rx * rx + ry * ry + rz * rz + rw * rw) or 1.0
+        return rx / n, ry / n, rz / n, rw / n
+    theta0 = math.acos(dot)
+    s0 = math.sin(theta0 - t * theta0) / math.sin(theta0)
+    s1 = math.sin(t * theta0) / math.sin(theta0)
+    return (
+        ax * s0 + bx * s1,
+        ay * s0 + by * s1,
+        az * s0 + bz * s1,
+        aw * s0 + bw * s1,
+    )
+
+
+def _lerp_pose(
+    a: tuple[float, ...], b: tuple[float, ...], w: float
+) -> tuple[float, ...]:
+    """Linear on position, slerp on rotation; ``w`` clamped to [0, 1]."""
+    w = 0.0 if w < 0.0 else 1.0 if w > 1.0 else w
+    qx, qy, qz, qw = _slerp((a[3], a[4], a[5], a[6]), (b[3], b[4], b[5], b[6]), w)
+    return (
+        a[0] + (b[0] - a[0]) * w,
+        a[1] + (b[1] - a[1]) * w,
+        a[2] + (b[2] - a[2]) * w,
+        qx,
+        qy,
+        qz,
+        qw,
+    )
+
+
+def _keyframes(seg: _Segment) -> list[tuple[int, tuple[float, ...]]]:
+    """The poses the fill interpolates between: every real sample, preceded by
+    a seed keyframe at ``seg.start`` when the first sample lands later.
+
+    ``initial_trajectory`` never carries a usable rotation, so the seed
+    keyframe borrows the first sample's quaternion — held back to the segment
+    start rather than slerped up from identity.
+    """
+    samples = seg.samples
+    kf: list[tuple[int, tuple[float, ...]]] = [(s[0], s[1:]) for s in samples]
+    if seg.seed is not None and (not kf or kf[0][0] > seg.start):
+        rot = (
+            (samples[0][4], samples[0][5], samples[0][6], samples[0][7])
+            if samples
+            else (0.0, 0.0, 0.0, 1.0)
+        )
+        kf.insert(0, (seg.start, (*seg.seed, *rot)))
+    return kf or [(seg.start, _IDENTITY_POSE)]
+
+
+def _densify(
+    segments: list[_Segment], frame_times: list[float], slot_count: int
+) -> bytes:
+    """Fill a dense F*N*7 float32 buffer.
+
+    Within a lane's segment, a frame with no ``RigidBody`` sample is filled by
+    interpolating between the two real samples bracketing it — linear on
+    position, slerp on rotation, weighted by wall-clock time — so a held actor
+    glides instead of freezing then lurching to the next sample. Two runs hold
+    the previous pose instead: up to a kickoff re-announcement (``seg.resets``,
+    a cut not motion) and after a lane's final sample. Frames outside every
+    segment stay zero; the client hides the lane there.
+    """
+    frame_count = len(frame_times)
     row_stride = slot_count * _FLOATS_PER_POSE
+
     buf = array("f", bytes(4 * frame_count * row_stride))
 
     for seg in segments:
         if seg.slot < 0:
             continue
-        cur: tuple[float, ...] = (
-            (*seg.seed, 0.0, 0.0, 0.0, 1.0) if seg.seed is not None else _IDENTITY_POSE
-        )
-        sp = 0
-        samples = seg.samples
+        kf = _keyframes(seg)
+        off0 = seg.slot * _FLOATS_PER_POSE
+        ki = 0
         for fidx in range(seg.start, seg.end + 1):
-            while sp < len(samples) and samples[sp][0] <= fidx:
-                cur = samples[sp][1:]
-                sp += 1
-            off = fidx * row_stride + seg.slot * _FLOATS_PER_POSE
-            buf[off : off + _FLOATS_PER_POSE] = array("f", cur)
+            while ki + 1 < len(kf) and kf[ki + 1][0] <= fidx:
+                ki += 1
+            fa, pa = kf[ki]
+            if ki + 1 < len(kf) and kf[ki + 1][0] not in seg.resets:
+                fb, pb = kf[ki + 1]
+                ta, tb = frame_times[fa], frame_times[fb]
+                w = (frame_times[fidx] - ta) / (tb - ta) if tb > ta else 0.0
+                pose = _lerp_pose(pa, pb, w)
+            else:
+                pose = pa  # trailing hold, or the run up to a reset cut
+            base = fidx * row_stride + off0
+            buf[base : base + _FLOATS_PER_POSE] = array("f", pose)
 
     return buf.tobytes()
 
@@ -409,7 +500,7 @@ def extract_replay_frames(
     )
     slots = _build_slots(segments, tracked_identities, player_names)
     frame_times = [float(f["time"]) for f in replay.frames]
-    positions = _densify(segments, len(frame_times), len(slots))
+    positions = _densify(segments, frame_times, len(slots))
     goals = _scan_goals(replay, obj.get(NetObj.SCORED_ON_TEAM))
 
     return ReplayFrames(

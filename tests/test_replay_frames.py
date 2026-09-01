@@ -217,6 +217,197 @@ def test_empty_when_no_network_data() -> None:
     assert rf == ReplayFrames([], [], b"", None, None, [])
 
 
+# --- held-frame interpolation (_densify) ---
+
+
+def test_held_frame_is_the_wallclock_linear_interpolant() -> None:
+    # samples at frames 0 and 2; frame 1 has none. Non-uniform times, so a
+    # frame-index midpoint (x=50) and a wall-clock one (x=75) differ.
+    frames = [
+        cast(
+            FrameData,
+            {
+                "time": 0.0,
+                "new_actors": [{"actor_id": 9, "object_id": _BALL}],
+                "updated_actors": [
+                    {
+                        "actor_id": 9,
+                        "object_id": _RB,
+                        "attribute": _rb((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+                    }
+                ],
+            },
+        ),
+        cast(FrameData, {"time": 0.15}),
+        cast(
+            FrameData,
+            {
+                "time": 0.2,
+                "updated_actors": [
+                    {
+                        "actor_id": 9,
+                        "object_id": _RB,
+                        "attribute": _rb((100.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+                    }
+                ],
+            },
+        ),
+    ]
+    rf = _extract(_replay(frames))
+    idx = rf.slots.index(next(s for s in rf.slots if s.kind == "ball"))
+    assert _pose(rf, 1, idx)[:3] == pytest.approx((75.0, 0.0, 0.0))  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_held_frame_rotation_is_slerped() -> None:
+    th = math.pi / 2  # 90° about Z between frames 0 and 2
+    q2 = (0.0, 0.0, math.sin(th / 2), math.cos(th / 2))
+    frames = [
+        cast(
+            FrameData,
+            {
+                "time": 0.0,
+                "new_actors": [{"actor_id": 9, "object_id": _BALL}],
+                "updated_actors": [
+                    {
+                        "actor_id": 9,
+                        "object_id": _RB,
+                        "attribute": _rb((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+                    }
+                ],
+            },
+        ),
+        cast(FrameData, {"time": 0.1}),
+        cast(
+            FrameData,
+            {
+                "time": 0.2,
+                "updated_actors": [
+                    {
+                        "actor_id": 9,
+                        "object_id": _RB,
+                        "attribute": _rb((0.0, 0.0, 0.0), q2),
+                    }
+                ],
+            },
+        ),
+    ]
+    rf = _extract(_replay(frames))
+    idx = rf.slots.index(next(s for s in rf.slots if s.kind == "ball"))
+    half = (0.0, 0.0, math.sin(th / 4), math.cos(th / 4))  # 45° about Z
+    assert _pose(rf, 1, idx)[3:] == pytest.approx(half)  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_rotation_before_first_sample_is_held_back_position_lerps_from_seed() -> None:
+    q = (0.0, 0.0, math.sin(math.pi / 8), math.cos(math.pi / 8))  # 45° about Z
+    frames = [
+        cast(
+            FrameData,
+            {
+                "time": 0.0,
+                "new_actors": [
+                    {
+                        "actor_id": 1,
+                        "object_id": _CAR,
+                        "initial_trajectory": {
+                            "location": {"x": 10.0, "y": 20.0, "z": 30.0}
+                        },
+                    }
+                ],
+            },
+        ),
+        cast(FrameData, {"time": 0.1}),
+        cast(
+            FrameData,
+            {
+                "time": 0.2,
+                "updated_actors": [
+                    {
+                        "actor_id": 1,
+                        "object_id": _RB,
+                        "attribute": _rb((10.0, 20.0, 40.0), q),
+                    }
+                ],
+            },
+        ),
+    ]
+    rf = _extract(_replay(frames))
+    idx = rf.slots.index(next(s for s in rf.slots if s.kind == "car"))
+    # no usable seed rotation -> both pre-sample frames carry the first real quat
+    assert _pose(rf, 0, idx) == pytest.approx((10.0, 20.0, 30.0, *q))  # pyright: ignore[reportUnknownMemberType]
+    assert _pose(rf, 1, idx) == pytest.approx((10.0, 20.0, 35.0, *q))  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_single_sample_segment_holds_its_pose() -> None:
+    frames = [
+        cast(
+            FrameData,
+            {
+                "time": 0.0,
+                "new_actors": [{"actor_id": 1, "object_id": _CAR}],
+                "updated_actors": [
+                    {
+                        "actor_id": 1,
+                        "object_id": _RB,
+                        "attribute": _rb((5.0, 5.0, 5.0), (0.0, 0.0, 0.0, 1.0)),
+                    }
+                ],
+            },
+        ),
+        cast(FrameData, {"time": 0.1}),
+        cast(FrameData, {"time": 0.2}),
+    ]
+    rf = _extract(_replay(frames))
+    idx = rf.slots.index(next(s for s in rf.slots if s.kind == "car"))
+    for f in (0, 1, 2):
+        assert _pose(rf, f, idx) == (5.0, 5.0, 5.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def test_kickoff_reannounce_is_a_cut_not_a_glide() -> None:
+    # ball live at (1000, 2000, 100), re-announced at centre spawn on frame 3
+    # with no intervening delete. Frames 1-2 must hold, not drift toward spawn.
+    frames = [
+        cast(
+            FrameData,
+            {
+                "time": 0.0,
+                "new_actors": [{"actor_id": 9, "object_id": _BALL}],
+                "updated_actors": [
+                    {
+                        "actor_id": 9,
+                        "object_id": _RB,
+                        "attribute": _rb((1000.0, 2000.0, 100.0), (0.0, 0.0, 0.0, 1.0)),
+                    }
+                ],
+            },
+        ),
+        cast(FrameData, {"time": 0.1}),
+        cast(FrameData, {"time": 0.2}),
+        cast(
+            FrameData,
+            {
+                "time": 0.3,
+                "new_actors": [
+                    {
+                        "actor_id": 9,
+                        "object_id": _BALL,
+                        "initial_trajectory": {
+                            "location": {"x": 0.0, "y": 0.0, "z": 93.0}
+                        },
+                    }
+                ],
+            },
+        ),
+        cast(FrameData, {"time": 0.4}),
+    ]
+    rf = _extract(_replay(frames))
+    ball = next(s for s in rf.slots if s.kind == "ball")
+    idx = rf.slots.index(ball)
+    assert ball.segments == [(0, 4)]  # one lane, no gap
+    assert _pose(rf, 1, idx)[:3] == (1000.0, 2000.0, 100.0)
+    assert _pose(rf, 2, idx)[:3] == (1000.0, 2000.0, 100.0)
+    assert _pose(rf, 3, idx)[:3] == (0.0, 0.0, 93.0)  # clean cut to spawn
+
+
 # --- goal markers ---
 
 

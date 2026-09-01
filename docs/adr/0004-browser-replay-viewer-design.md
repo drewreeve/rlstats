@@ -163,14 +163,22 @@ endpoint returns `positions`.
   (bots, odd platforms) gets its **own anonymous lane**, one per segment. A
   resolved identity with no entry in `player_names` (a leaver missing from the
   `PlayerStats` blob) falls back to `"Player N"` rather than raising.
-- **Carry-forward.** `positions` is dense: each frame holds a full pose for every
-  lane. Per lane, maintain the last-known `(x,y,z,qx,qy,qz,qw)` and re-emit it on
-  frames where the actor did not update, within each of its segments; frames
-  outside every segment stay zero (the client hides the lane there). Seed a
-  segment from its `initial_trajectory.location` (its Euler `yaw/pitch/roll`
-  often has `null` components — unusable as a quaternion, so rotation seeds to
-  identity). A `RigidBody` update may omit `rotation` / velocities — carry the
-  previous quaternion forward, or identity if none seen yet.
+- **Fill.** `positions` is dense: each frame holds a full pose for every lane.
+  Frames outside every segment stay zero (the client hides the lane there).
+  Within a segment, a frame with no `RigidBody` sample is **interpolated**
+  between the two real samples bracketing it — linear on position, slerp on
+  rotation, weighted by wall-clock time (`frame_times`) — so a held actor glides
+  rather than freezing then lurching to the next sample (`_densify`,
+  `_slerp`, `_keyframes`, `_lerp_pose`). Two runs hold the previous pose
+  instead: the frames up to a kickoff re-announcement (`_Segment.resets` — a cut,
+  not motion, so the lane must not drift toward spawn) and the tail after a
+  lane's final sample. Seed a segment from its `initial_trajectory.location`
+  (its Euler `yaw/pitch/roll` often has `null` components — unusable as a
+  quaternion); rotation before the first real sample is **held back** from that
+  sample rather than slerped up from identity, which also removes the
+  identity-quaternion flick at spawns. A `RigidBody` update may omit `rotation` /
+  velocities — carry the previous quaternion forward, or identity if none seen
+  yet.
 
 ## Client (`static/replay.js`, module script)
 
