@@ -150,17 +150,20 @@ endpoint returns `positions`.
   does **not** gate on `ctx.is_playing` — decision 7 shows the full stream
   (warmup, countdowns, celebrations). The client keeps the countdowns but
   collapses the post-goal dead spans out of the transport (`dead_periods`).
-- **Actor lifecycle.** A car keeps *one* network actor id for the whole match.
-  At every kickoff the replay **re-announces** that live actor in `new_actors`
-  with a fresh `initial_trajectory` and *no* preceding `deleted_actors` entry —
-  a position reset, not a new life. Genuine despawns (demolitions) are rare and
-  *do* come through `deleted_actors`. The ball behaves the same way.
+- **Actor lifecycle.** At every **goal** kickoff the ball and *every* car are
+  deleted (`deleted_actors`) and re-created with a fresh network actor id the
+  next frame, at the kickoff spawn — one real despawn/respawn per goal, on every
+  lane at once. The *initial* kickoff is just the actors' first appearance (no
+  delete). Demolitions also delete, per victim. Separately, a still-open actor is
+  **re-announced** in `new_actors` with *no* preceding `deleted_actors` every
+  ~10 s (a mid-field keep-alive, not a kickoff) — that one is a position append,
+  not a new life.
 - **Segments.** A lane opens a segment when an id first appears and closes it on
-  a real `deleted_actors` entry (or at the last frame). A re-announcement of an
-  already-open id does **not** open a new segment — it just appends a positional
-  sample at the kickoff spawn point. A clean match is one segment per lane; each
-  demolition splits a lane into two segments with a gap the client hides the mesh
-  across.
+  a real `deleted_actors` entry (or at the last frame). A bare re-announcement of
+  an already-open id (the ~10 s keep-alive) does **not** open a new segment — it
+  appends a sample and marks `_Segment.resets`. So a lane carries **one segment
+  per kickoff** (goals + 1), merged back into a single car slot by identity, plus
+  an extra split per demolition with a gap the client hides the mesh across.
 - **Slots keyed by identity.** All segments whose closing `resolve_car` gives the
   same `(platform, id)` merge into one car lane. A car whose PRI never resolves
   (bots, odd platforms) gets its **own anonymous lane**, one per segment. A
@@ -173,9 +176,10 @@ endpoint returns `positions`.
   rotation, weighted by wall-clock time (`frame_times`) — so a held actor glides
   rather than freezing then lurching to the next sample (`_densify`,
   `_slerp`, `_keyframes`, `_lerp_pose`). Two runs hold the previous pose
-  instead: the frames up to a kickoff re-announcement (`_Segment.resets` — a cut,
-  not motion, so the lane must not drift toward spawn) and the tail after a
-  lane's final sample. Seed a segment from its `initial_trajectory.location`
+  instead: the frames up to a bare re-announcement (`_Segment.resets` — the
+  ~10 s keep-alive; a cut, not motion, so the lane must not drift toward the
+  re-announce point) and the tail after a lane's final sample. Seed a segment
+  from its `initial_trajectory.location`
   (its Euler `yaw/pitch/roll` often has `null` components — unusable as a
   quaternion); rotation before the first real sample is **held back** from that
   sample rather than slerped up from identity, which also removes the
