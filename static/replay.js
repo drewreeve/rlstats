@@ -661,16 +661,23 @@ function wireControls(playback, meta) {
   };
 }
 
-// A ?debug-gated HUD: rolling rAF frame time and time spent inside frameLoop's
-// JS, so a smoothness change reads as numbers, not just feel. If JS time is a
-// couple of ms and frame time sits near the display interval, the main thread
-// is idle and the stutter is interpolation, not scheduling. Updates its own DOM
-// on a 250 ms timer — a per-rAF textContent write would be exactly the kind of
-// main-thread churn this is here to detect.
+// A ?debug-gated HUD: rolling rAF frame time, time spent inside frameLoop's JS,
+// and a motion-continuity readout. If JS time is a couple of ms and frame time
+// sits near the display interval, the main thread is idle and the stutter is
+// interpolation, not scheduling. `freeze` is the fraction of played window
+// frames where some visible actor stalled for a frame between two moving frames
+// (the carry-forward freeze-then-lurch); `maxjump` is the worst single-frame
+// actor step. Updates its own DOM on a 250 ms timer — a per-rAF textContent
+// write would be exactly the kind of main-thread churn this is here to detect.
 function createDebugHud() {
   const N = 120; // ~2 s at 60 Hz
+  const EPS = 1; // uu; a moving actor clears this every frame, a held one is at 0
   const frameMs = new Float32Array(N);
   const jsMs = new Float32Array(N);
+  const freezeFlag = new Float32Array(N); // 1 = a stall was seen this frame
+  const evalFlag = new Float32Array(N); // 1 = frame was playing + evaluable
+  const jumpUu = new Float32Array(N);
+  const trail = []; // per slot: flat [ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz], d newest
   let head = 0;
   let filled = 0;
 
@@ -689,19 +696,58 @@ function createDebugHud() {
     };
   }
 
+  const seg = (h, a, b) =>
+    Math.hypot(h[b] - h[a], h[b + 1] - h[a + 1], h[b + 2] - h[a + 2]);
+
   setInterval(() => {
     if (!filled) return;
     const f = stats(frameMs, filled);
     const j = stats(jsMs, filled);
+    let stalls = 0;
+    let evald = 0;
+    let jmax = 0;
+    for (let k = 0; k < filled; k++) {
+      stalls += freezeFlag[k];
+      evald += evalFlag[k];
+      if (jumpUu[k] > jmax) jmax = jumpUu[k];
+    }
+    const freezePct = evald ? (100 * stalls) / evald : 0;
     el.textContent =
-      `fps    ${(1000 / f.mean).toFixed(0)}\n` +
-      `frame  ${f.mean.toFixed(1)} mean · ${f.p95.toFixed(1)} p95 · ${f.max.toFixed(1)} max ms\n` +
-      `js     ${j.mean.toFixed(2)} mean · ${j.p95.toFixed(2)} p95 ms`;
+      `fps     ${(1000 / f.mean).toFixed(0)}\n` +
+      `frame   ${f.mean.toFixed(1)} mean · ${f.p95.toFixed(1)} p95 · ${f.max.toFixed(1)} max ms\n` +
+      `js      ${j.mean.toFixed(2)} mean · ${j.p95.toFixed(2)} p95 ms\n` +
+      `freeze  ${freezePct.toFixed(1)}%  ·  maxjump ${jmax.toFixed(0)} uu`;
   }, 250);
 
-  return function record(frameDelta, jsDelta) {
+  return function record(frameDelta, jsDelta, meshes, playing) {
     frameMs[head] = frameDelta;
     jsMs[head] = jsDelta;
+
+    while (trail.length < meshes.length) trail.push([]);
+    let stalled = 0;
+    let evaluable = 0;
+    let jump = 0;
+    for (let s = 0; s < meshes.length; s++) {
+      const h = trail[s];
+      if (!(playing && meshes[s].visible)) {
+        h.length = 0; // don't measure across a pause or a lifecycle gap
+        continue;
+      }
+      const p = meshes[s].position;
+      h.push(p.x, p.y, p.z);
+      if (h.length > 12) h.splice(0, h.length - 12);
+      if (h.length < 12) continue;
+      evaluable = 1;
+      const dAB = seg(h, 0, 3);
+      const dBC = seg(h, 3, 6);
+      const dCD = seg(h, 6, 9);
+      if (dAB > EPS && dBC < EPS && dCD > EPS) stalled = 1; // moving, held, moving
+      if (dCD > jump) jump = dCD;
+    }
+    freezeFlag[head] = stalled;
+    evalFlag[head] = evaluable;
+    jumpUu[head] = jump;
+
     head = (head + 1) % N;
     if (filled < N) filled++;
   };
@@ -767,7 +813,9 @@ function buildScene(meta, positions) {
     syncUI();
     controls.update();
     renderer.render(scene, camera);
-    if (hud && dt > 0) hud(dt * 1000, performance.now() - now);
+    if (hud && dt > 0) {
+      hud(dt * 1000, performance.now() - now, meshes, playback.state.playing);
+    }
   }
   requestAnimationFrame(frameLoop);
 
