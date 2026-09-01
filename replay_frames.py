@@ -21,8 +21,10 @@ Divergences from the ``frame_analysis`` handlers, both deliberate:
 
 import math
 from array import array
+from collections.abc import Iterator
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
+from typing import Any
 
 from frame_analysis import IdentityResolver
 from player_identity import PlayerIdentity, from_network_frame
@@ -70,7 +72,12 @@ class ReplayFrames:
     positions: bytes  # F * N * 7 little-endian float32, row-major [frame][slot][x,y,z,qx,qy,qz,qw]
     tracked_team: int | None
     game_mode: str | None
-    goals: list[GoalMarker]  # in frame order
+    # all three in frame order; default empty for the no-network-data case
+    goals: list[GoalMarker] = field(default_factory=list[GoalMarker])
+    # (frame_index, n) per kickoff tick
+    countdowns: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
+    # (start, end) inclusive frame indices, non-overlapping, ascending
+    dead_periods: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
 
 
 @dataclass(eq=False)
@@ -87,6 +94,23 @@ class _Segment:
     slot: int = -1
 
 
+def _actor_updates(
+    replay: ParsedReplay, oid: int | None
+) -> Iterator[tuple[int, dict[str, Any]]]:
+    """``(frame_index, attribute)`` for every ``updated_actors`` entry on ``oid``.
+
+    The shared skeleton behind the game-event scans (``_walk`` has its own, richer
+    pass). Yields nothing when ``oid`` is ``None`` (the object isn't in the
+    replay's index).
+    """
+    if oid is None:
+        return
+    for fidx, frame in enumerate(replay.frames):
+        for ua in frame.get("updated_actors", []):
+            if ua.get("object_id") == oid:
+                yield fidx, ua.get("attribute", {})
+
+
 def _scan_goals(replay: ParsedReplay, scored_oid: int | None) -> list[GoalMarker]:
     """Goal frames from ``ReplicatedScoredOnTeam`` rising edges.
 
@@ -94,20 +118,60 @@ def _scan_goals(replay: ParsedReplay, scored_oid: int | None) -> list[GoalMarker
     few times per goal and reset to 255 in between, so a goal is each transition
     into {0, 1} from anything else.
     """
-    if scored_oid is None:
-        return []
     goals: list[GoalMarker] = []
     last = -1
-    for fidx, frame in enumerate(replay.frames):
-        for ua in frame.get("updated_actors", []):
-            if ua.get("object_id") != scored_oid:
-                continue
-            byte = ua.get("attribute", {}).get("Byte")
-            if byte in (0, 1) and last not in (0, 1):
-                goals.append(GoalMarker(frame=fidx, team=1 - byte))
-            if byte is not None:
-                last = byte
+    for fidx, attr in _actor_updates(replay, scored_oid):
+        byte = attr.get("Byte")
+        if byte in (0, 1) and last not in (0, 1):
+            goals.append(GoalMarker(frame=fidx, team=1 - byte))
+        if byte is not None:
+            last = byte
     return goals
+
+
+def _scan_countdowns(
+    replay: ParsedReplay, countdown_oid: int | None
+) -> list[tuple[int, int]]:
+    """Every ``ReplicatedRoundCountDownNumber`` tick as ``(frame_index, n)``.
+
+    The attribute is an ``Int`` that counts ``3 -> 2 -> 1 -> 0`` once per kickoff
+    — pre-match, after every goal, and for an overtime kickoff. ``0`` is the
+    frame live play resumes (``frame_analysis`` flips ``is_playing`` there).
+    """
+    return [
+        (fidx, int(n))
+        for fidx, attr in _actor_updates(replay, countdown_oid)
+        if (n := attr.get("Int")) is not None
+    ]
+
+
+def _dead_periods(
+    goals: list[GoalMarker], countdowns: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Frame spans where play is stopped, for the viewer to collapse.
+
+    Each runs ``[start, end]`` inclusive: ``start`` is a goal frame (or ``0`` for
+    the pre-match warmup) and ``end`` is the frame before that kickoff's
+    countdown begins — so the goal replay, the actor reset and the
+    frozen-at-spawn wait are trimmed while the 3-2-1 countdown itself stays in
+    the timeline. A goal with no following countdown (an overtime golden goal, or
+    one as the clock expires) gets no span.
+
+    Every kickoff countdown opens with an ``n == 3`` tick (verified across the
+    sample replays); each is consumed by at most one stop frame, so the returned
+    spans are non-overlapping and in ascending frame order — the viewer relies on
+    that.
+    """
+    starts = [f for f, n in countdowns if n == 3]
+    periods: list[tuple[int, int]] = []
+    si = 0
+    for stop in (-1, *(g.frame for g in goals)):
+        while si < len(starts) and starts[si] <= stop:
+            si += 1
+        if si < len(starts) and starts[si] > max(stop, 0):
+            periods.append((max(stop, 0), starts[si] - 1))
+            si += 1
+    return periods
 
 
 def _first_team(segments: list[_Segment]) -> int | None:
@@ -511,7 +575,7 @@ def extract_replay_frames(
     rb_oid = obj.get(NetObj.RB_STATE)
 
     if not replay.frames or car_arch is None or ball_arch is None or rb_oid is None:
-        return ReplayFrames([], [], b"", tracked_team, game_mode, [])
+        return ReplayFrames([], [], b"", tracked_team, game_mode)
 
     segments = _walk(
         replay,
@@ -526,6 +590,8 @@ def extract_replay_frames(
     frame_times = [float(f["time"]) for f in replay.frames]
     positions = _densify(segments, frame_times, len(slots))
     goals = _scan_goals(replay, obj.get(NetObj.SCORED_ON_TEAM))
+    countdowns = _scan_countdowns(replay, obj.get(NetObj.COUNTDOWN))
+    dead_periods = _dead_periods(goals, countdowns)
 
     return ReplayFrames(
         frame_times=frame_times,
@@ -534,4 +600,6 @@ def extract_replay_frames(
         tracked_team=tracked_team,
         game_mode=game_mode,
         goals=goals,
+        countdowns=countdowns,
+        dead_periods=dead_periods,
     )

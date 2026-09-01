@@ -237,7 +237,15 @@ def test_replay_meta_shape(replay_client: TestClient) -> None:
     r = replay_client.get("/api/matches/1/replay")
     assert r.status_code == 200
     data: Any = r.json()
-    assert set(data) == {"frame_times", "tracked_team", "game_mode", "slots", "goals"}
+    assert set(data) == {
+        "frame_times",
+        "tracked_team",
+        "game_mode",
+        "slots",
+        "goals",
+        "countdowns",
+        "dead_periods",
+    }
     assert isinstance(data["frame_times"], list) and data["frame_times"]
     assert data["frame_times"] == sorted(data["frame_times"])
     kinds = {s["kind"] for s in data["slots"]}
@@ -256,6 +264,29 @@ def test_replay_meta_shape(replay_client: TestClient) -> None:
     for g in data["goals"]:
         assert set(g) == {"frame", "team"}
         assert 0 <= g["frame"] <= last and g["team"] in (0, 1)
+
+
+def test_replay_meta_countdowns_and_dead_periods(replay_client: TestClient) -> None:
+    data: Any = replay_client.get("/api/matches/1/replay").json()
+    last = len(data["frame_times"]) - 1
+    goal_frames = {g["frame"] for g in data["goals"]}
+
+    cds = data["countdowns"]
+    assert cds and all(len(t) == 2 and 0 <= t[1] <= 3 for t in cds)
+    assert [t[0] for t in cds] == sorted(t[0] for t in cds)
+    # this replay: pre-match + one kickoff per goal, each a clean 3 -> 2 -> 1 -> 0
+    assert sum(1 for _, n in cds if n == 0) == len(data["goals"]) + 1
+    assert sum(1 for _, n in cds if n == 3) == len(data["goals"]) + 1
+
+    dps = data["dead_periods"]
+    assert dps[0][0] == 0  # pre-match warmup
+    prev_end = -1
+    for start, end in dps:
+        assert 0 <= start <= end <= last
+        assert start > prev_end
+        prev_end = end
+    assert all(start in goal_frames for start, _ in dps[1:])
+    assert len(dps) == len(data["goals"]) + 1
 
 
 def test_replay_frames_bin_length_matches_meta(replay_client: TestClient) -> None:

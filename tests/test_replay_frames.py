@@ -17,7 +17,10 @@ import pytest
 
 from ingest import build_replay_context
 from replay_frames import (
+    GoalMarker,
     ReplayFrames,
+    _dead_periods,  # type: ignore[reportPrivateUsage]
+    _scan_countdowns,  # type: ignore[reportPrivateUsage]
     _scan_goals,  # type: ignore[reportPrivateUsage]
     extract_replay_frames,
 )
@@ -33,8 +36,9 @@ _OBJECTS = [
     "Engine.PlayerReplicationInfo:UniqueId",
     "TAGame.Car_TA:TeamPaint",
     "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam",
+    "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",
 ]
-_CAR, _BALL, _RB, _PRI, _UID, _PAINT, _SCORED = range(7)
+_CAR, _BALL, _RB, _PRI, _UID, _PAINT, _SCORED, _COUNTDOWN = range(8)
 
 
 def _replay(frames: list[FrameData]) -> ParsedReplay:
@@ -239,7 +243,7 @@ def test_deleted_actor_ends_segment_and_leaves_gap() -> None:
 
 def test_empty_when_no_network_data() -> None:
     rf = _extract(_replay([]))
-    assert rf == ReplayFrames([], [], b"", None, None, [])
+    assert rf == ReplayFrames([], [], b"", None, None)
 
 
 # --- held-frame interpolation (_densify) ---
@@ -428,6 +432,85 @@ def test_scan_goals_on_a_real_replay_matches_the_scoreline() -> None:
     assert frames == sorted(frames)
 
 
+# --- kickoff countdowns + dead periods ---
+
+
+def _countdown(n: int) -> FrameData:
+    return cast(
+        FrameData,
+        {
+            "time": 0.0,
+            "updated_actors": [
+                {"actor_id": 2, "object_id": _COUNTDOWN, "attribute": {"Int": n}}
+            ],
+        },
+    )
+
+
+def test_scan_countdowns_returns_every_tick_in_frame_order() -> None:
+    frames = [
+        _countdown(3),
+        _countdown(2),
+        _countdown(1),
+        _countdown(0),
+        _frame(0.0),
+        _countdown(3),
+        _countdown(2),
+        _countdown(1),
+        _countdown(0),
+    ]
+    ticks = _scan_countdowns(_replay(frames), _COUNTDOWN)
+    assert ticks == [(0, 3), (1, 2), (2, 1), (3, 0), (5, 3), (6, 2), (7, 1), (8, 0)]
+
+
+def test_scan_countdowns_empty_without_the_object() -> None:
+    assert _scan_countdowns(_replay([_countdown(3)]), None) == []
+
+
+def test_dead_periods_pair_each_goal_with_the_next_countdown_start() -> None:
+    goals = [GoalMarker(frame=300, team=0), GoalMarker(frame=2000, team=1)]
+    countdowns = [
+        (20, 3), (40, 2), (60, 1), (80, 0),  # pre-match
+        (400, 3), (420, 2), (440, 1), (460, 0),  # after goal 1
+        (2100, 3), (2120, 2), (2140, 1), (2160, 0),  # after goal 2
+    ]  # fmt: skip
+    assert _dead_periods(goals, countdowns) == [(0, 19), (300, 399), (2000, 2099)]
+
+
+def test_dead_periods_skip_a_goal_with_no_following_countdown() -> None:
+    # a golden goal: the last countdown sequence (the OT kickoff) is before it
+    goals = [GoalMarker(frame=300, team=0), GoalMarker(frame=5000, team=1)]
+    countdowns = [(20, 3), (80, 0), (400, 3), (460, 0)]
+    assert _dead_periods(goals, countdowns) == [(0, 19), (300, 399)]
+
+
+def test_dead_periods_no_prematch_span_when_first_countdown_is_frame_zero() -> None:
+    assert _dead_periods([], [(0, 3), (10, 0)]) == []
+
+
+def test_dead_periods_empty_without_countdowns() -> None:
+    assert _dead_periods([GoalMarker(frame=5, team=0)], []) == []
+
+
+def test_overtime_replay_golden_goal_gets_no_dead_period() -> None:
+    replay = parse_replay(load_replay("overtime.json"))
+    goals = _scan_goals(
+        replay,
+        replay.object_index.get("TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam"),
+    )
+    countdowns = _scan_countdowns(
+        replay,
+        replay.object_index.get("TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber"),
+    )
+    periods = _dead_periods(goals, countdowns)
+    assert goals and countdowns
+    # the golden goal ends the match — nothing to trim after it
+    assert all(start != goals[-1].frame for start, _ in periods)
+    # the earlier goals (and the pre-match warmup) still trim
+    assert 2 <= len(periods) <= len(goals)
+    assert periods[0][0] == 0
+
+
 # --- integration: a real 2v2 replay ---
 
 
@@ -483,6 +566,28 @@ def test_real_replay_segments_are_sane() -> None:
         assert slot.segments == sorted(slot.segments)
         for start, end in slot.segments:
             assert 0 <= start <= end <= last
+
+
+def test_real_replay_countdowns_and_dead_periods() -> None:
+    rf = _real()
+    last = len(rf.frame_times) - 1
+
+    assert rf.countdowns
+    assert all(0 <= n <= 3 for _, n in rf.countdowns)
+    assert [f for f, _ in rf.countdowns] == sorted(f for f, _ in rf.countdowns)
+    assert all(0 <= f <= last for f, _ in rf.countdowns)
+
+    assert rf.dead_periods
+    assert rf.dead_periods[0][0] == 0  # pre-match warmup is always trimmed
+    goal_frames = {g.frame for g in rf.goals}
+    prev_end = -1
+    for start, end in rf.dead_periods:
+        assert 0 <= start <= end <= last
+        assert start > prev_end  # non-overlapping, ascending
+        prev_end = end
+    # every span past the pre-match one starts on a goal frame
+    assert all(start in goal_frames for start, _ in rf.dead_periods[1:])
+    assert len(rf.dead_periods) <= len(rf.goals) + 1
 
 
 def test_real_replay_poses_decode_to_plausible_values() -> None:

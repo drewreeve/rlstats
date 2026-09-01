@@ -344,6 +344,8 @@ def create_app(
             "game_mode": frames.game_mode,
             "slots": frames.slots,
             "goals": frames.goals,
+            "countdowns": frames.countdowns,
+            "dead_periods": frames.dead_periods,
         }
 
     @app.get("/api/matches/{match_id}/replay-frames.bin")

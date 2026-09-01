@@ -67,7 +67,7 @@ replay-time elapsed / total.
 ```
 GET /match/{id}/replay                   -> replay.html   (404 if no file on disk)
 GET /api/matches/{id}/has-replay         -> {"has_replay": bool}   (cheap: 1 query + stat, no parse)
-GET /api/matches/{id}/replay             -> metadata JSON: frame_times, slots, tracked_team, game_mode, goals  (404 no file / 422 unparseable)
+GET /api/matches/{id}/replay             -> metadata JSON: frame_times, slots, tracked_team, game_mode, goals, countdowns, dead_periods  (404 no file / 422 unparseable)
 GET /api/matches/{id}/replay-frames.bin  -> Float32 position buffer, octet-stream
 ```
 
@@ -134,6 +134,8 @@ class ReplayFrames:
     tracked_team: int | None
     game_mode: str | None
     goals: list[GoalMarker]            # {frame, team} in frame order
+    countdowns: list[tuple[int, int]]  # (frame, n) per kickoff tick (3→2→1→0), frame order
+    dead_periods: list[tuple[int, int]] # (start, end) inclusive frame indices the viewer collapses
 ```
 
 The JSON metadata endpoint serialises everything except `positions`; the `.bin`
