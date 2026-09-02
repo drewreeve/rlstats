@@ -302,13 +302,18 @@ function buildArena(parent) {
     ),
   );
 
-  // Floor grid, ~1024 uu spacing, clipped to the octagon so nothing overhangs.
+  // Floor guide: a 4×3 grid — 4 rows goal to goal, 3 columns wall to wall — the
+  // in-game reference for rotation spacing / avoiding double commits. Interior
+  // dividers only (the arena outline is the perimeter), clipped to the octagon
+  // so nothing overhangs. The brighter centre line is drawn separately below.
   const gridPts = [];
-  for (let x = -HX; x <= HX + 1; x += 1024) {
+  for (let i = 1; i < 3; i++) {
+    const x = -HX + i * (FIELD_X / 3);
     const lim = outlineHalfWidth(x, 0).y;
     gridPts.push(new THREE.Vector3(x, -lim, 0.5), new THREE.Vector3(x, lim, 0.5));
   }
-  for (let y = -HY; y <= HY + 1; y += 1024) {
+  for (let i = 1; i < 4; i++) {
+    const y = -HY + i * (FIELD_Y / 4);
     const lim = outlineHalfWidth(0, y).x;
     gridPts.push(new THREE.Vector3(-lim, y, 0.5), new THREE.Vector3(lim, y, 0.5));
   }
