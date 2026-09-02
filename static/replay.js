@@ -2,8 +2,9 @@
 //
 // Steps 3–9: load a match's metadata + packed position buffer, build a Three.js
 // scene (wireframe soccar arena + low-poly cars + seamed ball + name labels + motion
-// trails), and play it back on a real-time clock — play/pause, scrub, 0.5×–4×
-// speed, goal ticks on the scrub bar and a running scoreboard. Poses are
+// trails + a goal-scored particle burst), and play it back on a real-time clock
+// — play/pause, scrub, 0.5×–4× speed, goal ticks on the scrub bar and a running
+// scoreboard. Poses are
 // lerp/slerp'd between rrrocket's ~30 Hz samples using the real (non-uniform)
 // frame deltas. A slot's mesh is hidden while its actor is between segments
 // (demolitions). When the tracked team is team 1 the field is flipped 180° so
@@ -100,6 +101,17 @@ const LABEL_VIEW_FRAC = 0.025;
 const LABEL_CLEAR_UU = 100;
 const LABEL_GAP_FRAC = 0.006;
 const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
+
+// Goal celebration: a glowy particle burst at the ball's entry point. The goal
+// instant is trimmed from the timeline (advance() snaps over the dead span), so
+// this is a wall-clock overlay fired on the forward crossing, not a playback
+// state. Spread is scaled off the goal mouth so the burst reads about goal-sized.
+const GOAL_FX_COUNT = 170;
+const GOAL_FX_LIFETIME = 1.3; // s, particle burst
+const GOAL_FX_CORE_LIFETIME = 0.32; // s, the central flash sprite
+const GOAL_FX_POINT_SIZE = 22; // world uu (sizeAttenuation)
+const GOAL_FX_DRAG = 0.06; // velocity retained per second (strong ease-out)
+const GOAL_FX_GRAVITY = 900; // uu/s², pulls the up-thrown particles back
 
 // Orthographic camera presets (world coords, Y-up). `size` is the frustum
 // height in uu; `resize()` derives the width from the viewport aspect.
@@ -261,6 +273,171 @@ function makeTrail(colorHex) {
   );
   line.frustumCulled = false; // vertices move every frame
   return line;
+}
+
+// A hard little dot — solid white core, a thin feathered rim, then a faint
+// halo — so a burst reads as sparks rather than a soft cloud.
+function makeDotTexture() {
+  const s = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = s;
+  const ctx = c.getContext("2d");
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.4, "rgba(255,255,255,1)");
+  g.addColorStop(0.55, "rgba(255,255,255,0.35)");
+  g.addColorStop(0.8, "rgba(255,255,255,0.08)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+
+// The goal-celebration burst. `trigger(origin, colorHex)` seeds GOAL_FX_COUNT
+// additive point sprites at `origin` (field-local, so the team-1 flip is already
+// applied) with velocities biased toward the pitch centre and upward; `update`
+// integrates them with heavy drag + light gravity and fades each toward black
+// (invisible under additive blending). A larger core sprite sells the flash for
+// the first fraction of a second. Idle cost is nil — both objects are hidden.
+function createGoalFx(field) {
+  const dot = makeDotTexture();
+
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(GOAL_FX_COUNT * 3);
+  const col = new Float32Array(GOAL_FX_COUNT * 3);
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const points = new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({
+      size: GOAL_FX_POINT_SIZE,
+      map: dot,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    }),
+  );
+  points.frustumCulled = false;
+  points.visible = false;
+  field.add(points);
+
+  const core = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: dot,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
+      opacity: 0,
+    }),
+  );
+  core.visible = false;
+  field.add(core);
+
+  const vel = new Float32Array(GOAL_FX_COUNT * 3);
+  const bright = new Float32Array(GOAL_FX_COUNT); // per-spark brightness, for twinkle
+  const base = new THREE.Color();
+  let age = Infinity; // ≥ lifetime ⇒ inactive
+
+  function trigger(origin, colorHex) {
+    base.set(colorHex);
+    const gy = Math.sign(origin.y) || 1; // toward-pitch is −gy on the goal axis
+    for (let i = 0; i < GOAL_FX_COUNT; i++) {
+      pos[i * 3] = origin.x;
+      pos[i * 3 + 1] = origin.y;
+      pos[i * 3 + 2] = origin.z;
+      // random direction, biased into the pitch and upward
+      let dx = Math.random() * 2 - 1;
+      let dy = Math.random() * 2 - 1 - gy * 0.55;
+      let dz = Math.abs(Math.random() * 2 - 1) * 0.7 + 0.45;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      // rand² weighting ⇒ more slow particles ⇒ density packed toward the centre
+      const speed = 380 + 2400 * Math.random() ** 2;
+      vel[i * 3] = (dx / len) * speed;
+      vel[i * 3 + 1] = (dy / len) * speed;
+      vel[i * 3 + 2] = (dz / len) * speed;
+      bright[i] = 0.55 + Math.random() * 0.9; // some sparks pop brighter (>1 under additive)
+      col[i * 3] = base.r * bright[i];
+      col[i * 3 + 1] = base.g * bright[i];
+      col[i * 3 + 2] = base.b * bright[i];
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+    points.visible = true;
+
+    core.position.copy(origin);
+    core.scale.setScalar(GOAL_H * 0.6);
+    core.material.color.set(colorHex);
+    core.material.opacity = 1;
+    core.visible = true;
+    age = 0;
+  }
+
+  function update(dt) {
+    if (age >= GOAL_FX_LIFETIME) return;
+    age += dt;
+    const dragT = Math.pow(GOAL_FX_DRAG, dt);
+    const k = Math.max(0, 1 - age / GOAL_FX_LIFETIME);
+    const fade = k * k; // ease-out to nothing
+    for (let i = 0; i < GOAL_FX_COUNT; i++) {
+      vel[i * 3] *= dragT;
+      vel[i * 3 + 1] *= dragT;
+      vel[i * 3 + 2] = vel[i * 3 + 2] * dragT - GOAL_FX_GRAVITY * dt;
+      pos[i * 3] += vel[i * 3] * dt;
+      pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
+      pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+      col[i * 3] = base.r * fade * bright[i];
+      col[i * 3 + 1] = base.g * fade * bright[i];
+      col[i * 3 + 2] = base.b * fade * bright[i];
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+
+    const ck = Math.max(0, 1 - age / GOAL_FX_CORE_LIFETIME);
+    core.material.opacity = ck * ck;
+    core.visible = ck > 0;
+
+    if (age >= GOAL_FX_LIFETIME) {
+      points.visible = false;
+      core.visible = false;
+    }
+  }
+
+  return { trigger, update };
+}
+
+// Fires goalFx once per goal on the forward crossing of its frame time — not on
+// scrub or reverse. A goal re-arms if the clock is later taken back before it.
+function makeGoalWatcher(meta, positions, playback, goalFx) {
+  const slotCount = meta.slots.length;
+  const ballSlot = meta.slots.findIndex((s) => s.kind === "ball");
+  const times = meta.frame_times;
+  const done = new Set();
+  const origin = new THREE.Vector3();
+  let prevT = playback.state.t;
+  return function watchGoals() {
+    const t = playback.state.t;
+    const forward = playback.state.playing && t > prevT;
+    if (ballSlot >= 0) {
+      for (let gi = 0; gi < meta.goals.length; gi++) {
+        const gt = times[meta.goals[gi].frame];
+        if (forward && prevT < gt && t >= gt && !done.has(gi)) {
+          done.add(gi);
+          const o = poseOffset(slotCount, meta.goals[gi].frame, ballSlot);
+          origin.set(positions[o], positions[o + 1], positions[o + 2]);
+          goalFx.trigger(
+            origin,
+            teamTint(meta.goals[gi].team, meta.tracked_team),
+          );
+        }
+        if (t < gt - 0.05) done.delete(gi); // clock taken back before it ⇒ re-arm
+      }
+    }
+    prevT = t;
+  };
 }
 
 function formatClock(seconds) {
@@ -1122,6 +1299,7 @@ function buildScene(meta, positions) {
   buildBoostPads(field);
   buildGoals(field, meta.tracked_team);
   const meshes = createActorMeshes(field, meta);
+  const goalFx = createGoalFx(field);
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1144,6 +1322,7 @@ function buildScene(meta, positions) {
   window.addEventListener("resize", resize);
 
   const playback = createPlayback(meta, positions, meshes);
+  const watchGoals = makeGoalWatcher(meta, positions, playback, goalFx);
   const syncUI = wireControls(playback, meta);
   renderScrubMarks(meta, playback);
   playback.applyPoses();
@@ -1163,6 +1342,7 @@ function buildScene(meta, positions) {
       THREE,
       meta,
       countdownLabelAt,
+      goalFx,
     };
   }
 
@@ -1172,7 +1352,9 @@ function buildScene(meta, positions) {
     const dt = lastNow == null ? 0 : (now - lastNow) / 1000;
     lastNow = now;
     playback.advance(dt);
+    watchGoals();
     playback.applyPoses();
+    goalFx.update(dt);
     syncUI();
     controls.update();
     renderer.render(scene, camera);
