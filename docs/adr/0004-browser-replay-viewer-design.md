@@ -44,7 +44,7 @@ and there are working reference implementations on the same input.
 | 11 | Arena / mode coverage | Standard soccar arena only (covers 3v3, 2v2, and any other soccar-arena mode). Hoops/Dropshot matches get **no** viewer link in v1. Positions in the `.bin` are mode-agnostic, so a second arena is purely additive later. |
 | 12 | Orientation | Normalise: the tracked team always attacks the same on-screen direction, every match, regardless of which colour they were. |
 | 13 | Link availability & failure | Show "Watch replay" only when `matches.replay_filename` is set and `replays/<that name>` exists; route 404s otherwise. On a view-time parse failure, return an error payload the page renders — and **never delete the file** (unlike the ingest path). |
-| 14 | Car shape | A composed low-poly battle car, not a bare box (`createCar` / `buildCarModel`): an extruded curved hull + tinted canopy, graphite aero (splitter, diffuser, skirts, wing, vents), chrome boost nozzles with emissive cores, emissive headlights, and four spoked wheels with body-colour fender flares. Inlined from a Claude-designed three.js model (`battle-car.js`), kept close to source so a re-export stays diffable — only the `<three-d-stage>` harness is dropped and the paint swapped for the team tint (hull + flares); the designed graphite / tinted glass / chrome / rubber are kept. The model's `MeshStandardMaterial` look is kept too: `buildScene` bakes a `RoomEnvironment` PMREM into `scene.environment` (`environmentIntensity` 0.6) so the metals don't render near-black; the Lambert ball and line arena ignore it. The model is authored +X forward / +Y up / +Z lateral, so `buildCarModel` turns it +90° about X (drops +Y onto RL's +Z-up, nose stays on +X — a proper rotation, no mirror), scales it ×`CAR_SCALE` and drops the wheels `CAR_DROP` (17 uu, measured from a grounded car's pose z) below the pose origin, nudged `CAR_NOSE_BIAS` forward. Still procedural, no assets; the one new CDN import (`RoomEnvironment`, same jsdelivr `/+esm` origin) is covered by the existing `script-src`. **Why:** a symmetric box gave no read on which way a car faced — the one thing a positional-habits tool most needs; successive hand-authored lofts never got past "generic car", so a ready-made model was dropped in instead. `CAR_SCALE` is pinned on **width**: the wheel track comes out ~85 uu ≈ the 118×84×36 hitbox's 84, with the ~135 uu length (~1.1×) and ~42 uu roof (~1.2×) the slight overhang a real RL body has over its collision box. |
+| 14 | Car shape | A composed low-poly battle car, not a bare box (`createCar` / `buildCarModel`): an extruded curved hull + tinted canopy, graphite aero (splitter, diffuser, skirts, wing, vents), chrome boost nozzles with emissive cores, emissive headlights, and four spoked wheels with body-colour fender flares. Inlined from a Claude-designed three.js model (`battle-car.js`), kept close to source so a re-export stays diffable — only the `<three-d-stage>` harness is dropped and the paint swapped for the team tint (hull + flares); the designed graphite / tinted glass / chrome / rubber are kept. The model's `MeshStandardMaterial` look is kept too: `buildScene` bakes a `RoomEnvironment` PMREM into `scene.environment` (`environmentIntensity` 0.6) so the metals don't render near-black; the line arena ignores it, and the ball (also `MeshStandardMaterial` now) picks it up. The model is authored +X forward / +Y up / +Z lateral, so `buildCarModel` turns it +90° about X (drops +Y onto RL's +Z-up, nose stays on +X — a proper rotation, no mirror), scales it ×`CAR_SCALE` and drops the wheels `CAR_DROP` (17 uu, measured from a grounded car's pose z) below the pose origin, nudged `CAR_NOSE_BIAS` forward. Still procedural, no assets; the one new CDN import (`RoomEnvironment`, same jsdelivr `/+esm` origin) is covered by the existing `script-src`. **Why:** a symmetric box gave no read on which way a car faced — the one thing a positional-habits tool most needs; successive hand-authored lofts never got past "generic car", so a ready-made model was dropped in instead. `CAR_SCALE` is pinned on **width**: the wheel track comes out ~85 uu ≈ the 118×84×36 hitbox's 84, with the ~135 uu length (~1.1×) and ~42 uu roof (~1.2×) the slight overhang a real RL body has over its collision box. |
 
 ### v1 feature scope (decision 7)
 
@@ -206,9 +206,10 @@ composite, so a later read returns zeros while the screenshot is fine.
   battle car per slot (`buildCarModel`, decision 14 — a `THREE.Group` wrapping
   the `battle-car.js` model, turned +90° about X from its authoring basis into
   RL local axes, scaled to the hitbox and dropped so the wheels sit 17 uu below
-  the pose origin), sphere ball. RL is Z-up, Three.js is Y-up: everything lives
-  in a parent `world` `Group` with `rotation.x = -π/2`, so RL `(x, y, z)`
-  renders at world `(x, z, -y)`.
+  the pose origin), a smooth `MeshStandardMaterial` ball with a charcoal
+  great-circle seam + pole pip (`buildBall`) so its RigidBody spin reads. RL is
+  Z-up, Three.js is Y-up: everything lives in a parent `world` `Group` with
+  `rotation.x = -π/2`, so RL `(x, y, z)` renders at world `(x, z, -y)`.
 - **Playback.** `createPlayback(meta, positions, meshes)` owns a clock: `state.t`
   in `frame_times` space (starts at `frame_times[0]`, not 0), advanced each rAF
   by `realDeltaSeconds * speed` while playing, clamped and auto-paused at the
@@ -238,10 +239,13 @@ composite, so a later read returns zeros while the screenshot is fine.
   90 frames) stays hidden throughout; the 1–2-frame kickoff-reset gaps just hold
   at the boundary pose rather than flicker.
 - **Labels + orientation (decision 12).** Each car carries a `THREE.Sprite` name
-  tag (`makeLabelSprite` draws `slot.name` to a canvas texture in the car's
-  colour, `depthTest: false`); `applyPoses` parks it `LABEL_HEIGHT` uu above the
-  car and hides it with the car. `main` awaits `document.fonts.ready` so the tag
-  renders in DM Mono. The `.bin` stays raw; arena + actors + labels live in an
+  tag (`makeLabelSprite` draws `slot.name` to a 2×-supersampled canvas texture in
+  the car's colour, `depthTest: false`, bottom-anchored). `applyPoses` rescales
+  it every frame to `LABEL_VIEW_FRAC` of the viewport height — screen-constant
+  across zoom/preset, from the ortho frustum ÷ `camera.zoom` — and parks its base
+  `LABEL_CLEAR_UU` uu + `LABEL_GAP_FRAC` of the viewport above the pose origin,
+  clear of the roof; it hides with the car. `main` awaits `document.fonts.ready`
+  so the tag renders in DM Mono. The `.bin` stays raw; arena + actors + labels live in an
   inner `field` group inside the axis-remap `world` group, and
   `field.rotation.z = π` when `meta.tracked_team === 1` — a 180° spin in RL's
   horizontal plane. Net effect for both tracked configurations: the tracked team
@@ -270,7 +274,10 @@ composite, so a later read returns zeros while the screenshot is fine.
   `renderScrubMarks` places a colour-coded tick per goal on a `.replay-marks`
   overlay above the range input (cyan = tracked team, red = opponent), and
   `syncUI` counts goals with `time <= playback.t` into a `our – opp` scoreboard
-  in the top bar.
+  in the top bar. `makeGoalWatcher` fires a team-tinted particle burst
+  (`createGoalFx`) at the ball's entry point on the forward crossing of a goal
+  frame — a wall-clock overlay, since the goal instant itself is inside the
+  trimmed dead span.
 - **Kickoff countdown.** `replay_frames._scan_countdowns` records every
   `ReplicatedRoundCountDownNumber` tick as `(frame, n)` — one `3 → 2 → 1 → 0`
   run per kickoff (pre-match, each goal, OT), `n == 0` being the frame live play

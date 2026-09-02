@@ -1,12 +1,12 @@
 // Browser replay viewer — see docs/adr/0004-browser-replay-viewer-design.md
 //
 // Steps 3–9: load a match's metadata + packed position buffer, build a Three.js
-// scene (wireframe soccar arena + low-poly cars + seamed ball + name labels + motion
-// trails + a goal-scored particle burst), and play it back on a real-time clock
-// — play/pause, scrub, 0.5×–4× speed, goal ticks on the scrub bar and a running
-// scoreboard. Poses are
-// lerp/slerp'd between rrrocket's ~30 Hz samples using the real (non-uniform)
-// frame deltas. A slot's mesh is hidden while its actor is between segments
+// scene (wireframe soccar arena + low-poly cars + seamed ball + name labels +
+// motion trails + a goal-scored particle burst), and play it back on a real-time
+// clock — play/pause, scrub, 0.5×–4× speed, goal ticks on the scrub bar and a
+// running scoreboard. Poses are lerp/slerp'd between rrrocket's ~30 Hz samples
+// using the real (non-uniform) frame deltas. A slot's mesh is hidden while its
+// actor is between segments
 // (demolitions). When the tracked team is team 1 the field is flipped 180° so
 // "our" half is always the same side of the screen. Orthographic camera with
 // drag-orbit/zoom and BROADCAST / TOP presets.
@@ -213,6 +213,7 @@ function makeLabelSprite(text, cssColor) {
   c.width = w;
   c.height = h;
   const ctx = c.getContext("2d");
+  const baselineY = h / 2 + 2 * LABEL_SS;
   ctx.font = font;
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(8, 10, 18, 0.82)";
@@ -220,9 +221,9 @@ function makeLabelSprite(text, cssColor) {
   ctx.lineJoin = "round";
   ctx.lineWidth = 4 * LABEL_SS;
   ctx.strokeStyle = "rgba(8, 10, 18, 0.9)"; // carries the tag over a bright wireframe line
-  ctx.strokeText(text, padX, h / 2 + 2 * LABEL_SS);
+  ctx.strokeText(text, padX, baselineY);
   ctx.fillStyle = cssColor;
-  ctx.fillText(text, padX, h / 2 + 2 * LABEL_SS);
+  ctx.fillText(text, padX, baselineY);
 
   const texture = new THREE.CanvasTexture(c);
   texture.anisotropy = 4;
@@ -295,11 +296,12 @@ function makeDotTexture() {
 }
 
 // The goal-celebration burst. `trigger(origin, colorHex)` seeds GOAL_FX_COUNT
-// additive point sprites at `origin` (field-local, so the team-1 flip is already
-// applied) with velocities biased toward the pitch centre and upward; `update`
-// integrates them with heavy drag + light gravity and fades each toward black
-// (invisible under additive blending). A larger core sprite sells the flash for
-// the first fraction of a second. Idle cost is nil — both objects are hidden.
+// additive points at `origin` (field-local, so the team-1 flip is already
+// applied) with velocities biased toward the pitch centre and upward, and a
+// fixed per-spark brightness for twinkle; `update` integrates them with heavy
+// drag + light gravity and fades the whole burst out via material.opacity. A
+// larger core sprite sells the flash for the first fraction of a second. Idle
+// cost is nil — both objects are hidden.
 function createGoalFx(field) {
   const dot = makeDotTexture();
 
@@ -350,9 +352,9 @@ function createGoalFx(field) {
       pos[i * 3 + 1] = origin.y;
       pos[i * 3 + 2] = origin.z;
       // random direction, biased into the pitch and upward
-      let dx = Math.random() * 2 - 1;
-      let dy = Math.random() * 2 - 1 - gy * 0.55;
-      let dz = Math.abs(Math.random() * 2 - 1) * 0.7 + 0.45;
+      const dx = Math.random() * 2 - 1;
+      const dy = Math.random() * 2 - 1 - gy * 0.55;
+      const dz = Math.abs(Math.random() * 2 - 1) * 0.7 + 0.45;
       const len = Math.hypot(dx, dy, dz) || 1;
       // rand² weighting ⇒ more slow particles ⇒ density packed toward the centre
       const speed = 380 + 2400 * Math.random() ** 2;
@@ -366,6 +368,7 @@ function createGoalFx(field) {
     }
     geo.attributes.position.needsUpdate = true;
     geo.attributes.color.needsUpdate = true;
+    points.material.opacity = 1;
     points.visible = true;
 
     core.position.copy(origin);
@@ -380,60 +383,51 @@ function createGoalFx(field) {
     if (age >= GOAL_FX_LIFETIME) return;
     age += dt;
     const dragT = Math.pow(GOAL_FX_DRAG, dt);
-    const k = Math.max(0, 1 - age / GOAL_FX_LIFETIME);
-    const fade = k * k; // ease-out to nothing
+    const gdt = GOAL_FX_GRAVITY * dt;
     for (let i = 0; i < GOAL_FX_COUNT; i++) {
       vel[i * 3] *= dragT;
       vel[i * 3 + 1] *= dragT;
-      vel[i * 3 + 2] = vel[i * 3 + 2] * dragT - GOAL_FX_GRAVITY * dt;
+      vel[i * 3 + 2] = vel[i * 3 + 2] * dragT - gdt;
       pos[i * 3] += vel[i * 3] * dt;
       pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
       pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
-      col[i * 3] = base.r * fade * bright[i];
-      col[i * 3 + 1] = base.g * fade * bright[i];
-      col[i * 3 + 2] = base.b * fade * bright[i];
     }
     geo.attributes.position.needsUpdate = true;
-    geo.attributes.color.needsUpdate = true;
+
+    // fade the whole burst out (per-spark brightness is baked into the colours)
+    const k = Math.max(0, 1 - age / GOAL_FX_LIFETIME);
+    points.material.opacity = k * k;
 
     const ck = Math.max(0, 1 - age / GOAL_FX_CORE_LIFETIME);
     core.material.opacity = ck * ck;
     core.visible = ck > 0;
 
-    if (age >= GOAL_FX_LIFETIME) {
-      points.visible = false;
-      core.visible = false;
-    }
+    if (age >= GOAL_FX_LIFETIME) points.visible = false;
   }
 
   return { trigger, update };
 }
 
-// Fires goalFx once per goal on the forward crossing of its frame time — not on
-// scrub or reverse. A goal re-arms if the clock is later taken back before it.
+// Fires goalFx once per goal on the forward crossing of its frame time. The
+// `prevT < gt && t >= gt` test is already single-shot — `prevT` is set to `t`
+// every call, so a fired goal can only cross again if the clock is taken back
+// before it (scrub/rewatch), which re-arms it for free.
 function makeGoalWatcher(meta, positions, playback, goalFx) {
   const slotCount = meta.slots.length;
   const ballSlot = meta.slots.findIndex((s) => s.kind === "ball");
-  const times = meta.frame_times;
-  const done = new Set();
+  const goalTimes = meta.goals.map((g) => meta.frame_times[g.frame]);
   const origin = new THREE.Vector3();
   let prevT = playback.state.t;
   return function watchGoals() {
     const t = playback.state.t;
-    const forward = playback.state.playing && t > prevT;
-    if (ballSlot >= 0) {
-      for (let gi = 0; gi < meta.goals.length; gi++) {
-        const gt = times[meta.goals[gi].frame];
-        if (forward && prevT < gt && t >= gt && !done.has(gi)) {
-          done.add(gi);
+    if (ballSlot >= 0 && playback.state.playing && t > prevT) {
+      for (let gi = 0; gi < goalTimes.length; gi++) {
+        const gt = goalTimes[gi];
+        if (prevT < gt && t >= gt) {
           const o = poseOffset(slotCount, meta.goals[gi].frame, ballSlot);
           origin.set(positions[o], positions[o + 1], positions[o + 2]);
-          goalFx.trigger(
-            origin,
-            teamTint(meta.goals[gi].team, meta.tracked_team),
-          );
+          goalFx.trigger(origin, teamTint(meta.goals[gi].team, meta.tracked_team));
         }
-        if (t < gt - 0.05) done.delete(gi); // clock taken back before it ⇒ re-arm
       }
     }
     prevT = t;
@@ -852,19 +846,15 @@ const BALL_COLOR = 0xeceef2;
 // pole pip dropping in and out of view — a bare great circle is symmetric about
 // its own axis, so spin around it would otherwise be invisible. Seam/pip are
 // children of the mesh, so they inherit its per-frame pose.
-function buildBall() {
+function buildBall(color) {
   const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(BALL_RADIUS, 48, 32),
-    new THREE.MeshStandardMaterial({
-      color: BALL_COLOR,
-      roughness: 0.5,
-      metalness: 0,
-    }),
+    new THREE.SphereGeometry(BALL_RADIUS, 32, 24),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0 }),
   );
 
   const ink = new THREE.MeshStandardMaterial({ color: 0x1a1c22, roughness: 0.6, metalness: 0 });
   const seam = new THREE.Mesh(
-    new THREE.TorusGeometry(BALL_RADIUS * 1.005, 2.5, 8, 64),
+    new THREE.TorusGeometry(BALL_RADIUS * 1.005, 2.5, 6, 40),
     ink,
   );
   ball.add(seam); // ring in the mesh's local XY plane, axis = local Z
@@ -881,7 +871,7 @@ function createActorMeshes(field, meta) {
     const isBall = slot.kind === "ball";
     const color = isBall ? BALL_COLOR : carColor(slot, meta.tracked_team);
 
-    const obj = isBall ? buildBall() : buildCarModel(color);
+    const obj = isBall ? buildBall(color) : buildCarModel(color);
     field.add(obj);
 
     const trail = makeTrail(color);
@@ -952,6 +942,10 @@ function createPlayback(meta, positions, meshes) {
 
   function applyPoses() {
     const [i, j, f] = bracket(times, state.t);
+    // Screen-constant label sizing — camera-only, so hoisted out of the per-slot loop.
+    const frustumH = (camera.top - camera.bottom) / camera.zoom;
+    const pillH = LABEL_VIEW_FRAC * frustumH;
+    const labelBase = LABEL_CLEAR_UU + LABEL_GAP_FRAC * frustumH;
     for (let s = 0; s < meshes.length; s++) {
       const slot = meta.slots[s];
       const label = meshes[s].userData.label;
@@ -992,13 +986,11 @@ function createPlayback(meta, positions, meshes) {
 
       if (label) {
         label.visible = showNames;
-        const frustumH = (camera.top - camera.bottom) / camera.zoom;
-        const pillH = LABEL_VIEW_FRAC * frustumH;
         label.scale.set(pillH * label.userData.aspect, pillH, 1);
         label.position.set(
           meshes[s].position.x,
           meshes[s].position.y,
-          meshes[s].position.z + LABEL_CLEAR_UU + LABEL_GAP_FRAC * frustumH,
+          meshes[s].position.z + labelBase,
         );
       }
 
@@ -1351,6 +1343,8 @@ function buildScene(meta, positions) {
     requestAnimationFrame(frameLoop);
     const dt = lastNow == null ? 0 : (now - lastNow) / 1000;
     lastNow = now;
+    // Order matters: watchGoals() reads state.t after advance(); goalFx.update()
+    // must run after watchGoals() or a fresh burst loses its first frame.
     playback.advance(dt);
     watchGoals();
     playback.applyPoses();
