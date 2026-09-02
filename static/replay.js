@@ -91,7 +91,14 @@ const TEAM_OURS = 0x00e5ff;
 const TEAM_THEIRS = 0xff5a5a;
 const TEAM_UNKNOWN = 0x8585a0;
 const SEEK_STEP = 5; // seconds, for arrow-key seeking
-const LABEL_HEIGHT = 100; // uu above the pose origin for a car's name label (clears the roof + spoiler)
+// Name-label placement. The tag is bottom-anchored and screen-constant in size:
+// its pill is LABEL_VIEW_FRAC of the viewport height, and its bottom edge sits
+// LABEL_CLEAR_UU (world uu, always enough to clear the roof + spoiler) plus
+// LABEL_GAP_FRAC of the viewport above the pose origin, so the gap breathes with
+// zoom without ever letting the tag drop onto the car.
+const LABEL_VIEW_FRAC = 0.025;
+const LABEL_CLEAR_UU = 100;
+const LABEL_GAP_FRAC = 0.006;
 const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
 
 // Orthographic camera presets (world coords, Y-up). `size` is the frustum
@@ -179,23 +186,31 @@ function slotLiveAt(slot, frame) {
 
 // A camera-facing name tag drawn to a canvas texture. Sprites ignore parent
 // rotation, so the text reads normally even inside the flipped field group.
+// Rendered at LABEL_SS x its on-screen size so a close orbit stays crisp. The
+// world scale is (re)set every frame in applyPoses to stay screen-constant,
+// keyed off the texture aspect stashed on userData.
+const LABEL_SS = 2; // texture supersample factor
 function makeLabelSprite(text, cssColor) {
-  const font = "600 40px 'DM Mono', ui-monospace, monospace";
+  const font = `600 ${40 * LABEL_SS}px 'DM Mono', ui-monospace, monospace`;
   const measure = document.createElement("canvas").getContext("2d");
   measure.font = font;
-  const padX = 12;
+  const padX = 12 * LABEL_SS;
   const w = Math.ceil(measure.measureText(text).width) + padX * 2;
-  const h = 56;
+  const h = 56 * LABEL_SS;
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
   const ctx = c.getContext("2d");
   ctx.font = font;
   ctx.textBaseline = "middle";
-  ctx.fillStyle = "rgba(8, 10, 18, 0.7)";
+  ctx.fillStyle = "rgba(8, 10, 18, 0.82)";
   ctx.fillRect(0, 0, w, h);
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 4 * LABEL_SS;
+  ctx.strokeStyle = "rgba(8, 10, 18, 0.9)"; // carries the tag over a bright wireframe line
+  ctx.strokeText(text, padX, h / 2 + 2 * LABEL_SS);
   ctx.fillStyle = cssColor;
-  ctx.fillText(text, padX, h / 2 + 2);
+  ctx.fillText(text, padX, h / 2 + 2 * LABEL_SS);
 
   const texture = new THREE.CanvasTexture(c);
   texture.anisotropy = 4;
@@ -207,8 +222,8 @@ function makeLabelSprite(text, cssColor) {
       depthWrite: false,
     }),
   );
-  const height = 260; // uu
-  sprite.scale.set((w / h) * height, height, 1);
+  sprite.userData.aspect = w / h; // applyPoses multiplies the pill height by this
+  sprite.center.set(0.5, 0); // bottom-anchored, so the tag sits above the car at any size
   sprite.renderOrder = 10;
   return sprite;
 }
@@ -774,10 +789,13 @@ function createPlayback(meta, positions, meshes) {
 
       if (label) {
         label.visible = showNames;
+        const frustumH = (camera.top - camera.bottom) / camera.zoom;
+        const pillH = LABEL_VIEW_FRAC * frustumH;
+        label.scale.set(pillH * label.userData.aspect, pillH, 1);
         label.position.set(
           meshes[s].position.x,
           meshes[s].position.y,
-          meshes[s].position.z + LABEL_HEIGHT,
+          meshes[s].position.z + LABEL_CLEAR_UU + LABEL_GAP_FRAC * frustumH,
         );
       }
 
