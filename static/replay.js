@@ -1,7 +1,7 @@
 // Browser replay viewer — see docs/adr/0004-browser-replay-viewer-design.md
 //
 // Steps 3–9: load a match's metadata + packed position buffer, build a Three.js
-// scene (wireframe soccar arena + box cars + sphere ball + name labels + motion
+// scene (wireframe soccar arena + low-poly cars + sphere ball + name labels + motion
 // trails), and play it back on a real-time clock — play/pause, scrub, 0.5×–4×
 // speed, goal ticks on the scrub bar and a running scoreboard. Poses are
 // lerp/slerp'd between rrrocket's ~30 Hz samples using the real (non-uniform)
@@ -12,6 +12,7 @@
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/+esm";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
+import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/environments/RoomEnvironment.js/+esm";
 
 // Rocket League field, unreal units. X = wall to wall, Y = goal to goal,
 // Z = floor to ceiling. The world group is Z-up (RL); Three.js is Y-up.
@@ -36,9 +37,25 @@ const ARENA_OUTLINE = [
   [HX, -(HY - CORNER)],
 ];
 
-const CAR_SIZE = [118, 84, 36]; // Octane hitbox, RL local axes (X fwd, Y left, Z up)
 const BALL_RADIUS = 91.25;
 const FLOATS_PER_POSE = 7; // x, y, z, qx, qy, qz, qw
+
+// Battle-car model (createCar / buildCarModel). Inlined from a Claude-designed
+// three.js model (battle-car.js): an extruded curved hull + tinted canopy,
+// graphite aero (splitter, diffuser, skirts, wing), chrome boost nozzles with
+// emissive cores, emissive headlights, and four spoked wheels with body-colour
+// fender flares. Authored in its own basis (+X forward, +Y up, +Z lateral;
+// ~metres; wheels on y = 0). `buildCarModel` rotates that basis into RL local
+// axes (+90° about X: +Y up → +Z up), scales it and drops the wheels onto the
+// floor. Only recolour: the paint (hull + flares) takes the team tint; the
+// designed graphite / glass / chrome / rubber are kept.
+//
+// CAR_SCALE is pinned on WIDTH — the wheel track is ~2.15 in model units, so
+// 2.15 × 39 ≈ 84 uu ≈ the 84-wide hitbox. Length then lands ~1.1× and roof
+// ~1.2× the hitbox — the slight overhang a real RL body has over its box.
+const CAR_SCALE = 39;
+const CAR_DROP = 17; // uu the wheels sit below the pose origin (grounded car)
+const CAR_NOSE_BIAS = 4; // uu forward — rrrocket's origin is a touch aft of hull centre
 
 // Soccar goal: 1786 uu mouth width, 643 uu tall, 880 uu deep behind the back
 // wall. Team 0 defends the −y goal, team 1 the +y goal (before the field flip).
@@ -74,7 +91,7 @@ const TEAM_OURS = 0x00e5ff;
 const TEAM_THEIRS = 0xff5a5a;
 const TEAM_UNKNOWN = 0x8585a0;
 const SEEK_STEP = 5; // seconds, for arrow-key seeking
-const LABEL_HEIGHT = 150; // uu above a car's centre for its name label
+const LABEL_HEIGHT = 100; // uu above the pose origin for a car's name label (clears the roof + spoiler)
 const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
 
 // Orthographic camera presets (world coords, Y-up). `size` is the frustum
@@ -468,21 +485,189 @@ function buildBoostPads(parent) {
   }
 }
 
+// ── Battle-car model ────────────────────────────────────────────────────
+// Inlined from battle-car.js (a Claude-designed three.js model), kept close to
+// the source so a re-export stays easy to diff. Changes from the source: the
+// `<three-d-stage>` harness and trailing `car.rotation.y` / `stage.setObject`
+// are gone (buildCarModel does the orientation), `paint` is the team tint,
+// and the no-op shadow flags / dead spoke `holder` group are dropped. Own
+// basis: +X forward, +Y up, +Z lateral; wheels on y = 0. `buildScene` bakes a
+// PMREM environment so the standard materials don't render dark.
+function createCar(bodyColor) {
+  const M = {
+    paint: new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.32, metalness: 0.25 }),
+    trim: new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.55, metalness: 0.2 }),
+    chrome: new THREE.MeshStandardMaterial({ color: 0xc7ccd4, roughness: 0.22, metalness: 0.38 }),
+    glass: new THREE.MeshStandardMaterial({ color: 0x22303c, roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.68 }),
+    rubber: new THREE.MeshStandardMaterial({ color: 0x16171a, roughness: 0.9, metalness: 0.0 }),
+    glow: new THREE.MeshStandardMaterial({ color: 0xff8a3c, emissive: 0xff6a12, emissiveIntensity: 1.4, roughness: 0.4 }),
+    lamp: new THREE.MeshStandardMaterial({ color: 0xfff2d8, emissive: 0xffd9a0, emissiveIntensity: 0.5, roughness: 0.3 }),
+  };
+
+  const car = new THREE.Group();
+  car.name = "battle_car";
+
+  const mesh = (geo, mat, name) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.name = name;
+    return m;
+  };
+
+  // ---- main body: side profile extruded across the width ----
+  const bodyShape = new THREE.Shape();
+  bodyShape.moveTo(1.50, 0.40);
+  bodyShape.quadraticCurveTo(1.56, 0.22, 1.34, 0.18);
+  bodyShape.lineTo(-1.34, 0.18);
+  bodyShape.quadraticCurveTo(-1.56, 0.18, -1.54, 0.42);
+  bodyShape.lineTo(-1.52, 0.60);
+  bodyShape.quadraticCurveTo(-1.52, 0.72, -1.34, 0.71);
+  bodyShape.lineTo(0.30, 0.67);
+  bodyShape.quadraticCurveTo(0.95, 0.62, 1.30, 0.50);
+  bodyShape.quadraticCurveTo(1.50, 0.46, 1.50, 0.40);
+  const bodyGeo = new THREE.ExtrudeGeometry(bodyShape, {
+    depth: 1.30, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.07, bevelSegments: 4, curveSegments: 24,
+  });
+  bodyGeo.translate(0, 0, -0.65);
+  car.add(mesh(bodyGeo, M.paint, "hull"));
+
+  // ---- canopy ----
+  const canopyShape = new THREE.Shape();
+  canopyShape.moveTo(0.54, 0.62);
+  canopyShape.quadraticCurveTo(0.30, 0.99, 0.10, 1.00);
+  canopyShape.lineTo(-0.78, 1.00);
+  canopyShape.quadraticCurveTo(-1.02, 0.98, -1.06, 0.62);
+  canopyShape.lineTo(0.54, 0.62);
+  const canopyGeo = new THREE.ExtrudeGeometry(canopyShape, {
+    depth: 1.10, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 3, curveSegments: 18,
+  });
+  canopyGeo.translate(0, 0, -0.55);
+  car.add(mesh(canopyGeo, M.glass, "canopy"));
+
+  // ---- aero / trim ----
+  const splitter = mesh(new THREE.BoxGeometry(0.40, 0.06, 1.56), M.trim, "front_splitter");
+  splitter.position.set(1.40, 0.165, 0);
+  car.add(splitter);
+
+  const diffuser = mesh(new THREE.BoxGeometry(0.46, 0.14, 1.34), M.trim, "rear_diffuser");
+  diffuser.position.set(-1.42, 0.24, 0);
+  car.add(diffuser);
+
+  for (const s of [-1, 1]) {
+    const side = s > 0 ? "l" : "r";
+
+    const skirt = mesh(new THREE.BoxGeometry(1.90, 0.11, 0.10), M.trim, `side_skirt_${side}`);
+    skirt.position.set(-0.05, 0.215, s * 0.70);
+    car.add(skirt);
+
+    const strut = mesh(new THREE.BoxGeometry(0.10, 0.30, 0.07), M.trim, `wing_strut_${side}`);
+    strut.position.set(-1.36, 0.84, s * 0.46);
+    car.add(strut);
+
+    const nozzle = mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.30, 28, 1, true), M.chrome, `boost_nozzle_${side}`);
+    nozzle.rotation.z = Math.PI / 2;
+    nozzle.position.set(-1.70, 0.44, s * 0.34);
+    car.add(nozzle);
+
+    const core = mesh(new THREE.CircleGeometry(0.135, 28), M.glow, `boost_core_${side}`);
+    core.rotation.y = -Math.PI / 2;
+    core.position.set(-1.74, 0.44, s * 0.34);
+    car.add(core);
+
+    const lamp = mesh(new THREE.BoxGeometry(0.06, 0.10, 0.30), M.lamp, `headlight_${side}`);
+    lamp.position.set(1.545, 0.44, s * 0.42);
+    car.add(lamp);
+
+    const vent = mesh(new THREE.BoxGeometry(0.44, 0.07, 0.20), M.trim, `hood_vent_${side}`);
+    vent.position.set(0.72, 0.685, s * 0.28);
+    vent.rotation.z = -0.04;
+    car.add(vent);
+  }
+
+  const wing = mesh(new THREE.BoxGeometry(0.34, 0.055, 1.24), M.trim, "rear_wing");
+  wing.position.set(-1.40, 1.00, 0);
+  wing.rotation.z = 0.10;
+  car.add(wing);
+
+  const intake = mesh(new THREE.BoxGeometry(0.40, 0.12, 0.52), M.chrome, "roof_intake");
+  intake.position.set(-0.30, 1.02, 0);
+  car.add(intake);
+
+  // ---- wheels ----
+  const wheel = (radius, width, name) => {
+    const g = new THREE.Group();
+    g.name = name;
+
+    const tire = mesh(new THREE.CylinderGeometry(radius, radius, width, 40), M.rubber, `${name}_tire`);
+    tire.rotation.x = Math.PI / 2;
+    g.add(tire);
+
+    const rim = mesh(new THREE.CylinderGeometry(radius * 0.58, radius * 0.58, width + 0.012, 32), M.chrome, `${name}_rim`);
+    rim.rotation.x = Math.PI / 2;
+    g.add(rim);
+
+    for (let i = 0; i < 6; i++) {
+      const spoke = mesh(new THREE.BoxGeometry(radius * 1.02, 0.05, 0.035), M.chrome, `${name}_spoke_${i}`);
+      spoke.geometry.translate(radius * 0.28, 0, 0);
+      spoke.position.z = width / 2 + 0.015;
+      spoke.rotation.z = (i / 6) * Math.PI * 2;
+      g.add(spoke);
+    }
+    return g;
+  };
+
+  const wheelSpec = [
+    ["wheel_fl", 1.02, 0.86, 0.40, 0.34],
+    ["wheel_fr", 1.02, -0.86, 0.40, 0.34],
+    ["wheel_rl", -1.04, 0.88, 0.44, 0.38],
+    ["wheel_rr", -1.04, -0.88, 0.44, 0.38],
+  ];
+  for (const [name, x, z, r, w] of wheelSpec) {
+    const g = wheel(r, w, name);
+    g.position.set(x, r, z);
+    car.add(g);
+  }
+
+  // fender flares over each wheel
+  for (const [name, x, z, r] of wheelSpec) {
+    const flare = mesh(new THREE.TorusGeometry(r + 0.05, 0.075, 12, 26, Math.PI), M.paint, name.replace("wheel", "flare"));
+    flare.position.set(x, r, z > 0 ? 0.70 : -0.70);
+    car.add(flare);
+  }
+
+  return car;
+}
+
+// Wrap createCar in a group whose local axes are RL's (X fwd, Y left, Z up).
+// The model is authored +X forward / +Y up / +Z lateral, so a +90° turn about
+// X drops +Y onto RL's +Z (up) and leaves the nose on +X. The model is
+// mirror-symmetric, so the L/R suffixes in the part names may come out swapped
+// — invisible. Then scale to the hitbox and drop the wheels CAR_DROP below the
+// pose origin, nudged slightly forward.
+function buildCarModel(bodyColor) {
+  const group = new THREE.Group();
+  const model = createCar(bodyColor);
+  model.scale.setScalar(CAR_SCALE);
+  model.rotation.x = Math.PI / 2;
+  model.position.set(CAR_NOSE_BIAS, 0, -CAR_DROP);
+  group.add(model);
+  return group;
+}
+
 function createActorMeshes(field, meta) {
   return meta.slots.map((slot) => {
     const isBall = slot.kind === "ball";
     const color = isBall ? 0xf0f0f4 : carColor(slot, meta.tracked_team);
 
-    const mesh = new THREE.Mesh(
-      isBall
-        ? new THREE.SphereGeometry(BALL_RADIUS, 24, 16)
-        : new THREE.BoxGeometry(...CAR_SIZE),
-      new THREE.MeshLambertMaterial({ color }),
-    );
-    field.add(mesh);
+    const obj = isBall
+      ? new THREE.Mesh(
+          new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
+          new THREE.MeshLambertMaterial({ color }),
+        )
+      : buildCarModel(color);
+    field.add(obj);
 
     const trail = makeTrail(color);
-    mesh.userData.trail = trail;
+    obj.userData.trail = trail;
     field.add(trail);
 
     if (!isBall) {
@@ -490,10 +675,10 @@ function createActorMeshes(field, meta) {
         slot.name,
         "#" + color.toString(16).padStart(6, "0"),
       );
-      mesh.userData.label = label;
+      obj.userData.label = label;
       field.add(label);
     }
-    return mesh;
+    return obj;
   });
 }
 
@@ -896,6 +1081,14 @@ function buildScene(meta, positions) {
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  // Image-based lighting for the cars' MeshStandardMaterial — without an
+  // environment, metalness renders near-black. A one-off PMREM bake of three's
+  // stock studio room; the Lambert ball and line arena ignore `scene.environment`.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.6; // studio room is bright; dial it into our dark scene
+  pmrem.dispose();
 
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200000);
 

@@ -31,19 +31,20 @@ and there are working reference implementations on the same input.
 
 | # | Decision | Choice |
 |---|----------|--------|
-| 1 | Purpose / fidelity | Ballchasing-style tactical overview; primitive shapes only. An analysis tool, not a toy. |
+| 1 | Purpose / fidelity | Ballchasing-style tactical overview; low-poly shapes only, no ripped models or textures. An analysis tool, not a toy. (Cars gained a composed low-poly body in a later pass — decision 14 — still procedural, still no assets.) |
 | 2 | Frame-data source | Re-parse the stored `.replay` on demand at view time. No persistence, no migration, no backfill. |
 | 3 | UI placement | Dedicated route `/match/{id}/replay` + its own static HTML/JS/CSS, linked from the match detail page. |
-| 4 | Rendering tech | Three.js with primitive meshes (box cars, sphere ball, wireframe arena). Orthographic/high camera so it reads like ballchasing. Keeps the Z axis — height and aerials matter. |
+| 4 | Rendering tech | Three.js with primitive meshes (low-poly cars, sphere ball, wireframe arena), all built in code. Orthographic/high camera so it reads like ballchasing. Keeps the Z axis — height and aerials matter. |
 | 5 | Server extraction | New `replay_frames.py` — a pure reshape function over a `ParsedReplay`, plus a **non-deleting** rrrocket wrapper. Not routed through `queries.py` (not a DB read) and not through `analyze_frames` (not the aggregate pipeline). |
 | 6 | Player identity | Full identity in v1: each car labelled with the player's name, coloured tracked-team vs opponent. Reuses the `car → PRI → (platform, id)` chain from `frame_analysis.py`. |
 | 7 | v1 feature scope | See below. |
 | 8 | Transport | Hybrid: small JSON metadata doc (like the other `/api` routes) + a separate packed `Float32` `.bin` of positions. One-shot, server gzip. No chunking. |
-| 9 | Three.js delivery | No importmap. `static/replay.js` (external module, same-origin `'self'`) imports Three + `OrbitControls` by full URL from jsdelivr's `/+esm` endpoints (`three@0.170.0/+esm`, `.../examples/jsm/controls/OrbitControls.js/+esm`), which pre-resolve all bare specifiers. Both loads are covered by the existing `script-src cdn.jsdelivr.net` — **no inline importmap, no CSP change.** |
+| 9 | Three.js delivery | No importmap. `static/replay.js` (external module, same-origin `'self'`) imports Three + `OrbitControls` + `RoomEnvironment` by full URL from jsdelivr's `/+esm` endpoints (`three@0.170.0/+esm`, `.../examples/jsm/controls/OrbitControls.js/+esm`, `.../examples/jsm/environments/RoomEnvironment.js/+esm`), which pre-resolve all bare specifiers. All three loads are covered by the existing `script-src cdn.jsdelivr.net` — **no inline importmap, no CSP change.** |
 | 10 | Caching | None in v1. Measured first (`extract_replay_frames` ~40 ms, rrrocket + parse well under a second); add an in-process LRU only if click-to-view latency annoys. Never an on-disk sidecar (that is the persistence layer rejected in #2). |
 | 11 | Arena / mode coverage | Standard soccar arena only (covers 3v3, 2v2, and any other soccar-arena mode). Hoops/Dropshot matches get **no** viewer link in v1. Positions in the `.bin` are mode-agnostic, so a second arena is purely additive later. |
 | 12 | Orientation | Normalise: the tracked team always attacks the same on-screen direction, every match, regardless of which colour they were. |
 | 13 | Link availability & failure | Show "Watch replay" only when `matches.replay_filename` is set and `replays/<that name>` exists; route 404s otherwise. On a view-time parse failure, return an error payload the page renders — and **never delete the file** (unlike the ingest path). |
+| 14 | Car shape | A composed low-poly battle car, not a bare box (`createCar` / `buildCarModel`): an extruded curved hull + tinted canopy, graphite aero (splitter, diffuser, skirts, wing, vents), chrome boost nozzles with emissive cores, emissive headlights, and four spoked wheels with body-colour fender flares. Inlined from a Claude-designed three.js model (`battle-car.js`), kept close to source so a re-export stays diffable — only the `<three-d-stage>` harness is dropped and the paint swapped for the team tint (hull + flares); the designed graphite / tinted glass / chrome / rubber are kept. The model's `MeshStandardMaterial` look is kept too: `buildScene` bakes a `RoomEnvironment` PMREM into `scene.environment` (`environmentIntensity` 0.6) so the metals don't render near-black; the Lambert ball and line arena ignore it. The model is authored +X forward / +Y up / +Z lateral, so `buildCarModel` turns it +90° about X (drops +Y onto RL's +Z-up, nose stays on +X — a proper rotation, no mirror), scales it ×`CAR_SCALE` and drops the wheels `CAR_DROP` (17 uu, measured from a grounded car's pose z) below the pose origin, nudged `CAR_NOSE_BIAS` forward. Still procedural, no assets; the one new CDN import (`RoomEnvironment`, same jsdelivr `/+esm` origin) is covered by the existing `script-src`. **Why:** a symmetric box gave no read on which way a car faced — the one thing a positional-habits tool most needs; successive hand-authored lofts never got past "generic car", so a ready-made model was dropped in instead. `CAR_SCALE` is pinned on **width**: the wheel track comes out ~85 uu ≈ the 118×84×36 hitbox's 84, with the ~135 uu length (~1.1×) and ~42 uu roof (~1.2×) the slight overhang a real RL body has over its collision box. |
 
 ### v1 feature scope (decision 7)
 
@@ -201,10 +202,13 @@ captures the viewer correctly. `gl.readPixels` after a paint is in fact the less
 reliable check: with `preserveDrawingBuffer` unset the buffer is cleared post
 composite, so a later read returns zeros while the screenshot is fine.
 
-- **Scene / axes.** Wireframe soccar arena (8192 × 10240 × 2044 uu), box cars,
-  sphere ball. RL is Z-up, Three.js is Y-up: everything lives in a parent `world`
-  `Group` with `rotation.x = -π/2`, so RL `(x, y, z)` renders at world
-  `(x, z, -y)`.
+- **Scene / axes.** Wireframe soccar arena (8192 × 10240 × 2044 uu), a low-poly
+  battle car per slot (`buildCarModel`, decision 14 — a `THREE.Group` wrapping
+  the `battle-car.js` model, turned +90° about X from its authoring basis into
+  RL local axes, scaled to the hitbox and dropped so the wheels sit 17 uu below
+  the pose origin), sphere ball. RL is Z-up, Three.js is Y-up: everything lives
+  in a parent `world` `Group` with `rotation.x = -π/2`, so RL `(x, y, z)`
+  renders at world `(x, z, -y)`.
 - **Playback.** `createPlayback(meta, positions, meshes)` owns a clock: `state.t`
   in `frame_times` space (starts at `frame_times[0]`, not 0), advanced each rAF
   by `realDeltaSeconds * speed` while playing, clamped and auto-paused at the
