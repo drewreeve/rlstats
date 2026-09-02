@@ -1,7 +1,7 @@
 // Browser replay viewer — see docs/adr/0004-browser-replay-viewer-design.md
 //
 // Steps 3–9: load a match's metadata + packed position buffer, build a Three.js
-// scene (wireframe soccar arena + low-poly cars + sphere ball + name labels + motion
+// scene (wireframe soccar arena + low-poly cars + seamed ball + name labels + motion
 // trails), and play it back on a real-time clock — play/pause, scrub, 0.5×–4×
 // speed, goal ticks on the scrub bar and a running scoreboard. Poses are
 // lerp/slerp'd between rrrocket's ~30 Hz samples using the real (non-uniform)
@@ -668,17 +668,43 @@ function buildCarModel(bodyColor) {
   return group;
 }
 
+const BALL_COLOR = 0xeceef2;
+
+// A smooth shaded ball. Its rotation (the poses carry the real RigidBody
+// quaternion) reads off the charcoal great-circle seam sweeping and the single
+// pole pip dropping in and out of view — a bare great circle is symmetric about
+// its own axis, so spin around it would otherwise be invisible. Seam/pip are
+// children of the mesh, so they inherit its per-frame pose.
+function buildBall() {
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_RADIUS, 48, 32),
+    new THREE.MeshStandardMaterial({
+      color: BALL_COLOR,
+      roughness: 0.5,
+      metalness: 0,
+    }),
+  );
+
+  const ink = new THREE.MeshStandardMaterial({ color: 0x1a1c22, roughness: 0.6, metalness: 0 });
+  const seam = new THREE.Mesh(
+    new THREE.TorusGeometry(BALL_RADIUS * 1.005, 2.5, 8, 64),
+    ink,
+  );
+  ball.add(seam); // ring in the mesh's local XY plane, axis = local Z
+
+  const pip = new THREE.Mesh(new THREE.SphereGeometry(4.5, 12, 8), ink);
+  pip.position.set(0, 0, BALL_RADIUS); // on the seam's axis
+  ball.add(pip);
+
+  return ball;
+}
+
 function createActorMeshes(field, meta) {
   return meta.slots.map((slot) => {
     const isBall = slot.kind === "ball";
-    const color = isBall ? 0xf0f0f4 : carColor(slot, meta.tracked_team);
+    const color = isBall ? BALL_COLOR : carColor(slot, meta.tracked_team);
 
-    const obj = isBall
-      ? new THREE.Mesh(
-          new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
-          new THREE.MeshLambertMaterial({ color }),
-        )
-      : buildCarModel(color);
+    const obj = isBall ? buildBall() : buildCarModel(color);
     field.add(obj);
 
     const trail = makeTrail(color);
@@ -1100,9 +1126,9 @@ function buildScene(meta, positions) {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-  // Image-based lighting for the cars' MeshStandardMaterial — without an
+  // Image-based lighting for the MeshStandardMaterial cars and ball — without an
   // environment, metalness renders near-black. A one-off PMREM bake of three's
-  // stock studio room; the Lambert ball and line arena ignore `scene.environment`.
+  // stock studio room; the line arena ignores `scene.environment`.
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.6; // studio room is bright; dial it into our dark scene
