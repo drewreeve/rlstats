@@ -274,7 +274,8 @@ html, body {
     gap: 2px;
 }
 
-.replay-speeds button.is-active {
+.replay-speeds button.is-active,
+.replay-names.is-active {
     color: var(--bg);
     background: var(--cyan);
     border-color: var(--cyan);

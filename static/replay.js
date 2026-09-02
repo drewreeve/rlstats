@@ -98,6 +98,9 @@ const CAM_PRESETS = {
 
 let viewSize = CAM_PRESETS.broadcast.size;
 
+// Player name labels start on; the NAMES button / `n` key flip this.
+let showNames = true;
+
 const stage =
   document.querySelector('[data-role="stage"]') ||
   document.querySelector(".replay-stage");
@@ -109,6 +112,7 @@ const scrubEl = document.querySelector('[data-role="scrub"]');
 const clockEl = document.querySelector('[data-role="clock"]');
 const speedsEl = document.querySelector('[data-role="speeds"]');
 const camEl = document.querySelector('[data-role="cam"]');
+const namesBtn = document.querySelector('[data-role="names"]');
 const scoreEl = document.querySelector('[data-role="score"]');
 const marksEl = document.querySelector('[data-role="marks"]');
 const countdownEl = document.querySelector('[data-role="countdown"]');
@@ -584,7 +588,7 @@ function createPlayback(meta, positions, meshes) {
       meshes[s].quaternion.copy(_qa.slerp(_qb, ff));
 
       if (label) {
-        label.visible = true;
+        label.visible = showNames;
         label.position.set(
           meshes[s].position.x,
           meshes[s].position.y,
@@ -685,6 +689,15 @@ function wireControls(playback, meta) {
 
   playBtn.addEventListener("click", () => setPlaying(!playback.state.playing));
 
+  function setNames(on) {
+    showNames = on;
+    if (namesBtn) {
+      namesBtn.classList.toggle("is-active", on);
+      namesBtn.setAttribute("aria-pressed", String(on));
+    }
+  }
+  if (namesBtn) namesBtn.addEventListener("click", () => setNames(!showNames));
+
   scrubEl.addEventListener("pointerdown", () => {
     scrubbing = true;
   });
@@ -712,6 +725,8 @@ function wireControls(playback, meta) {
       playback.nudge(-SEEK_STEP);
     } else if (e.key === "ArrowRight") {
       playback.nudge(SEEK_STEP);
+    } else if (e.key === "n" || e.key === "N") {
+      setNames(!showNames);
     }
   });
 
