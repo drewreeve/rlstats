@@ -11,13 +11,113 @@ export const FLOATS_PER_POSE = 7; // x, y, z, qx, qy, qz, qw
 export const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
 export const TRAIL_POINTS = TRAIL_FRAMES + 1; // head vertex + one per walked-back frame
 
-// Rocket League field, unreal units (see replay.js for the full geometry notes).
+// Standard Rocket League field, unreal units (see replay.js for the full
+// geometry notes). Kept as named exports for back-compat; arenaSpec() below is
+// the structured, per-mode form the viewer's arena builders consume.
 export const FIELD_X = 8192;
 export const FIELD_Y = 10240;
 export const FIELD_Z = 2044;
 export const CORNER = 1152;
-const HX = FIELD_X / 2;
-const HY = FIELD_Y / 2;
+
+// ── Arena specs ───────────────────────────────────────────────────────────
+// Per-mode field geometry: dimensions, chamfer, boost-pad layout and goal
+// shape. Pure data — no THREE, no DOM — so it is unit-tested here and consumed
+// by static/replay.js (buildArena / buildGoals / buildHalfTint / buildBoostPads,
+// the ball radius, the overview camera). All lengths unreal units; X = wall to
+// wall, Y = goal to goal, Z = floor to ceiling; `corner` is the 45° cut on each
+// of the four corners. Coordinates from wiki.rlbot.org (the same source as
+// frame_analysis.BIG_PAD_POSITIONS). See
+// docs/adr/0005-hoops-arena-for-the-replay-viewer.md.
+
+// Chamfered-octagon outline in the XY plane, CCW from +x/+y — shared by the
+// arena wireframe, the floor-grid clip and the half-pitch tint.
+function chamferedOutline(halfX, halfY, corner) {
+  return [
+    [halfX, halfY - corner],
+    [halfX - corner, halfY],
+    [-(halfX - corner), halfY],
+    [-halfX, halfY - corner],
+    [-halfX, -(halfY - corner)],
+    [-(halfX - corner), -halfY],
+    [halfX - corner, -halfY],
+    [halfX, -(halfY - corner)],
+  ];
+}
+
+const STANDARD_SPEC = {
+  mode: "standard",
+  halfX: FIELD_X / 2, // 4096
+  halfY: FIELD_Y / 2, // 5120
+  ceiling: FIELD_Z, // 2044
+  corner: CORNER, // 1152 (|x| + |y| = 8064 along each diagonal)
+  ballRadius: 91.25,
+  goalClearance: 880, // goal box depth past the back wall
+  grid: { cols: 3, rows: 4 }, // floor guide: 3 wall-to-wall, 4 goal-to-goal
+  bigPads: [
+    [-3584, 0], [3584, 0],
+    [-3072, -4096], [3072, -4096],
+    [-3072, 4096], [3072, 4096],
+  ],
+  smallPads: [
+    [0, -4240], [-1792, -4184], [1792, -4184], [-940, -3308], [940, -3308],
+    [0, -2816], [-3584, -2484], [3584, -2484], [-1788, -2300], [1788, -2300],
+    [-2048, -1036], [0, -1024], [2048, -1036], [-1024, 0], [1024, 0],
+    [-2048, 1036], [0, 1024], [2048, 1036], [-1788, 2300], [1788, 2300],
+    [-3584, 2484], [3584, 2484], [0, 2816], [-940, 3308], [940, 3308],
+    [-1792, 4184], [1792, 4184], [0, 4240],
+  ],
+  goal: { kind: "box", halfWidth: 893, height: 643, depth: 880, fxScale: 643 },
+};
+
+const HOOPS_SPEC = {
+  mode: "hoops",
+  halfX: 2966.67,
+  halfY: 3581,
+  ceiling: 1820,
+  corner: 765.67, // 2966.67 + 3581 − 5782 (wiki diagonal-wall intersection)
+  ballRadius: 98.38,
+  goalClearance: 0, // the rim sits inside the field
+  grid: { cols: 2, rows: 2 },
+  bigPads: [
+    [-2176, -2944], [2176, -2944],
+    [-2432, 0], [2432, 0],
+    [-2176, 2944], [2176, 2944],
+  ],
+  smallPads: [
+    [0, -2816], [-1280, -2304], [1280, -2304], [-1536, -1024], [1536, -1024],
+    [512, -512], [-512, -512], [512, 512], [-512, 512],
+    [-1536, 1024], [1536, 1024], [-1280, 2304], [1280, 2304], [0, 2816],
+  ],
+  // Basketball-style hoop: a semicircle rim (curved side to the pitch) with a
+  // shallow basket sweep and short arms back to the wall. Outline only, in the
+  // defending team's tint — nothing fills the opening (cars drive under it).
+  goal: {
+    kind: "ring",
+    centreY: 2969, // |y| of the rim centre
+    z: 364, // rim height
+    radius: 655,
+    basketDrop: 175, // basket arc sits this far below the rim
+    basketInset: 120, // …and this far toward the wall
+    basketRadius: 390,
+    fxScale: 500,
+  },
+};
+
+// Non-standard arenas keyed by game_mode. Add dropshot/snowday here (each with
+// its own ball archetype — see replay_frames.py); everything else — "3v3",
+// "2v2", an unknown or missing mode — falls through to STANDARD_SPEC.
+const ARENA_SPECS = { hoops: HOOPS_SPEC };
+
+for (const s of [STANDARD_SPEC, ...Object.values(ARENA_SPECS)]) {
+  s.outline = chamferedOutline(s.halfX, s.halfY, s.corner);
+  Object.freeze(s.goal);
+  Object.freeze(s);
+}
+
+// The field geometry for a match's game_mode.
+export function arenaSpec(gameMode) {
+  return ARENA_SPECS[gameMode] ?? STANDARD_SPEC;
+}
 
 export const TEAM_OURS = 0x00e5ff;
 export const TEAM_THEIRS = 0xff5a5a;
@@ -91,11 +191,14 @@ export function bracket(times, t) {
 }
 
 // How far the flat wall reaches on the perpendicular axis before the chamfer
-// starts. Used to clip the floor grid to the octagon.
-export function outlineHalfWidth(x, y) {
+// starts, for the arena `spec` (default: standard). Used to clip the floor grid
+// to the octagon.
+export function outlineHalfWidth(x, y, spec = STANDARD_SPEC) {
+  const { halfX, halfY, corner } = spec;
+  const diag = halfX + halfY - corner;
   return {
-    x: Math.abs(y) > HY - CORNER ? HX + HY - CORNER - Math.abs(y) : HX,
-    y: Math.abs(x) > HX - CORNER ? HX + HY - CORNER - Math.abs(x) : HY,
+    x: Math.abs(y) > halfY - corner ? diag - Math.abs(y) : halfX,
+    y: Math.abs(x) > halfX - corner ? diag - Math.abs(x) : halfY,
   };
 }
 

@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import {
+  arenaSpec,
   bracket,
   countdownLabelAt,
   createTransport,
@@ -142,6 +143,109 @@ test("outlineHalfWidth: flat wall vs chamfered corner", () => {
   const deep = outlineHalfWidth(8192 / 2 - 10, 10240 / 2 - 10);
   assert.ok(deep.x < 8192 / 2);
   assert.ok(deep.y < 10240 / 2);
+});
+
+test("outlineHalfWidth: an explicit spec overrides the standard default", () => {
+  const hoops = arenaSpec("hoops");
+  // Mid-wall: the full half-extents of the hoops footprint.
+  assert.ok(Math.abs(outlineHalfWidth(0, 0, hoops).x - hoops.halfX) < 1e-9);
+  assert.ok(Math.abs(outlineHalfWidth(0, 0, hoops).y - hoops.halfY) < 1e-9);
+  // Deep in a hoops corner both limits pull in, and short of the standard ones.
+  const deep = outlineHalfWidth(hoops.halfX - 10, hoops.halfY - 10, hoops);
+  assert.ok(deep.x < hoops.halfX && deep.x < 8192 / 2);
+  assert.ok(deep.y < hoops.halfY && deep.y < 10240 / 2);
+  // No spec arg still means standard.
+  assert.equal(outlineHalfWidth(0, 0).x, 8192 / 2);
+});
+
+// ---------------------------------------------------------------------------
+// arenaSpec — per-mode field geometry (docs/adr/0005)
+// ---------------------------------------------------------------------------
+
+test("arenaSpec: only 'hoops' diverges; every other mode is the standard arena", () => {
+  const std = arenaSpec("3v3");
+  assert.equal(std.mode, "standard");
+  assert.equal(std.goal.kind, "box");
+  // Same frozen singleton for 2v2, unknown, and missing modes.
+  for (const m of ["2v2", "3v3", "dropshot", "", null, undefined]) {
+    assert.equal(arenaSpec(m), std);
+  }
+  assert.notEqual(arenaSpec("hoops"), std);
+});
+
+test("arenaSpec: specs (and their goal sub-objects) are frozen", () => {
+  for (const m of ["3v3", "hoops"]) {
+    const s = arenaSpec(m);
+    assert.ok(Object.isFrozen(s), `${m} spec frozen`);
+    assert.ok(Object.isFrozen(s.goal), `${m} goal frozen`);
+  }
+});
+
+test("arenaSpec: hoops footprint, ceiling, chamfer and ball radius", () => {
+  const h = arenaSpec("hoops");
+  assert.equal(h.mode, "hoops");
+  assert.ok(Math.abs(h.halfX - 2966.67) < 1e-9);
+  assert.equal(h.halfY, 3581);
+  assert.equal(h.ceiling, 1820);
+  assert.equal(h.ballRadius, 98.38);
+  // corner = halfX + halfY − (wiki diagonal-wall intersection, 5782).
+  assert.ok(Math.abs(h.halfX + h.halfY - h.corner - 5782) < 1e-9);
+});
+
+test("arenaSpec: hoops goal is an elevated ring, standard goal is a box", () => {
+  const h = arenaSpec("hoops").goal;
+  assert.equal(h.kind, "ring");
+  assert.equal(h.radius, 655);
+  assert.equal(h.z, 364);
+  assert.equal(h.centreY, 2969);
+  // The rim's back edge meets the back wall, so it reads as wall-mounted.
+  assert.ok(h.centreY + h.radius >= arenaSpec("hoops").halfY);
+
+  const s = arenaSpec("3v3").goal;
+  assert.equal(s.kind, "box");
+  assert.equal(s.depth, arenaSpec("3v3").goalClearance);
+});
+
+test("arenaSpec: boost-pad layouts — 34 standard, 20 hoops", () => {
+  const key = ([x, y]) => `${x},${y}`;
+  const std = arenaSpec("3v3");
+  assert.equal(std.bigPads.length, 6);
+  assert.equal(std.smallPads.length, 28);
+
+  const h = arenaSpec("hoops");
+  assert.equal(h.bigPads.length, 6);
+  assert.equal(h.smallPads.length, 14);
+  assert.equal(h.bigPads.length + h.smallPads.length, 20);
+
+  // Hoops big pads must match frame_analysis.BIG_PAD_POSITIONS["hoops"] (both
+  // cite wiki.rlbot.org — keep them in lockstep).
+  assert.deepEqual(
+    new Set(h.bigPads.map(key)),
+    new Set([
+      [-2176, -2944], [2176, -2944],
+      [-2432, 0], [2432, 0],
+      [-2176, 2944], [2176, 2944],
+    ].map(key)),
+  );
+
+  // No pad sits outside its arena footprint.
+  for (const spec of [std, h]) {
+    for (const [x, y] of [...spec.bigPads, ...spec.smallPads]) {
+      assert.ok(Math.abs(x) <= spec.halfX && Math.abs(y) <= spec.halfY);
+    }
+  }
+});
+
+test("arenaSpec: outline is a chamfered octagon around the footprint", () => {
+  for (const m of ["3v3", "hoops"]) {
+    const s = arenaSpec(m);
+    assert.equal(s.outline.length, 8);
+    assert.deepEqual(s.outline[0], [s.halfX, s.halfY - s.corner]);
+    // Every vertex is on the footprint boundary.
+    for (const [x, y] of s.outline) {
+      assert.ok(Math.abs(x) <= s.halfX + 1e-9 && Math.abs(y) <= s.halfY + 1e-9);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
