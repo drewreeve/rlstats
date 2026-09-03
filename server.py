@@ -55,6 +55,7 @@ _VERSIONED_ASSETS = [
     "app.js",
     "match.js",
     "player.js",
+    "replay-core.js",
     "replay.css",
     "replay.js",
     "style.css",
@@ -198,6 +199,32 @@ def create_app(
         if replay_view.replay_path_for(conn, upload_dir, match_id) is None:
             raise HTTPException(status_code=404, detail="No replay for this match")
         return HTMLResponse(replay_html)
+
+    # replay.js is the one ES module that imports same-dir siblings; the
+    # StaticFiles mount would serve those bare specifiers uncached, so a
+    # replay-core.js change could be masked by a stale browser cache. Serve
+    # replay.js here with every `./x.js` import version-stamped, same as
+    # _versioned_html does for HTML. (An inline <script type=importmap> would be
+    # the other way to pin them, but CSP `script-src 'self' cdn.jsdelivr.net`
+    # blocks inline script without a hash/nonce — don't "simplify" to that.)
+    replay_js = re.sub(
+        r'(from "\./[\w-]+\.js)"',
+        rf'\1?v={version}"',
+        (STATIC_DIR / "replay.js").read_text(),
+    )
+    replay_js_etag = f'"{version}"'
+
+    @app.get("/static/replay.js")
+    async def replay_js_route(request: Request):
+        # StaticFiles would send ETag + answer conditional GETs; do the same by
+        # hand for this rewritten copy so a revalidation is a 304, not a full 200.
+        if request.headers.get("if-none-match") == replay_js_etag:
+            return Response(status_code=304, headers={"ETag": replay_js_etag})
+        return Response(
+            replay_js,
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-cache", "ETag": replay_js_etag},
+        )
 
     # -- Auth routes --
 

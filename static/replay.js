@@ -15,12 +15,29 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/+esm";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
 import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/environments/RoomEnvironment.js/+esm";
 
-// Rocket League field, unreal units. X = wall to wall, Y = goal to goal,
-// Z = floor to ceiling. The world group is Z-up (RL); Three.js is Y-up.
-const FIELD_X = 8192;
-const FIELD_Y = 10240;
-const FIELD_Z = 2044;
-const CORNER = 1152; // 45° chamfer span on each axis at the four field corners
+// Field geometry, team colours, the countdown text and all playback/timeline
+// math live in replay-core.js (THREE- and DOM-free, unit-tested by
+// tests/js/replay-core.test.js). This file is the viewer shell: scene graph,
+// DOM wiring, camera, and the rAF loop.
+import {
+  carColor,
+  CORNER,
+  countdownLabelAt,
+  createTransport,
+  FIELD_X,
+  FIELD_Y,
+  FIELD_Z,
+  formatClock,
+  makePoseBuffers,
+  outlineHalfWidth,
+  poseOffset,
+  teamTint,
+  TRAIL_POINTS,
+  writePoses,
+} from "./replay-core.js";
+
+// X = wall to wall, Y = goal to goal, Z = floor to ceiling. The world group is
+// Z-up (RL); Three.js is Y-up.
 const HX = FIELD_X / 2;
 const HY = FIELD_Y / 2;
 
@@ -39,7 +56,6 @@ const ARENA_OUTLINE = [
 ];
 
 const BALL_RADIUS = 91.25;
-const FLOATS_PER_POSE = 7; // x, y, z, qx, qy, qz, qw
 
 // Battle-car model (createCar / buildCarModel). Inlined from a Claude-designed
 // three.js model (battle-car.js): an extruded curved hull + tinted canopy,
@@ -88,9 +104,6 @@ const BOOST_PAD_SMALL_R = 50;
 const BOOST_PAD_COLOR = 0x8f8062; // dim grey-gold, deliberately not boost-yellow
 const BOOST_PAD_Z = 0.6; // above the floor grid (0.5), below the half tint (1)
 
-const TEAM_OURS = 0x00e5ff;
-const TEAM_THEIRS = 0xff5a5a;
-const TEAM_UNKNOWN = 0x8585a0;
 const SEEK_STEP = 5; // seconds, for arrow-key seeking
 // Name-label placement. The tag is bottom-anchored and screen-constant in size:
 // its pill is LABEL_VIEW_FRAC of the viewport height, and its bottom edge sits
@@ -100,7 +113,6 @@ const SEEK_STEP = 5; // seconds, for arrow-key seeking
 const LABEL_VIEW_FRAC = 0.025;
 const LABEL_CLEAR_UU = 100;
 const LABEL_GAP_FRAC = 0.006;
-const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
 
 // Goal celebration: a glowy particle burst at the ball's entry point. The goal
 // instant is trimmed from the timeline (advance() snaps over the dead span), so
@@ -157,9 +169,6 @@ const matchId = location.pathname.split("/").filter(Boolean)[1];
 const backEl = document.querySelector('[data-role="back"]');
 if (backEl) backEl.href = `/match/${matchId}`;
 
-const _qa = new THREE.Quaternion();
-const _qb = new THREE.Quaternion();
-
 let renderer;
 let camera;
 
@@ -169,31 +178,6 @@ function showMessage(text) {
     messageEl.textContent = text;
     messageEl.hidden = false;
   }
-}
-
-function poseOffset(slotCount, frame, slot) {
-  return (frame * slotCount + slot) * FLOATS_PER_POSE;
-}
-
-// ours (tracked) vs theirs, keyed on RL team not screen side — the field flip
-// then puts "ours" on the same side of the screen every match.
-function teamTint(team, trackedTeam) {
-  if (team == null || trackedTeam == null) return TEAM_UNKNOWN;
-  return team === trackedTeam ? TEAM_OURS : TEAM_THEIRS;
-}
-
-function carColor(slot, trackedTeam) {
-  return teamTint(slot.team, trackedTeam);
-}
-
-// Is this slot's actor live at frame index `frame`? Segments are inclusive
-// [start, end] ranges; between them (demolitions) the buffer holds zeros.
-function slotLiveAt(slot, frame) {
-  const segs = slot.segments;
-  for (let k = 0; k < segs.length; k++) {
-    if (frame >= segs[k][0] && frame <= segs[k][1]) return true;
-  }
-  return false;
 }
 
 // A camera-facing name tag drawn to a canvas texture. Sprites ignore parent
@@ -245,7 +229,7 @@ function makeLabelSprite(text, cssColor) {
 // backward through the position buffer. Colour is baked once, head → background;
 // per frame only the vertex positions and draw range change.
 function makeTrail(colorHex) {
-  const n = TRAIL_FRAMES + 1;
+  const n = TRAIL_POINTS; // must match the core's per-slot trail stride
   const geo = new THREE.BufferGeometry();
   geo.setAttribute(
     "position",
@@ -431,57 +415,6 @@ function makeGoalWatcher(meta, positions, playback, goalFx) {
       }
     }
     prevT = t;
-  };
-}
-
-function formatClock(seconds) {
-  const s = Math.max(0, Math.round(seconds));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-// Ticks sit ~1 s apart; hold each numeral a touch longer so a dropped or
-// aborted sequence clears itself rather than sticking on screen.
-const COUNTDOWN_TICK_HOLD = 1.4; // s
-const COUNTDOWN_GO_HOLD = 0.6; // s — "GO!" flashes, then clears. Keep in sync with
-// the `replay-countdown-go` animation duration in replay.css.
-
-// The kickoff countdown text to show at replay-time `t` ("3" / "2" / "1" /
-// "GO!"), or null when no countdown is active. `countdowns` is [[frame, n], …]
-// in frame order (server: replay_frames._scan_countdowns) — one 3→2→1→0 run per
-// kickoff.
-function countdownLabelAt(times, countdowns, t) {
-  const tick = countdowns.findLast(([f]) => times[f] <= t);
-  if (!tick) return null;
-  const [frame, n] = tick;
-  const dt = t - times[frame];
-  if (n === 0) return dt >= 0 && dt < COUNTDOWN_GO_HOLD ? "GO!" : null;
-  return dt < COUNTDOWN_TICK_HOLD ? String(n) : null;
-}
-
-// Largest i with times[i] <= t, its successor j, and the [0,1] blend between.
-function bracket(times, t) {
-  const n = times.length;
-  if (n < 2 || t <= times[0]) return [0, 0, 0];
-  if (t >= times[n - 1]) return [n - 1, n - 1, 0];
-  let lo = 0;
-  let hi = n - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (times[mid] <= t) lo = mid;
-    else hi = mid;
-  }
-  const span = times[hi] - times[lo];
-  return [lo, hi, span > 0 ? (t - times[lo]) / span : 0];
-}
-
-// How far the flat wall reaches on the perpendicular axis before the chamfer
-// starts. Used to clip the floor grid to the octagon.
-function outlineHalfWidth(x, y) {
-  // On the flat back walls (|x| small) the limit is HY; into a corner it is the
-  // chamfer line |x| + |y| = HX + HY - CORNER. Mirror for the side walls.
-  return {
-    x: Math.abs(y) > HY - CORNER ? HX + HY - CORNER - Math.abs(y) : HX,
-    y: Math.abs(x) > HX - CORNER ? HX + HY - CORNER - Math.abs(x) : HY,
   };
 }
 
@@ -890,128 +823,62 @@ function createActorMeshes(field, meta) {
   });
 }
 
-// The playback clock + per-frame pose application, over one match's data.
+// The playback clock + per-frame pose application, over one match's data. All
+// the interpolation and timeline math is in replay-core.js: writePoses() fills a
+// scratch buffer, createTransport() maps real <-> compressed seconds. applyPoses()
+// here does nothing but copy that buffer onto the THREE meshes and size labels.
 function createPlayback(meta, positions, meshes) {
-  const times = meta.frame_times;
   const slotCount = meta.slots.length;
-  const t0 = times[0];
-  const tN = times[times.length - 1];
+  const transport = createTransport(meta);
+  const { tN, compressedEnd } = transport;
+  const pose = makePoseBuffers(slotCount);
 
-  // Timeline remap: the clock still runs in real `frame_times` seconds (so
-  // bracket()/applyPoses are untouched), but the transport UI runs on a
-  // *compressed* axis with every dead_periods span — goal replay, actor reset,
-  // frozen-at-spawn wait — removed. `dead` is those spans as real intervals
-  // [a, b) plus `len` and `c`, the span's coordinate on the compressed axis
-  // (`c === toCompressed(a)`). The server (replay_frames._dead_periods)
-  // guarantees them ascending and non-overlapping.
-  const dead = (meta.dead_periods || [])
-    .map(([sf, ef]) => ({ a: times[sf], b: times[ef + 1] ?? tN }))
-    .filter((d) => d.b > d.a);
-  let cut = 0;
-  for (const d of dead) {
-    d.len = d.b - d.a;
-    d.c = d.a - t0 - cut;
-    cut += d.len;
-  }
-
-  // real seconds -> compressed seconds (0 at t0, dead spans removed)
-  function toCompressed(t) {
-    let c = t - t0;
-    for (const d of dead) {
-      if (t <= d.a) break;
-      c -= Math.min(t, d.b) - d.a;
-    }
-    return c;
-  }
-
-  // compressed seconds -> real seconds. A `c` on a dead span's edge resolves to
-  // the span's END (the resume frame), so nothing lands inside a gap.
-  function toReal(c) {
-    let t = c + t0;
-    for (const d of dead) {
-      if (c < d.c) break;
-      t += d.len;
-    }
-    return t;
-  }
-
-  const compressedEnd = toCompressed(tN);
-  const tStart = toReal(0); // first kept instant — past any pre-match warmup
-
-  const state = { t: tStart, playing: false, speed: 1 };
+  const state = { t: transport.tStart, playing: false, speed: 1 };
 
   function applyPoses() {
-    const [i, j, f] = bracket(times, state.t);
+    writePoses(meta, positions, state.t, pose);
     // Screen-constant label sizing — camera-only, so hoisted out of the per-slot loop.
     const frustumH = (camera.top - camera.bottom) / camera.zoom;
     const pillH = LABEL_VIEW_FRAC * frustumH;
     const labelBase = LABEL_CLEAR_UU + LABEL_GAP_FRAC * frustumH;
     for (let s = 0; s < meshes.length; s++) {
-      const slot = meta.slots[s];
-      const label = meshes[s].userData.label;
-      const trail = meshes[s].userData.trail;
-      const liveI = slotLiveAt(slot, i);
-      const liveJ = slotLiveAt(slot, j);
-      if (!liveI && !liveJ) {
-        meshes[s].visible = false;
+      const mesh = meshes[s];
+      const label = mesh.userData.label;
+      const trail = mesh.userData.trail;
+      if (!pose.visible[s]) {
+        mesh.visible = false;
         if (label) label.visible = false;
         trail.visible = false;
         continue;
       }
-      meshes[s].visible = true;
-      // Don't lerp toward the zero-pose of a frame the actor isn't live in:
-      // snap to whichever end is live when a segment boundary falls in [i, j].
-      const ff = !liveI ? 1 : !liveJ ? 0 : f;
-
-      const a = poseOffset(slotCount, i, s);
-      const b = poseOffset(slotCount, j, s);
-      meshes[s].position.set(
-        positions[a] + (positions[b] - positions[a]) * ff,
-        positions[a + 1] + (positions[b + 1] - positions[a + 1]) * ff,
-        positions[a + 2] + (positions[b + 2] - positions[a + 2]) * ff,
+      mesh.visible = true;
+      mesh.position.set(
+        pose.position[s * 3],
+        pose.position[s * 3 + 1],
+        pose.position[s * 3 + 2],
       );
-      _qa.set(
-        positions[a + 3],
-        positions[a + 4],
-        positions[a + 5],
-        positions[a + 6],
+      mesh.quaternion.set(
+        pose.quaternion[s * 4],
+        pose.quaternion[s * 4 + 1],
+        pose.quaternion[s * 4 + 2],
+        pose.quaternion[s * 4 + 3],
       );
-      _qb.set(
-        positions[b + 3],
-        positions[b + 4],
-        positions[b + 5],
-        positions[b + 6],
-      );
-      meshes[s].quaternion.copy(_qa.slerp(_qb, ff));
 
       if (label) {
         label.visible = showNames;
         label.scale.set(pillH * label.userData.aspect, pillH, 1);
         label.position.set(
-          meshes[s].position.x,
-          meshes[s].position.y,
-          meshes[s].position.z + labelBase,
+          mesh.position.x,
+          mesh.position.y,
+          mesh.position.z + labelBase,
         );
       }
 
-      // Trail: head = live position, then walk back through the buffer while
-      // this slot stays live (never across a demolition gap).
+      const count = pose.trailCount[s];
       const tp = trail.geometry.attributes.position.array;
-      tp[0] = meshes[s].position.x;
-      tp[1] = meshes[s].position.y;
-      tp[2] = meshes[s].position.z;
-      let count = 1;
-      for (
-        let k = i;
-        k >= 0 && k > i - TRAIL_FRAMES && slotLiveAt(slot, k);
-        k--
-      ) {
-        const o = poseOffset(slotCount, k, s);
-        tp[count * 3] = positions[o];
-        tp[count * 3 + 1] = positions[o + 1];
-        tp[count * 3 + 2] = positions[o + 2];
-        count++;
-      }
+      tp.set(
+        pose.trail.subarray(s * TRAIL_POINTS * 3, s * TRAIL_POINTS * 3 + count * 3),
+      );
       trail.visible = count > 1;
       trail.geometry.setDrawRange(0, count);
       trail.geometry.attributes.position.needsUpdate = true;
@@ -1022,26 +889,22 @@ function createPlayback(meta, positions, meshes) {
   // `toReal` already resolves a seam to the resume frame so seeks never land in
   // a gap. Only `advance` steps raw real time, so only it needs the snap.
   function seek(c) {
-    state.t = toReal(Math.min(compressedEnd, Math.max(0, c)));
+    state.t = transport.toReal(Math.min(compressedEnd, Math.max(0, c)));
   }
 
   function nudge(deltaCompressed) {
-    seek(toCompressed(state.t) + deltaCompressed);
+    seek(transport.toCompressed(state.t) + deltaCompressed);
   }
 
   function advance(dt) {
     if (!state.playing) return;
-    let t = state.t + dt * state.speed;
-    for (const d of dead) if (t >= d.a && t < d.b) { t = d.b; break; }
+    let t = transport.snapForward(state.t + dt * state.speed);
     if (t >= tN) {
       t = tN;
       state.playing = false;
     }
     state.t = t;
   }
-
-  // real seconds -> [0,1] position on the compressed axis (scrub bar, goal ticks)
-  const fractionAt = (t) => (compressedEnd > 0 ? toCompressed(t) / compressedEnd : 0);
 
   return {
     state,
@@ -1050,10 +913,10 @@ function createPlayback(meta, positions, meshes) {
     seek,
     nudge,
     advance,
-    fractionAt,
-    elapsed: () => toCompressed(state.t),
+    fractionAt: transport.fractionAt,
+    elapsed: () => transport.toCompressed(state.t),
     duration: () => compressedEnd,
-    progress: () => fractionAt(state.t),
+    progress: () => transport.fractionAt(state.t),
     atEnd: () => state.t >= tN,
   };
 }

@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -302,6 +303,24 @@ def test_replay_routes_404_for_unknown_match(replay_client: TestClient) -> None:
     assert replay_client.get("/api/matches/9999/replay").status_code == 404
     assert replay_client.get("/api/matches/9999/replay-frames.bin").status_code == 404
     assert replay_client.get("/match/9999/replay").status_code == 404
+
+
+def test_replay_js_stamps_every_sibling_import(match_client: TestClient) -> None:
+    """replay.js imports same-dir modules; the served copy must version-stamp
+    every one so a sibling change is not masked by a stale browser cache."""
+    r = match_client.get("/static/replay.js")
+    assert r.status_code == 200
+    # no bare `from "./x.js"` survives — all carry ?v=<hash>
+    assert not re.search(r'from "\./[\w-]+\.js"', r.text)
+    assert re.search(r'from "\./replay-core\.js\?v=[0-9a-f]{12}"', r.text)
+    assert re.fullmatch(r'"[0-9a-f]{12}"', r.headers["etag"])
+
+
+def test_replay_js_answers_conditional_get_with_304(match_client: TestClient) -> None:
+    etag = match_client.get("/static/replay.js").headers["etag"]
+    r = match_client.get("/static/replay.js", headers={"If-None-Match": etag})
+    assert r.status_code == 304
+    assert r.headers["etag"] == etag
 
 
 def test_replay_page_served_when_file_present(replay_client: TestClient) -> None:
