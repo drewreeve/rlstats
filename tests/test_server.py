@@ -246,6 +246,7 @@ def test_replay_meta_shape(replay_client: TestClient) -> None:
         "goals",
         "countdowns",
         "dead_periods",
+        "boost_pads",
     }
     assert isinstance(data["frame_times"], list) and data["frame_times"]
     assert data["frame_times"] == sorted(data["frame_times"])
@@ -288,6 +289,18 @@ def test_replay_meta_countdowns_and_dead_periods(replay_client: TestClient) -> N
         prev_end = end
     assert all(start in goal_frames for start, _ in dps[1:])
     assert len(dps) == len(data["goals"]) + 1
+
+
+def test_replay_meta_boost_pads(replay_client: TestClient) -> None:
+    # Wire shape only — the row invariants (frame order, dense index, alternation)
+    # are covered by test_replay_frames; here it is just "5-element rows survive
+    # the JSON round-trip".
+    rows: Any = replay_client.get("/api/matches/1/replay").json()["boost_pads"]
+    assert rows and all(len(r) == 5 for r in rows)
+    frame, pad, collected, x, y = rows[0]
+    assert isinstance(frame, int) and isinstance(pad, int)
+    assert collected in (0, 1)
+    assert isinstance(x, (int, float)) and isinstance(y, (int, float))
 
 
 def test_replay_frames_bin_length_matches_meta(replay_client: TestClient) -> None:

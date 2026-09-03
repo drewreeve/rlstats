@@ -59,7 +59,7 @@ amounts + pad respawn timers · per-player POV · follow-cam · goal-replay cuta
 ```
 GET /match/{id}/replay                   -> replay.html   (404 if no file on disk)
 GET /api/matches/{id}/has-replay         -> {"has_replay": bool}   (1 query + stat, no parse)
-GET /api/matches/{id}/replay             -> metadata JSON: frame_times, slots, tracked_team, game_mode, goals, countdowns, dead_periods  (404 no file / 422 unparseable)
+GET /api/matches/{id}/replay             -> metadata JSON: frame_times, slots, tracked_team, game_mode, goals, countdowns, dead_periods, boost_pads  (404 no file / 422 unparseable)
 GET /api/matches/{id}/replay-frames.bin  -> Float32 position buffer, octet-stream
 ```
 
@@ -120,7 +120,18 @@ class ReplayFrames:
     goals: list[GoalMarker]            # {frame, team} in frame order
     countdowns: list[tuple[int, int]]  # (frame, n) per kickoff tick (3→2→1→0), frame order
     dead_periods: list[tuple[int, int]] # (start, end) inclusive frame indices the viewer collapses
+    boost_pads: list[tuple[int, int, int, float, float]]  # (frame, pad, collected, x, y) per pad state flip, frame order
 ```
+
+`boost_pads` rows carry a **dense 0-based `pad` index** (ascending pad
+object id) and `collected` ∈ {0, 1}. `x, y` is the instigating car's
+position on a collect row (`collected == 1`), read from the densified
+buffer; a respawn row carries `0.0, 0.0`. The client snaps `pad` → a
+rendered pad orb once per match off the first collect row's `(x, y)` —
+the layout stays a single source of truth in `replay-core.js`. Pickup
+actor ids recycle through the match, so the walk rebinds them to their
+pad on each `new_actors` announce and emits a row only when the pad's
+collected/available state actually flips (the game re-sends it).
 
 The JSON endpoint serialises everything except `positions`; the `.bin` endpoint
 returns `positions`.

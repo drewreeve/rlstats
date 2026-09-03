@@ -364,16 +364,7 @@ def create_app(
     async def match_replay_meta(
         match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
     ) -> Any:
-        frames = _replay_frames_or_404(conn, match_id)
-        return {
-            "frame_times": frames.frame_times,
-            "tracked_team": frames.tracked_team,
-            "game_mode": frames.game_mode,
-            "slots": frames.slots,
-            "goals": frames.goals,
-            "countdowns": frames.countdowns,
-            "dead_periods": frames.dead_periods,
-        }
+        return _replay_frames_or_404(conn, match_id).meta_dict()
 
     @app.get("/api/matches/{match_id}/replay-frames.bin")
     async def match_replay_frames_bin(

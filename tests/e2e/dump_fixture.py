@@ -35,18 +35,8 @@ def main() -> None:
     if frames is None:
         raise SystemExit("build_replay_frames returned None (rrrocket on PATH?)")
 
-    # Same dict + serialisation as server.create_app's match_replay_meta route.
-    meta = jsonable_encoder(
-        {
-            "frame_times": frames.frame_times,
-            "tracked_team": frames.tracked_team,
-            "game_mode": frames.game_mode,
-            "slots": frames.slots,
-            "goals": frames.goals,
-            "countdowns": frames.countdowns,
-            "dead_periods": frames.dead_periods,
-        }
-    )
+    # The same dict the match_replay_meta route serves (ReplayFrames.meta_dict).
+    meta = jsonable_encoder(frames.meta_dict())
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "meta.json").write_text(
         json.dumps(meta, separators=(",", ":"), ensure_ascii=False)

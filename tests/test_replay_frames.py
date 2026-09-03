@@ -22,6 +22,7 @@ from replay_frames import (
     _dead_periods,  # type: ignore[reportPrivateUsage]
     _scan_countdowns,  # type: ignore[reportPrivateUsage]
     _scan_goals,  # type: ignore[reportPrivateUsage]
+    _walk,  # type: ignore[reportPrivateUsage]
     extract_replay_frames,
 )
 from rrrocket_schema import FrameData, ParsedReplay
@@ -37,8 +38,13 @@ _OBJECTS = [
     "TAGame.Car_TA:TeamPaint",
     "TAGame.GameEvent_Soccar_TA:ReplicatedScoredOnTeam",
     "TAGame.GameEvent_TA:ReplicatedRoundCountDownNumber",
+    "TAGame.VehiclePickup_TA:NewReplicatedPickupData",
+    "stadium_p.TheWorld:PersistentLevel.VehiclePickup_Boost_TA_0",
+    "stadium_p.TheWorld:PersistentLevel.VehiclePickup_Boost_TA_1",
 ]
-_CAR, _BALL, _RB, _PRI, _UID, _PAINT, _SCORED, _COUNTDOWN = range(8)
+_CAR, _BALL, _RB, _PRI, _UID, _PAINT, _SCORED, _COUNTDOWN, _PICKUP, _PAD_A, _PAD_B = (
+    range(len(_OBJECTS))
+)
 
 
 def _replay(frames: list[FrameData]) -> ParsedReplay:
@@ -509,6 +515,171 @@ def test_overtime_replay_golden_goal_gets_no_dead_period() -> None:
     # the earlier goals (and the pre-match warmup) still trim
     assert 2 <= len(periods) <= len(goals)
     assert periods[0][0] == 0
+
+
+# --- boost pad pickups ---
+
+
+def _pickup(
+    aid: int, picked_up: int, instigator: int | None = None
+) -> dict[str, object]:
+    return {
+        "actor_id": aid,
+        "object_id": _PICKUP,
+        "attribute": {"PickupNew": {"instigator": instigator, "picked_up": picked_up}},
+    }
+
+
+def _walk_pads(frames: list[FrameData]) -> list[tuple[int, int, bool, int | None]]:
+    _segments, pickups = _walk(
+        _replay(frames),
+        _CAR,
+        _BALL,
+        _RB,
+        _PRI,
+        _UID,
+        _PAINT,
+        _PICKUP,
+        frozenset({_PAD_A, _PAD_B}),
+    )
+    return pickups
+
+
+def test_walk_emits_a_pickup_only_when_the_pad_state_flips() -> None:
+    frames = [
+        _frame(
+            0.0,
+            new=[
+                {"actor_id": 50, "object_id": _PAD_A},
+                {"actor_id": 51, "object_id": _PAD_B},
+            ],
+        ),
+        # pads spawn available, so the opening 255 announce emits nothing
+        _frame(0.1, updated=[_pickup(50, 255), _pickup(51, 255)]),
+        _frame(0.2, updated=[_pickup(51, 7, instigator=10)]),  # PAD_B collected
+        _frame(0.3, updated=[_pickup(51, 7, instigator=10)]),  # re-send, no row
+        _frame(0.4, updated=[_pickup(51, 255)]),  # PAD_B available again
+    ]
+    assert _walk_pads(frames) == [
+        (2, _PAD_B, True, 10),
+        (4, _PAD_B, False, None),
+    ]
+
+
+def test_walk_rebinds_a_recycled_pickup_actor_id_to_its_new_pad() -> None:
+    frames = [
+        _frame(0.0, new=[{"actor_id": 51, "object_id": _PAD_B}]),
+        _frame(0.1, updated=[_pickup(51, 5, instigator=10)]),  # PAD_B collected
+        _frame(0.2, deleted=[51]),
+        _frame(0.3, new=[{"actor_id": 51, "object_id": _PAD_A}]),  # id reused
+        _frame(0.4, updated=[_pickup(51, 9, instigator=11)]),  # -> PAD_A
+    ]
+    assert _walk_pads(frames) == [
+        (1, _PAD_B, True, 10),
+        (4, _PAD_A, True, 11),
+    ]
+
+
+def test_walk_ignores_pickup_updates_for_an_unbound_actor() -> None:
+    frames = [_frame(0.0, updated=[_pickup(99, 7, instigator=10)])]
+    assert _walk_pads(frames) == []
+
+
+def _boost_pads(name: str) -> ReplayFrames:
+    replay = parse_replay(load_replay(name))
+    context = build_replay_context(replay, TRACKED_PLAYERS)
+    return extract_replay_frames(
+        replay,
+        tracked_team=context.perspective.team,
+        tracked_identities=context.tracked_identities,
+        player_names=context.player_names,
+        game_mode=context.game_mode,
+    )
+
+
+def _pad_events(rf: ReplayFrames) -> dict[int, list[tuple[int, int]]]:
+    """Per pad index, its ``(frame, collected)`` rows in frame order."""
+    per_pad: dict[int, list[tuple[int, int]]] = {}
+    for frame, p, collected, _x, _y in rf.boost_pads:
+        per_pad.setdefault(p, []).append((frame, collected))
+    return per_pad
+
+
+@pytest.mark.parametrize(
+    ("name", "pad_count"), [("match.json", 34), ("hoops.json", 20)]
+)
+def test_real_replay_boost_pads_cover_every_pad_and_alternate(
+    name: str, pad_count: int
+) -> None:
+    rf = _boost_pads(name)
+    rows = rf.boost_pads
+    assert rows
+
+    # frame order, like goals / countdowns
+    assert [f for f, *_ in rows] == sorted(f for f, *_ in rows)
+    # a dense index over exactly the mode's pad layout
+    assert sorted({p for _, p, *_ in rows}) == list(range(pad_count))
+
+    last = len(rf.frame_times) - 1
+    for frame, _p, collected, x, y in rows:
+        assert 0 <= frame <= last
+        assert collected in (0, 1)
+        if collected == 0:  # respawn rows carry no instigator position
+            assert (x, y) == (0.0, 0.0)
+
+    # every pad strictly alternates collected <-> available, collect first
+    for states in ([c for _, c in evs] for evs in _pad_events(rf).values()):
+        assert states and states[0] == 1
+        assert all(a != b for a, b in zip(states, states[1:], strict=False))
+
+
+@pytest.mark.parametrize("name", ["match.json", "hoops.json"])
+def test_real_replay_boost_pad_respawns_match_canonical_timers(name: str) -> None:
+    rf = _boost_pads(name)
+    ft = rf.frame_times
+    deltas = [
+        ft[f1] - ft[f0]
+        for evs in _pad_events(rf).values()
+        for (f0, c0), (f1, c1) in zip(evs, evs[1:], strict=False)
+        if c0 == 1 and c1 == 0
+    ]
+    # small pads respawn in ~4 s, big pads in ~10 s (canonical RL). Most gaps
+    # sit near one of the two, and both classes show up.
+    assert deltas
+    near = [d for d in deltas if abs(d - 4) < 1.5 or abs(d - 10) < 2.0]
+    assert len(near) / len(deltas) > 0.8
+    assert any(abs(d - 4) < 1.5 for d in deltas)
+    assert any(abs(d - 10) < 2.0 for d in deltas)
+
+
+@pytest.mark.parametrize("name", ["match.json", "hoops.json"])
+def test_real_replay_boost_pads_all_available_at_every_kickoff(name: str) -> None:
+    """The raw pickup stream self-heals — no pad reads collected when a kickoff
+    countdown fires, so the viewer needs no forced reset (ADR 0004)."""
+    rf = _boost_pads(name)
+    per_pad = _pad_events(rf)
+
+    def collected_at(pad: int, f: int) -> int:
+        state = 0
+        for row_f, row_c in per_pad[pad]:
+            if row_f > f:
+                break
+            state = row_c
+        return state
+
+    kickoff_frames = [f for f, n in rf.countdowns if n in (0, 3)]
+    assert kickoff_frames
+    for f in kickoff_frames:
+        assert not [p for p in per_pad if collected_at(p, f)]
+
+
+def test_real_replay_boost_pad_collects_are_located_inside_the_arena() -> None:
+    rf = _boost_pads("match.json")
+    collects = [(x, y) for _, _, c, x, y in rf.boost_pads if c == 1]
+    located = [p for p in collects if p != (0.0, 0.0)]
+    assert len(located) / len(collects) > 0.9
+    for x, y in located:  # the instigating car is on the pad, inside the field
+        assert abs(x) < 4300 and abs(y) < 5300
 
 
 # --- integration: a real 2v2 replay ---

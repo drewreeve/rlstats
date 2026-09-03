@@ -32,6 +32,12 @@ from rrrocket_schema import NetObj, ParsedReplay
 
 _FLOATS_PER_POSE = 7  # x, y, z, qx, qy, qz, qw
 
+# Boost pads are per-map level actors; every one's object name carries this
+# ("<map>.TheWorld:PersistentLevel.VehiclePickup_Boost_TA_<n>"). The name is the
+# pad's stable identity — the network updates that report pickups all share one
+# NewReplicatedPickupData object id, so only new_actors ties an actor to its pad.
+_BOOST_PAD_MARKER = "PersistentLevel.VehiclePickup_Boost_TA"
+
 # The ball actor's archetype name is mode-specific. The frame walk keys on a
 # single archetype oid, so resolve whichever of these the replay carries.
 # (frame_analysis.py has the same Ball_Default assumption for its positional
@@ -52,6 +58,10 @@ def _ball_archetype_oid(object_index: dict[str, int]) -> int | None:
             return oid
     return None
 
+
+# (frame, pad_object_id, collected, instigator_actor_id) — one raw pad state
+# flip from the walk, before pad ids are densified and the instigator located.
+_RawPickup = tuple[int, int, bool, int | None]
 
 # (frame_idx, x, y, z, qx, qy, qz, qw)
 _Sample = tuple[int, float, float, float, float, float, float, float]
@@ -99,6 +109,30 @@ class ReplayFrames:
     countdowns: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
     # (start, end) inclusive frame indices, non-overlapping, ascending
     dead_periods: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
+    # (frame, pad, collected, x, y) per boost-pad state flip, in frame order.
+    # `pad` is a dense 0-based index (ascending pad object id); `collected` is 1
+    # when the pad was picked up, 0 when it became available again. `x, y` are
+    # the instigating car's position at that frame — only meaningful when
+    # `collected == 1` (0.0, 0.0 on a respawn row or an unlocatable car).
+    boost_pads: list[tuple[int, int, int, float, float]] = field(
+        default_factory=list[tuple[int, int, int, float, float]]
+    )
+
+    def meta_dict(self) -> dict[str, Any]:
+        """Everything the ``/api/matches/{id}/replay`` JSON carries — i.e. every
+        field except ``positions`` (served raw by the ``.bin`` route). The one
+        place that shape is defined; ``server.py`` and ``tests/e2e/dump_fixture``
+        both encode this dict rather than re-listing the keys."""
+        return {
+            "frame_times": self.frame_times,
+            "tracked_team": self.tracked_team,
+            "game_mode": self.game_mode,
+            "slots": self.slots,
+            "goals": self.goals,
+            "countdowns": self.countdowns,
+            "dead_periods": self.dead_periods,
+            "boost_pads": self.boost_pads,
+        }
 
 
 @dataclass(eq=False)
@@ -223,11 +257,18 @@ def _walk(
     pri_oid: int | None,
     uid_oid: int | None,
     paint_oid: int | None,
-) -> list[_Segment]:
-    """Single pass over the frames, producing one ``_Segment`` per actor life.
+    pickup_oid: int | None,
+    pad_oids: AbstractSet[int],
+) -> tuple[list[_Segment], list[_RawPickup]]:
+    """Single pass over the frames, producing one ``_Segment`` per actor life
+    plus the boost-pad state flips (``_RawPickup`` rows, in frame order).
 
     Preserves ``_process_frame``'s phase order (new -> updated -> deleted) so a
-    car spawned and PRI-linked in the same frame keeps its link.
+    car spawned and PRI-linked in the same frame keeps its link. Boost pads ride
+    the same pass: ``new_actors`` binds an actor id to its pad (they recycle, so
+    the bind is cleared on delete and rebuilt on the pad's next announce), and a
+    ``NewReplicatedPickupData`` update is emitted only when it flips the pad's
+    collected/available state — the game re-sends the current state periodically.
     """
     segments: list[_Segment] = []
     open_seg: dict[int, int] = {}  # actor_id -> index into segments
@@ -235,6 +276,10 @@ def _walk(
     ball_actors: set[int] = set()
     resolver = IdentityResolver()
     actor_team: dict[int, int] = {}
+
+    pickups: list[_RawPickup] = []
+    actor_pad: dict[int, int] = {}  # actor_id -> pad object id (recycles)
+    pad_collected: dict[int, bool] = {}  # pad object id -> last emitted state
 
     frames = replay.frames
     last_frame = len(frames) - 1
@@ -251,6 +296,10 @@ def _walk(
                 kind = "car"
             elif oid == ball_arch:
                 kind = "ball"
+            elif oid is not None and oid in pad_oids:
+                actor_pad[na["actor_id"]] = oid
+                pad_collected.setdefault(oid, False)  # pads spawn available
+                continue
             else:
                 continue
             aid = na["actor_id"]
@@ -336,6 +385,26 @@ def _walk(
                     )
                 )
 
+            elif oid == pickup_oid:
+                pad_oid = actor_pad.get(aid)
+                if pad_oid is None:
+                    continue
+                # picked_up: 255 = available/respawning, else a rolling sequence
+                # number that changes on each grab. instigator is the grabbing
+                # car (absent once the pad is empty again).
+                pickup = attr.get("PickupNew")
+                if not pickup:
+                    continue
+                state = pickup.get("picked_up")
+                if state is None:
+                    continue
+                collected = state != 255
+                if pad_collected.get(pad_oid) == collected:
+                    continue
+                pad_collected[pad_oid] = collected
+                instigator = pickup.get("instigator") if collected else None
+                pickups.append((fidx, pad_oid, collected, instigator))
+
         # 3. deleted_actors — close segments (resolving identity first), then purge
         deleted = frame.get("deleted_actors", [])
         for aid in deleted:
@@ -352,6 +421,7 @@ def _walk(
             ball_actors.discard(aid)
             resolver.remove_actor(aid)
             actor_team.pop(aid, None)
+            actor_pad.pop(aid, None)  # the pad rebinds this id on its next announce
 
     # Close whatever is still live at the final frame.
     for aid, si in open_seg.items():
@@ -361,7 +431,7 @@ def _walk(
         seg.team = actor_team.get(aid)
         seg.end = last_frame
 
-    return segments
+    return segments, pickups
 
 
 def _build_slots(
@@ -534,8 +604,8 @@ def _fill(
 
 def _densify(
     segments: list[_Segment], frame_times: list[float], slot_count: int
-) -> bytes:
-    """Fill a dense F*N*7 float32 buffer.
+) -> "array[float]":
+    """Fill a dense F*N*7 float32 buffer (``.tobytes()`` at the call boundary).
 
     Per lane, ``_keyframes`` gives the segment's real samples spanning
     ``[start, end]``. Between consecutive keyframes a frame with no sample of its
@@ -569,7 +639,41 @@ def _densify(
         last_f, last_p = kf[-1]
         _fill(buf, lane_off, row_stride, last_f, seg.end + 1, array("f", last_p))
 
-    return buf.tobytes()
+    return buf
+
+
+def _resolve_pickups(
+    raw: list[_RawPickup],
+    segments: list[_Segment],
+    positions: "array[float]",
+    slot_count: int,
+) -> list[tuple[int, int, int, float, float]]:
+    """Turn raw ``(frame, pad_oid, collected, instigator)`` rows into the wire
+    form ``(frame, pad, collected, x, y)``.
+
+    ``pad`` is a dense 0-based index assigned in ascending pad-object-id order.
+    On a collect row ``x, y`` is the instigating car's position that frame, read
+    from the densified pose buffer via the car segment live then; a respawn row,
+    or a car that can't be located, gets ``0.0, 0.0``. Row order (frame order)
+    is preserved from the walk.
+    """
+    pad_index = {oid: i for i, oid in enumerate(sorted({r[1] for r in raw}))}
+    car_segs: dict[int, list[_Segment]] = {}
+    for seg in segments:
+        if seg.kind == "car" and seg.slot >= 0:
+            car_segs.setdefault(seg.actor_id, []).append(seg)
+
+    rows: list[tuple[int, int, int, float, float]] = []
+    for frame, pad_oid, collected, instigator in raw:
+        x = y = 0.0
+        if instigator is not None:
+            for seg in car_segs.get(instigator, ()):
+                if seg.start <= frame <= seg.end:
+                    off = (frame * slot_count + seg.slot) * _FLOATS_PER_POSE
+                    x, y = positions[off], positions[off + 1]
+                    break
+        rows.append((frame, pad_index[pad_oid], int(collected), x, y))
+    return rows
 
 
 def extract_replay_frames(
@@ -598,7 +702,8 @@ def extract_replay_frames(
     if not replay.frames or car_arch is None or ball_arch is None or rb_oid is None:
         return ReplayFrames([], [], b"", tracked_team, game_mode)
 
-    segments = _walk(
+    pad_oids = frozenset(oid for name, oid in obj.items() if _BOOST_PAD_MARKER in name)
+    segments, raw_pickups = _walk(
         replay,
         car_arch,
         ball_arch,
@@ -606,21 +711,25 @@ def extract_replay_frames(
         obj.get(NetObj.PAWN_PRI),
         obj.get(NetObj.PRI_UNIQUE_ID),
         obj.get(NetObj.TEAM_PAINT),
+        obj.get(NetObj.PICKUP_DATA),
+        pad_oids,
     )
     slots = _build_slots(segments, tracked_identities, player_names)
     frame_times = [float(f["time"]) for f in replay.frames]
-    positions = _densify(segments, frame_times, len(slots))
+    buf = _densify(segments, frame_times, len(slots))
     goals = _scan_goals(replay, obj.get(NetObj.SCORED_ON_TEAM))
     countdowns = _scan_countdowns(replay, obj.get(NetObj.COUNTDOWN))
     dead_periods = _dead_periods(goals, countdowns)
+    boost_pads = _resolve_pickups(raw_pickups, segments, buf, len(slots))
 
     return ReplayFrames(
         frame_times=frame_times,
         slots=slots,
-        positions=positions,
+        positions=buf.tobytes(),
         tracked_team=tracked_team,
         game_mode=game_mode,
         goals=goals,
         countdowns=countdowns,
         dead_periods=dead_periods,
+        boost_pads=boost_pads,
     )
