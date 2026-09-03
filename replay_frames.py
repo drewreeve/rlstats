@@ -32,6 +32,27 @@ from rrrocket_schema import NetObj, ParsedReplay
 
 _FLOATS_PER_POSE = 7  # x, y, z, qx, qy, qz, qw
 
+# The ball actor's archetype name is mode-specific. The frame walk keys on a
+# single archetype oid, so resolve whichever of these the replay carries.
+# (frame_analysis.py has the same Ball_Default assumption for its positional
+# stats — out of scope here; hoops match stats come from the PlayerStats blob,
+# not the frame walk.)
+_BALL_ARCHETYPE_NAMES = (
+    NetObj.BALL_ARCHETYPE.value,  # soccar
+    NetObj.BALL_ARCHETYPE_HOOPS.value,  # hoops
+)
+
+
+def _ball_archetype_oid(object_index: dict[str, int]) -> int | None:
+    """The object id of this replay's ball archetype, or ``None`` if it carries
+    no archetype this module knows how to walk."""
+    for name in _BALL_ARCHETYPE_NAMES:
+        oid = object_index.get(name)
+        if oid is not None:
+            return oid
+    return None
+
+
 # (frame_idx, x, y, z, qx, qy, qz, qw)
 _Sample = tuple[int, float, float, float, float, float, float, float]
 # (x, y, z, qx, qy, qz, qw) — one row of the position buffer
@@ -571,7 +592,7 @@ def extract_replay_frames(
     """
     obj = replay.object_index
     car_arch = obj.get(NetObj.CAR_ARCHETYPE)
-    ball_arch = obj.get(NetObj.BALL_ARCHETYPE)
+    ball_arch = _ball_archetype_oid(obj)
     rb_oid = obj.get(NetObj.RB_STATE)
 
     if not replay.frames or car_arch is None or ball_arch is None or rb_oid is None:

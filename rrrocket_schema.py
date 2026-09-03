@@ -35,7 +35,8 @@ class NetObj(StrEnum):
     """
 
     BALL_HIT_TEAM = "TAGame.Ball_TA:HitTeamNum"
-    BALL_ARCHETYPE = "Archetypes.Ball.Ball_Default"
+    BALL_ARCHETYPE = "Archetypes.Ball.Ball_Default"  # soccar
+    BALL_ARCHETYPE_HOOPS = "Archetypes.Ball.Ball_BasketBall"
     CAR_ARCHETYPE = "Archetypes.Car.Car_Default"
     BOOST_COMPONENT_ARCHETYPE = "Archetypes.CarComponents.CarComponent_Boost"
     RB_STATE = "TAGame.RBActor_TA:ReplicatedRBState"

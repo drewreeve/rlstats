@@ -12,6 +12,7 @@ from rrrocket_schema import NetObj
 _EXPECTED = {
     "TAGame.Ball_TA:HitTeamNum",
     "Archetypes.Ball.Ball_Default",
+    "Archetypes.Ball.Ball_BasketBall",
     "Archetypes.Car.Car_Default",
     "Archetypes.CarComponents.CarComponent_Boost",
     "TAGame.RBActor_TA:ReplicatedRBState",

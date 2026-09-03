@@ -602,3 +602,63 @@ def test_real_replay_poses_decode_to_plausible_values() -> None:
         assert abs(x) < 6000 and abs(y) < 7000 and -100 < z < 2500
         # rotation is a unit quaternion
         assert abs(math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw) - 1.0) < 0.05
+
+
+# --- integration: a real hoops replay ---
+#
+# Hoops names its ball actor Ball_BasketBall, not Ball_Default, so extract_
+# replay_frames used to bail out with an empty ReplayFrames. These pin that the
+# archetype fallback keeps a hoops replay walkable.
+
+
+def _hoops() -> ReplayFrames:
+    replay = parse_replay(load_replay("hoops.json"))
+    context = build_replay_context(replay, TRACKED_PLAYERS)
+    return extract_replay_frames(
+        replay,
+        tracked_team=context.perspective.team,
+        tracked_identities=context.tracked_identities,
+        player_names=context.player_names,
+        game_mode=context.game_mode,
+    )
+
+
+def test_hoops_replay_walks_to_a_full_buffer() -> None:
+    rf = _hoops()
+    assert rf.game_mode == "hoops"
+    assert len(rf.frame_times) == 11184
+    assert rf.frame_times == sorted(rf.frame_times)
+    assert len(rf.positions) == 4 * len(rf.frame_times) * len(rf.slots) * 7
+
+
+def test_hoops_replay_has_one_ball_and_four_cars() -> None:
+    rf = _hoops()
+    assert sum(s.kind == "ball" for s in rf.slots) == 1
+    assert sum(s.kind == "car" for s in rf.slots) == 4
+
+
+def test_hoops_replay_identifies_the_tracked_pair() -> None:
+    rf = _hoops()
+    tracked = [s for s in rf.slots if s.is_tracked]
+    assert {s.name for s in tracked} == {"Drew", "Jeff"}
+    assert all(s.identity is not None for s in tracked)
+
+
+def test_hoops_replay_carries_goals_and_countdowns() -> None:
+    rf = _hoops()
+    assert rf.goals
+    assert rf.countdowns
+    assert rf.dead_periods and rf.dead_periods[0][0] == 0
+
+
+def test_hoops_replay_poses_sit_inside_the_hoops_footprint() -> None:
+    rf = _hoops()
+    mid = len(rf.frame_times) // 2
+    for slot_idx, slot in enumerate(rf.slots):
+        if not any(start <= mid <= end for start, end in slot.segments):
+            continue
+        x, y, z, qx, qy, qz, qw = _pose(rf, mid, slot_idx)
+        assert all(math.isfinite(v) for v in (x, y, z, qx, qy, qz, qw))
+        # hoops half-extents ~2967 x 3581 x 1820 uu — allow slack for wall climbs
+        assert abs(x) < 4200 and abs(y) < 4600 and -100 < z < 2200
+        assert abs(math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw) - 1.0) < 0.05
