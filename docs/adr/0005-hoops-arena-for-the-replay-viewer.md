@@ -28,7 +28,7 @@ camera and the play).
 | 1 | Branch mechanism | A pure `arenaSpec(gameMode)` descriptor in `static/replay-core.js` (zero imports, unit-tested — same rationale as ADR-0004 #15). `replay.js`'s arena builders take the spec. **No `arena.js` extraction** — moving the working soccar builders into a new THREE-importing sibling module is orthogonal cleanup that inflates this diff without buying testability (the builders need THREE to run wherever they live; the testable part is the spec data, which this isolates). Do that extraction separately if `replay.js`'s size warrants it. |
 | 2 | Unknown-mode fallback | Only the exact string `"hoops"` selects the hoops spec. `null`, `"3v3"`, `"2v2"`, and anything unrecognised → the standard spec (deep-equal to today's hardcoded values). |
 | 3 | Hoops footprint | Chamfered octagon like soccar — the existing octagon math (`ARENA_OUTLINE`, `outlineHalfWidth`, grid clip, half-tint rings) generalises; it just takes hoops extents. Side walls X ±2966.67, back walls Y ±3581, ceiling Z 1820, corner cut ≈ 766 uu (from the wiki's ±5782 diagonal-wall intersection: 2966.67 + 3581 − 5782). |
-| 4 | Hoops goal shape | Team-tinted **semicircle rim** + team-tinted **shallow basket** + **chord and short arms** to the wall. No backboard plane (the wall is right there). **No fill disc.** See "Hoop construction" below. |
+| 4 | Hoops goal shape | Team-tinted **"D" footprint** — a U-shaped rim (semicircle bulging to the pitch, ends run back to the wall) — with a team-tinted **mesh net** filling the D down to the floor (nested D-outlines + strands). No backboard plane (the wall is right there). **No fill disc.** See "Hoop construction" below. |
 | 5 | Half-tint & floor grid | Keep both, sized to the hoops footprint. Half-tint: the same chamfered-ring split at y = 0, hoops outline. Floor grid: simplified to a 2×2 division (centre + halfway lines) rather than soccar's 4×3 rotation guide, clipped to the hoops octagon. The separately-drawn brighter centre line stays. |
 | 6 | Overview camera | `overviewSize` derived from the spec extents via one formula for both modes — `2 · max(halfX, halfY + goalClearance) · MARGIN`, `MARGIN ≈ 1.06`, `goalClearance` = 880 soccar / 0 hoops (the hoops rim sits inside the field). Verify the soccar result still lands ≈ 12800 (today's `OVERVIEW.size`). |
 | 7 | Goal-celebration FX | Reuse as-is; the burst already fires at the ball's real position on the goal frame. Only swap the `GOAL_H`-derived spread scalar for `spec.goal.fxScale` (643 soccar, ~500 hoops). Hoops-specific FX tuning deferred. |
@@ -62,9 +62,7 @@ at implementation):
     centreY,      // |y| of the rim centre: 2969
     z,            // rim height: 364
     radius,       // 655
-    basketDrop,   // ~175  (basket arc below the rim)
-    basketInset,  // ~120  (basket arc pulled toward the wall)
-    basketRadius, // ~390
+    netDrop,      // 340  (how far the mesh net hangs below the rim)
     fxScale,      // ~500
   },
 }
@@ -81,24 +79,32 @@ in the same change.
 All geometry for the `+y` goal; mirror through `y → −y` for the `−y` goal. "Pitch
 side" is toward `y = 0`. Everything at rim height `z = 364` unless noted.
 
-- **Rim** — a semicircle arc, radius 655, centre `(0, 2969, 364)`, spanning the
-  180° that bulges toward the pitch (chord along x at `y = 2969`, apex at
-  `y = 2969 − 655 = 2314`). ~24-segment polyline. Defending team's tint, full
-  opacity.
-- **Chord** — one line across the flat (wall-facing) side: `(−655, 2969, 364)` →
-  `(655, 2969, 364)`. Team tint, full opacity.
-- **Arms** — two short lines from the chord ends straight back to the back wall:
-  `(±655, 2969, 364)` → `(±655, 3581, 364)` (~612 uu each). Kills the "floating
-  ring" look without a backboard. Team tint, reduced opacity.
-- **Basket** — a second, smaller semicircle arc: radius ≈ 390, centre
-  `(0, 2969 + 120, 364 − 175)` = `(0, 3089, 189)`, same 180° pitch-facing span.
-  Joined to the rim by 3–4 short lines connecting matching arc points (e.g. the
-  two ends + apex + quarter points). Team tint, reduced opacity.
-- **No fill disc.** The end-identification cue is the tinted rim + basket, which
-  stay legible from any angle including straight overhead (the rim reads as a
-  half-circle stroke).
+The footprint is an **open "D"**: a semicircle of radius 655 centred at
+`(0, 2969)` bulging toward the pitch (apex at `y = 2314`), its two ends run
+straight back to the back wall at `x = ±655` — **not** closed along the wall.
+This matches the in-game U-shaped rim + arms; the net fills the D and reaches the
+wall, but has no mesh on the face against the wall (an earlier cut stopped the
+net at the `y = 2969` line ~600 uu short; a later one drew mesh across the wall
+face — both wrong; see the git history).
 
-Rim/basket colour is `teamTint(defendingTeam, trackedTeam)` — the same call the
+- **Rim** — the open D-outline at rim height `z = 364`, drawn as a thin
+  `TubeGeometry` (radius 11, `MeshBasicMaterial`) so it has a little heft — WebGL
+  ignores `LineBasicMaterial` width. Defending team's tint, full opacity.
+- **Net** — the D-outline plus ~36 strands, drawn in **7 horizontal slices**
+  from the rim down to `netDrop` = 340 (bottom ~24 uu off the floor). The
+  footprint radius grows with depth (`r · (1 + 0.26·t^1.4)`, ~1.26× at the
+  floor) so the net **bells out** like the real one rather than hanging straight.
+  The strands come from **arc-length resampling** the D perimeter, so they land
+  evenly on the front curve and both side runs (nothing across the wall face) —
+  a real mesh, not a couple of stacked rectangles that read as "teeth". Opacity
+  **fades linearly with depth**, `0.4 − 0.33·t`: ~0.4 at the rim, ~0.07 at the
+  floor, so the net dissolves rather than ending in a hard line and stays clear
+  of the cars driving under it. (The rim outline itself is full opacity.)
+- **No fill disc.** The end-identification cue is the tinted rim + net, legible
+  from any angle including straight overhead (the D reads as a half-stadium
+  stroke, the net as nested D-outlines inside it).
+
+Rim/net colour is `teamTint(defendingTeam, trackedTeam)` — the same call the
 soccar goal fill uses — so the hoop follows the team-1 field flip
 (`field.rotation.z = π`) with the rest of the arena.
 

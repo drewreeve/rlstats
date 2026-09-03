@@ -88,17 +88,16 @@ const HOOPS_SPEC = {
     [512, -512], [-512, -512], [512, 512], [-512, 512],
     [-1536, 1024], [1536, 1024], [-1280, 2304], [1280, 2304], [0, 2816],
   ],
-  // Basketball-style hoop: a semicircle rim (curved side to the pitch) with a
-  // shallow basket sweep and short arms back to the wall. Outline only, in the
-  // defending team's tint — nothing fills the opening (cars drive under it).
+  // Basketball-style hoop: a U-shaped rim (semicircle bulging to the pitch) with
+  // its ends run back to the wall, and a mesh net filling that D-shaped
+  // footprint down to the floor. Outline only, in the defending team's tint —
+  // nothing fills the opening (cars drive under it).
   goal: {
     kind: "ring",
-    centreY: 2969, // |y| of the rim centre
+    centreY: 2969, // |y| of the rim centre (wiki.rlbot.org)
     z: 364, // rim height
     radius: 655,
-    basketDrop: 175, // basket arc sits this far below the rim
-    basketInset: 120, // …and this far toward the wall
-    basketRadius: 390,
+    netDrop: 340, // net drapes this far below the rim — nearly to the floor
     fxScale: 500,
   },
 };

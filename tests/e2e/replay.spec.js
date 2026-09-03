@@ -403,27 +403,27 @@ test.describe("hoops arena", () => {
 
   test("the scene is built from the hoops spec — footprint, ring goals, 20 pads", async () => {
     const geom = await hoopsPage.evaluate(() => {
-      const { scene, THREE } = window.__replay;
-      const V = new THREE.Vector3();
       let footprint = null;
       const ringYs = [];
+      const ringReach = [];
       const padR = [];
-      scene.traverse((o) => {
+      window.__replay.scene.traverse((o) => {
         if (o.isLineLoop && o.position.z === 0 && footprint === null) {
           // arena floor loop — first LineLoop at z=0
           o.geometry.computeBoundingBox();
           const b = o.geometry.boundingBox;
           footprint = { x: b.max.x, y: b.max.y };
         }
-        if (o.isLine && !o.isLineLoop && !o.isLineSegments) {
+        if (o.isMesh && o.geometry?.type === "TubeGeometry") {
           o.geometry.computeBoundingBox();
           const b = o.geometry.boundingBox;
-          // the rim arc: a semicircle of radius 655 at z = 364 whose flat side
-          // (the chord) sits at |y| = 2969 and bulges toward y = 0.
-          if (Math.abs(b.max.z - 364) < 1 && Math.abs(b.max.x - 655) < 2) {
-            const chord =
-              Math.abs(b.min.y) > Math.abs(b.max.y) ? b.min.y : b.max.y;
-            ringYs.push(Math.round(chord / 100) * 100);
+          // the rim tube: a D-outline of radius 655 centred at z ≈ 364, x ≈ 0 —
+          // its span runs from the U apex (|y| ≈ 2314) back to the wall.
+          const cz = (b.min.z + b.max.z) / 2;
+          const cx = (b.min.x + b.max.x) / 2;
+          if (Math.abs(cz - 364) < 20 && Math.abs(cx) < 20 && b.max.x > 600) {
+            ringYs.push(Math.round((b.min.y + b.max.y) / 2 / 500) * 500);
+            ringReach.push(Math.max(Math.abs(b.min.y), Math.abs(b.max.y)));
           }
         }
         if (o.isMesh && o.geometry?.type === "CircleGeometry") {
@@ -434,6 +434,7 @@ test.describe("hoops arena", () => {
       return {
         footprint,
         ringYs: ringYs.sort((a, b) => a - b),
+        ringReach,
         big: padR.filter((r) => r === 100).length,
         small: padR.filter((r) => r === 50).length,
       };
@@ -444,8 +445,10 @@ test.describe("hoops arena", () => {
     expect(geom.footprint.x).toBeLessThan(3100);
     expect(geom.footprint.y).toBeGreaterThan(3500);
     expect(geom.footprint.y).toBeLessThan(3700);
-    // one rim per end, near y = ±2969 (rounded to ±3000 here)
+    // one rim per end, centred near y = ±2948
     expect(geom.ringYs).toEqual([-3000, 3000]);
+    // and each D reaches the back wall (halfY 3581)
+    expect(Math.min(...geom.ringReach)).toBeGreaterThan(3400);
     // hoops boost layout: 6 big + 14 small
     expect(geom.big).toBe(6);
     expect(geom.small).toBe(14);

@@ -524,83 +524,115 @@ function buildBoxGoal(parent, spec, sign, tint) {
   parent.add(fill);
 }
 
-// Hoops: a horizontal semicircle rim (curved side facing the pitch) at rim
-// height, a chord across its flat side with short arms back to the wall so it
-// reads as wall-mounted, and a shallow basket sweep below. Outline only, all in
-// the defending team's tint — nothing spans the opening, since cars pass under
-// it constantly (ADR-0005).
+// Hoops: a U-shaped rim (semicircle bulging toward the pitch, radius 655 at
+// centre y ±2969) with its two ends running straight back to the back wall, and
+// a mesh net filling that whole D-shaped footprint — draping down at the front
+// curve and running all the way back to the wall. Outline only, all in the
+// defending team's tint — nothing spans the opening, since cars pass under it
+// constantly (ADR-0005).
 function buildHoopGoal(parent, spec, sign, tint) {
-  const { centreY, z, radius, basketDrop, basketInset, basketRadius } = spec.goal;
+  const { centreY, z, radius: r, netDrop } = spec.goal;
   const cy = sign * centreY;
   const wallY = sign * spec.halfY;
-  // Arc from the wall-facing chord (angle 0 / π at y = cy) bulging toward the
-  // pitch (−sign in y).
-  const arc = (r, y0, z0, n) => {
-    const pts = [];
-    for (let i = 0; i <= n; i++) {
-      const a = Math.PI * (i / n);
-      pts.push(new THREE.Vector3(Math.cos(a) * r, y0 - sign * Math.sin(a) * r, z0));
+
+  // The rim/net footprint is an *open* "D": +x back corner on the wall → +x side
+  // run → +x U-tip → semicircle front (bulging toward the pitch, −sign in y) →
+  // −x U-tip → −x side run → −x back corner on the wall. It is not closed along
+  // the wall — the net has no mesh on the face against the back wall. `rr` is the
+  // footprint radius, which grows toward the floor so the net bells out like the
+  // real one. `dPath` returns the outline as a dense polyline; `resample` walks
+  // it by arc length so N points land evenly along the front curve and sides.
+  const flareR = (t) => r * (1 + 0.26 * t ** 1.4); // rim width → ~1.26× at the floor
+  const dPath = (zed, rr = r) => {
+    const pts = [
+      new THREE.Vector3(rr, wallY, zed),
+      new THREE.Vector3(rr, cy, zed),
+    ];
+    for (let i = 1; i < 48; i++) {
+      const a = Math.PI * (i / 48);
+      pts.push(
+        new THREE.Vector3(Math.cos(a) * rr, cy - sign * Math.sin(a) * rr, zed),
+      );
     }
+    pts.push(
+      new THREE.Vector3(-rr, cy, zed),
+      new THREE.Vector3(-rr, wallY, zed),
+    );
     return pts;
   };
+  // `n` points evenly spaced by arc length along the *open* path, both endpoints
+  // included — so the strand at each wall-side corner matches. `target` only
+  // grows, so a single forward cursor walks the segment table.
+  const resample = (path, n) => {
+    const acc = [0];
+    for (let i = 1; i < path.length; i++) {
+      acc.push(acc[i - 1] + path[i].distanceTo(path[i - 1]));
+    }
+    const total = acc[acc.length - 1];
+    const out = [];
+    let si = 0;
+    for (let k = 0; k < n; k++) {
+      const target = (total * k) / (n - 1);
+      while (si < acc.length - 2 && acc[si + 1] < target) si++;
+      const span = acc[si + 1] - acc[si];
+      const f = span > 0 ? (target - acc[si]) / span : 0;
+      out.push(path[si].clone().lerp(path[si + 1], f));
+    }
+    return out;
+  };
 
-  const rimMat = new THREE.LineBasicMaterial({ color: tint });
-  const softMat = new THREE.LineBasicMaterial({
-    color: tint,
-    transparent: true,
-    opacity: 0.5,
+  // BANDS + 1 horizontal slices from the rim (t = 0) to the floor (t = 1): the
+  // raw D-outline polyline at each, plus its arc-length resampling for the
+  // strands. Each level's `dPath` is built once and shared by the rim tube, the
+  // strands and the per-slice outline.
+  const BANDS = 7;
+  const levels = Array.from({ length: BANDS + 1 }, (_, b) => {
+    const t = b / BANDS;
+    const raw = dPath(z - netDrop * t, flareR(t));
+    return { t, raw, ring: resample(raw, 36) };
   });
 
-  // Rim + its chord.
+  // Rim: the top D-outline drawn as a thin tube (WebGL ignores line width) — a
+  // little heft on the one part that marks the goal.
   parent.add(
-    new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(arc(radius, cy, z, 32)),
-      rimMat,
-    ),
-  );
-  parent.add(
-    new THREE.LineSegments(
-      new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(-radius, cy, z),
-        new THREE.Vector3(radius, cy, z),
-      ]),
-      rimMat,
-    ),
-  );
-
-  // Short arms from the chord ends back to the wall.
-  parent.add(
-    new THREE.LineSegments(
-      new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(-radius, cy, z), new THREE.Vector3(-radius, wallY, z),
-        new THREE.Vector3(radius, cy, z), new THREE.Vector3(radius, wallY, z),
-      ]),
-      softMat,
+    new THREE.Mesh(
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(levels[0].raw, false, "centripetal"),
+        96,
+        11,
+        8,
+        false,
+      ),
+      new THREE.MeshBasicMaterial({ color: tint }),
     ),
   );
 
-  // Basket: a smaller arc dropped below and pulled toward the wall, tied to the
-  // rim by a few struts.
-  const bz = z - basketDrop;
-  const by = cy + sign * basketInset;
-  const rimArc = arc(radius, cy, z, 8);
-  const basketArc = arc(basketRadius, by, bz, 8);
-  parent.add(
-    new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(arc(basketRadius, by, bz, 24)),
-      softMat,
-    ),
-  );
-  const struts = [];
-  for (let i = 0; i < rimArc.length; i += 2) {
-    struts.push(rimArc[i], basketArc[i]);
+  // Net: a mesh along the front curve and both sides (nothing across the wall
+  // face), fading from ~0.4 opacity at the rim to ~0.07 at the floor.
+  const netMat = (t) =>
+    new THREE.LineBasicMaterial({
+      color: tint,
+      transparent: true,
+      opacity: 0.4 - 0.33 * t,
+    });
+  for (let b = 1; b <= BANDS; b++) {
+    const upper = levels[b - 1].ring;
+    const lower = levels[b].ring;
+    const strandSegs = [];
+    for (let i = 0; i < upper.length; i++) strandSegs.push(upper[i], lower[i]);
+    parent.add(
+      new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints(strandSegs),
+        netMat((b - 0.5) / BANDS),
+      ),
+    );
+    parent.add(
+      new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(levels[b].raw),
+        netMat(levels[b].t),
+      ),
+    );
   }
-  parent.add(
-    new THREE.LineSegments(
-      new THREE.BufferGeometry().setFromPoints(struts),
-      softMat,
-    ),
-  );
 }
 
 // A faint colour wash over each half of the pitch, in the defending team's
