@@ -20,13 +20,10 @@ import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.170.0/exam
 // tests/js/replay-core.test.js). This file is the viewer shell: scene graph,
 // DOM wiring, camera, and the rAF loop.
 import {
+  arenaSpec,
   carColor,
-  CORNER,
   countdownLabelAt,
   createTransport,
-  FIELD_X,
-  FIELD_Y,
-  FIELD_Z,
   formatClock,
   makePoseBuffers,
   outlineHalfWidth,
@@ -37,25 +34,10 @@ import {
 } from "./replay-core.js";
 
 // X = wall to wall, Y = goal to goal, Z = floor to ceiling. The world group is
-// Z-up (RL); Three.js is Y-up.
-const HX = FIELD_X / 2;
-const HY = FIELD_Y / 2;
-
-// Chamfered soccar footprint in the RL XY plane: the rectangle with all four
-// corners cut at 45° (|x| + |y| = 8064 along each diagonal). CCW from +x/+y.
-// Shared by the arena wireframe, the floor grid clip, and the half-pitch tint.
-const ARENA_OUTLINE = [
-  [HX, HY - CORNER],
-  [HX - CORNER, HY],
-  [-(HX - CORNER), HY],
-  [-HX, HY - CORNER],
-  [-HX, -(HY - CORNER)],
-  [-(HX - CORNER), -HY],
-  [HX - CORNER, -HY],
-  [HX, -(HY - CORNER)],
-];
-
-const BALL_RADIUS = 91.25;
+// Z-up (RL); Three.js is Y-up. Per-mode field geometry — footprint, chamfer,
+// ceiling, goal shape, boost-pad layout, ball radius — comes from
+// arenaSpec(meta.game_mode) (replay-core.js) and is threaded into the arena
+// builders and the overview camera below. See docs/adr/0005.
 
 // Battle-car model (createCar / buildCarModel). Inlined from a Claude-designed
 // three.js model (battle-car.js): an extruded curved hull + tinted canopy,
@@ -74,31 +56,16 @@ const CAR_SCALE = 39;
 const CAR_DROP = 17; // uu the wheels sit below the pose origin (grounded car)
 const CAR_NOSE_BIAS = 4; // uu forward — rrrocket's origin is a touch aft of hull centre
 
-// Soccar goal: 1786 uu mouth width, 643 uu tall, 880 uu deep behind the back
-// wall. Team 0 defends the −y goal, team 1 the +y goal (before the field flip).
-const GOAL_HW = 893;
-const GOAL_H = 643;
-const GOAL_DEPTH = 880;
-const GOAL_LINE = 0xaab8d8; // brighter than the arena edges so the frame reads
+// Goal frame colour — brighter than the arena edges so the frame reads. The
+// goal geometry itself (box mouth/height/depth for soccar, elevated ring for
+// hoops) comes from spec.goal; team 0 defends the −y goal, team 1 the +y goal
+// (before the field flip).
+const GOAL_LINE = 0xaab8d8;
 
-// Standard soccar boost pads: 6 big (full boost) + 28 small, positions in the
-// RL XY plane (unreal units) from wiki.rlbot.org — the same source as
-// frame_analysis.BIG_PAD_POSITIONS, whose 6 big coords these match. Drawn as
-// flat discs just above the floor: static field furniture, no pickup/respawn
-// state (that stays the deferred "pad respawn timers" item).
-const BOOST_PADS_BIG = [
-  [-3584, 0], [3584, 0],
-  [-3072, -4096], [3072, -4096],
-  [-3072, 4096], [3072, 4096],
-];
-const BOOST_PADS_SMALL = [
-  [0, -4240], [-1792, -4184], [1792, -4184], [-940, -3308], [940, -3308],
-  [0, -2816], [-3584, -2484], [3584, -2484], [-1788, -2300], [1788, -2300],
-  [-2048, -1036], [0, -1024], [2048, -1036], [-1024, 0], [1024, 0],
-  [-2048, 1036], [0, 1024], [2048, 1036], [-1788, 2300], [1788, 2300],
-  [-3584, 2484], [3584, 2484], [0, 2816], [-940, 3308], [940, 3308],
-  [-1792, 4184], [1792, 4184], [0, 4240],
-];
+// Boost-pad markers. Layouts (6 big + 28 small soccar, 6 + 14 hoops) come from
+// spec.bigPads / spec.smallPads — coords from wiki.rlbot.org, the same source
+// as frame_analysis.BIG_PAD_POSITIONS. Drawn as flat discs just above the
+// floor: static field furniture, no pickup/respawn state.
 const BOOST_PAD_BIG_R = 100; // big pads read at ~2x the small ones
 const BOOST_PAD_SMALL_R = 50;
 const BOOST_PAD_COLOR = 0x8f8062; // dim grey-gold, deliberately not boost-yellow
@@ -145,6 +112,19 @@ const CAM_PRESETS = {
 };
 
 let viewSize = CAM_PRESETS.broadcast.size;
+
+// The presets above are tuned to the standard footprint. Other arenas scale
+// `pos` / `target` / `size` by whichever axis is largest relative to standard's
+// same axis, so the field frames the same; `applyCamPreset` applies it. 1 for
+// standard.
+let camScale = 1;
+const STD_SPEC = arenaSpec(null);
+const arenaCamScale = (spec) =>
+  Math.max(
+    spec.halfX / STD_SPEC.halfX,
+    (spec.halfY + spec.goalClearance) /
+      (STD_SPEC.halfY + STD_SPEC.goalClearance),
+  );
 
 // Player name labels start on; the NAMES button / `n` key flip this.
 let showNames = true;
@@ -286,7 +266,7 @@ function makeDotTexture() {
 // drag + light gravity and fades the whole burst out via material.opacity. A
 // larger core sprite sells the flash for the first fraction of a second. Idle
 // cost is nil — both objects are hidden.
-function createGoalFx(field) {
+function createGoalFx(field, fxScale) {
   const dot = makeDotTexture();
 
   const geo = new THREE.BufferGeometry();
@@ -356,7 +336,7 @@ function createGoalFx(field) {
     points.visible = true;
 
     core.position.copy(origin);
-    core.scale.setScalar(GOAL_H * 0.6);
+    core.scale.setScalar(fxScale * 0.6);
     core.material.color.set(colorHex);
     core.material.opacity = 1;
     core.visible = true;
@@ -418,13 +398,14 @@ function makeGoalWatcher(meta, positions, playback, goalFx) {
   };
 }
 
-function buildArena(parent) {
+function buildArena(parent, spec) {
   const edgeMat = new THREE.LineBasicMaterial({ color: 0x4a5d82 });
+  const { halfX: hx, halfY: hy, ceiling } = spec;
 
-  // Chamfered octagon: floor loop (z = 0), ceiling loop (z = FIELD_Z), and a
+  // Chamfered octagon: floor loop (z = 0), ceiling loop (z = ceiling), and a
   // vertical edge at each of the eight corners.
-  const floor = ARENA_OUTLINE.map(([x, y]) => new THREE.Vector3(x, y, 0));
-  const ceil = ARENA_OUTLINE.map(([x, y]) => new THREE.Vector3(x, y, FIELD_Z));
+  const floor = spec.outline.map(([x, y]) => new THREE.Vector3(x, y, 0));
+  const ceil = spec.outline.map(([x, y]) => new THREE.Vector3(x, y, ceiling));
   parent.add(
     new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(floor), edgeMat),
   );
@@ -432,8 +413,8 @@ function buildArena(parent) {
     new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(ceil), edgeMat),
   );
   const verticals = [];
-  for (const [x, y] of ARENA_OUTLINE) {
-    verticals.push(new THREE.Vector3(x, y, 0), new THREE.Vector3(x, y, FIELD_Z));
+  for (const [x, y] of spec.outline) {
+    verticals.push(new THREE.Vector3(x, y, 0), new THREE.Vector3(x, y, ceiling));
   }
   parent.add(
     new THREE.LineSegments(
@@ -442,44 +423,45 @@ function buildArena(parent) {
     ),
   );
 
-  // Floor guide: a 4×3 grid — 4 rows goal to goal, 3 columns wall to wall — the
-  // in-game reference for rotation spacing / avoiding double commits. Interior
-  // dividers only (the arena outline is the perimeter), clipped to the octagon
-  // so nothing overhangs. The brighter centre line is drawn separately below.
+  // Floor guide: an interior grid — spec.grid.cols wall to wall, spec.grid.rows
+  // goal to goal — the in-game reference for rotation spacing / avoiding double
+  // commits (soccar 3×4; hoops a lighter 2×2). Interior dividers only (the
+  // arena outline is the perimeter), clipped to the octagon so nothing
+  // overhangs. The brighter centre line is drawn separately below.
   const gridPts = [];
-  for (let i = 1; i < 3; i++) {
-    const x = -HX + i * (FIELD_X / 3);
-    const lim = outlineHalfWidth(x, 0).y;
+  for (let i = 1; i < spec.grid.cols; i++) {
+    const x = -hx + i * ((2 * hx) / spec.grid.cols);
+    const lim = outlineHalfWidth(x, 0, spec).y;
     gridPts.push(new THREE.Vector3(x, -lim, 0.5), new THREE.Vector3(x, lim, 0.5));
   }
-  for (let i = 1; i < 4; i++) {
-    const y = -HY + i * (FIELD_Y / 4);
-    const lim = outlineHalfWidth(0, y).x;
+  for (let i = 1; i < spec.grid.rows; i++) {
+    const y = -hy + i * ((2 * hy) / spec.grid.rows);
+    const lim = outlineHalfWidth(0, y, spec).x;
     gridPts.push(new THREE.Vector3(-lim, y, 0.5), new THREE.Vector3(lim, y, 0.5));
   }
-  parent.add(
-    new THREE.LineSegments(
-      new THREE.BufferGeometry().setFromPoints(gridPts),
-      new THREE.LineBasicMaterial({ color: 0x1e2842 }),
-    ),
-  );
+  if (gridPts.length) {
+    parent.add(
+      new THREE.LineSegments(
+        new THREE.BufferGeometry().setFromPoints(gridPts),
+        new THREE.LineBasicMaterial({ color: 0x1e2842 }),
+      ),
+    );
+  }
 
   // Centre line (wall to wall at y = 0, just above the floor).
   parent.add(
     new THREE.LineSegments(
       new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(-HX, 0, 2),
-        new THREE.Vector3(HX, 0, 2),
+        new THREE.Vector3(-hx, 0, 2),
+        new THREE.Vector3(hx, 0, 2),
       ]),
       edgeMat,
     ),
   );
 }
 
-// An open wireframe box at each end: goal mouth on the back wall, matching
-// frame at full depth, four edges joining them. The mouth is filled with a
-// translucent plane in the defending team's colour — the clearest "which end
-// is whose" cue.
+// An open wireframe box: goal mouth on the back wall (y = gy), matching frame
+// at full depth (y = by), four edges joining them.
 function goalFrameSegments(gy, by, hw, ht) {
   const P = (x, y, z) => new THREE.Vector3(x, y, z);
   return [
@@ -498,66 +480,141 @@ function goalFrameSegments(gy, by, hw, ht) {
   ];
 }
 
-function buildGoals(parent, trackedTeam) {
-  const frameMat = new THREE.LineBasicMaterial({ color: GOAL_LINE });
+function buildGoals(parent, spec, trackedTeam) {
   for (const sign of [-1, 1]) {
     const team = sign < 0 ? 0 : 1; // team 0 defends −y, team 1 defends +y
-    const gy = sign * HY;
-    const by = sign * (HY + GOAL_DEPTH);
-
-    parent.add(
-      new THREE.LineSegments(
-        new THREE.BufferGeometry().setFromPoints(
-          goalFrameSegments(gy, by, GOAL_HW, GOAL_H),
-        ),
-        frameMat,
-      ),
-    );
-
-    const fill = new THREE.Mesh(
-      new THREE.PlaneGeometry(2 * GOAL_HW, GOAL_H),
-      new THREE.MeshBasicMaterial({
-        color: teamTint(team, trackedTeam),
-        transparent: true,
-        opacity: 0.35,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    fill.rotation.x = Math.PI / 2; // stand it up in the x–z plane
-    fill.position.set(0, gy - sign * 2, GOAL_H / 2); // inset 2 uu off the wall
-    parent.add(fill);
+    const tint = teamTint(team, trackedTeam);
+    if (spec.goal.kind === "ring") {
+      buildHoopGoal(parent, spec, sign, tint);
+    } else {
+      buildBoxGoal(parent, spec, sign, tint);
+    }
   }
+}
+
+// Soccar: an open wireframe box on the back wall, its mouth filled with a
+// translucent plane in the defending team's colour — the clearest "which end
+// is whose" cue.
+function buildBoxGoal(parent, spec, sign, tint) {
+  const { halfWidth, height } = spec.goal;
+  const gy = sign * spec.halfY;
+  const by = sign * (spec.halfY + spec.goal.depth);
+
+  parent.add(
+    new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(
+        goalFrameSegments(gy, by, halfWidth, height),
+      ),
+      new THREE.LineBasicMaterial({ color: GOAL_LINE }),
+    ),
+  );
+
+  const fill = new THREE.Mesh(
+    new THREE.PlaneGeometry(2 * halfWidth, height),
+    new THREE.MeshBasicMaterial({
+      color: tint,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  fill.rotation.x = Math.PI / 2; // stand it up in the x–z plane
+  fill.position.set(0, gy - sign * 2, height / 2); // inset 2 uu off the wall
+  parent.add(fill);
+}
+
+// Hoops: a horizontal semicircle rim (curved side facing the pitch) at rim
+// height, a chord across its flat side with short arms back to the wall so it
+// reads as wall-mounted, and a shallow basket sweep below. Outline only, all in
+// the defending team's tint — nothing spans the opening, since cars pass under
+// it constantly (ADR-0005).
+function buildHoopGoal(parent, spec, sign, tint) {
+  const { centreY, z, radius, basketDrop, basketInset, basketRadius } = spec.goal;
+  const cy = sign * centreY;
+  const wallY = sign * spec.halfY;
+  // Arc from the wall-facing chord (angle 0 / π at y = cy) bulging toward the
+  // pitch (−sign in y).
+  const arc = (r, y0, z0, n) => {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const a = Math.PI * (i / n);
+      pts.push(new THREE.Vector3(Math.cos(a) * r, y0 - sign * Math.sin(a) * r, z0));
+    }
+    return pts;
+  };
+
+  const rimMat = new THREE.LineBasicMaterial({ color: tint });
+  const softMat = new THREE.LineBasicMaterial({
+    color: tint,
+    transparent: true,
+    opacity: 0.5,
+  });
+
+  // Rim + its chord.
+  parent.add(
+    new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(arc(radius, cy, z, 32)),
+      rimMat,
+    ),
+  );
+  parent.add(
+    new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-radius, cy, z),
+        new THREE.Vector3(radius, cy, z),
+      ]),
+      rimMat,
+    ),
+  );
+
+  // Short arms from the chord ends back to the wall.
+  parent.add(
+    new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-radius, cy, z), new THREE.Vector3(-radius, wallY, z),
+        new THREE.Vector3(radius, cy, z), new THREE.Vector3(radius, wallY, z),
+      ]),
+      softMat,
+    ),
+  );
+
+  // Basket: a smaller arc dropped below and pulled toward the wall, tied to the
+  // rim by a few struts.
+  const bz = z - basketDrop;
+  const by = cy + sign * basketInset;
+  const rimArc = arc(radius, cy, z, 8);
+  const basketArc = arc(basketRadius, by, bz, 8);
+  parent.add(
+    new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(arc(basketRadius, by, bz, 24)),
+      softMat,
+    ),
+  );
+  const struts = [];
+  for (let i = 0; i < rimArc.length; i += 2) {
+    struts.push(rimArc[i], basketArc[i]);
+  }
+  parent.add(
+    new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(struts),
+      softMat,
+    ),
+  );
 }
 
 // A faint colour wash over each half of the pitch, in the defending team's
 // colour, so the two ends read at a glance (and from straight overhead, where
 // the vertical goal fills are edge-on). Same chamfered footprint as the arena,
 // split at y = 0.
-function buildHalfTint(parent, trackedTeam) {
+function buildHalfTint(parent, spec, trackedTeam) {
+  // Each half is a closer at y = 0 plus the arena outline's +y or −y run
+  // (chamferedOutline is CCW from +x/+y, so 0–3 is the +y half, 4–7 the −y).
+  const hx = spec.halfX;
+  const o = spec.outline;
   const halves = [
-    {
-      team: 1,
-      ring: [
-        [HX, 0],
-        [HX, HY - CORNER],
-        [HX - CORNER, HY],
-        [-(HX - CORNER), HY],
-        [-HX, HY - CORNER],
-        [-HX, 0],
-      ],
-    },
-    {
-      team: 0,
-      ring: [
-        [-HX, 0],
-        [-HX, -(HY - CORNER)],
-        [-(HX - CORNER), -HY],
-        [HX - CORNER, -HY],
-        [HX, -(HY - CORNER)],
-        [HX, 0],
-      ],
-    },
+    { team: 1, ring: [[hx, 0], ...o.slice(0, 4), [-hx, 0]] },
+    { team: 0, ring: [[-hx, 0], ...o.slice(4, 8), [hx, 0]] },
   ];
   for (const { team, ring } of halves) {
     const shape = new THREE.Shape(
@@ -583,7 +640,7 @@ function buildHalfTint(parent, trackedTeam) {
 // respawn animation. Parented to `field` so it rides the orientation flip
 // with the rest of the arena geometry (a visual no-op: the layout is
 // symmetric under the 180° spin, but consistent — wrinkle 7).
-function buildBoostPads(parent) {
+function buildBoostPads(parent, spec) {
   const mat = new THREE.MeshBasicMaterial({
     color: BOOST_PAD_COLOR,
     transparent: true,
@@ -592,8 +649,8 @@ function buildBoostPads(parent) {
     side: THREE.DoubleSide,
   });
   for (const [pads, r] of [
-    [BOOST_PADS_BIG, BOOST_PAD_BIG_R],
-    [BOOST_PADS_SMALL, BOOST_PAD_SMALL_R],
+    [spec.bigPads, BOOST_PAD_BIG_R],
+    [spec.smallPads, BOOST_PAD_SMALL_R],
   ]) {
     const geo = new THREE.CircleGeometry(r, 24); // in the x–y plane, faces +z
     for (const [x, y] of pads) {
@@ -779,32 +836,34 @@ const BALL_COLOR = 0xeceef2;
 // pole pip dropping in and out of view — a bare great circle is symmetric about
 // its own axis, so spin around it would otherwise be invisible. Seam/pip are
 // children of the mesh, so they inherit its per-frame pose.
-function buildBall(color) {
+function buildBall(color, radius) {
   const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(BALL_RADIUS, 32, 24),
+    new THREE.SphereGeometry(radius, 32, 24),
     new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0 }),
   );
 
   const ink = new THREE.MeshStandardMaterial({ color: 0x1a1c22, roughness: 0.6, metalness: 0 });
   const seam = new THREE.Mesh(
-    new THREE.TorusGeometry(BALL_RADIUS * 1.005, 2.5, 6, 40),
+    new THREE.TorusGeometry(radius * 1.005, 2.5, 6, 40),
     ink,
   );
   ball.add(seam); // ring in the mesh's local XY plane, axis = local Z
 
   const pip = new THREE.Mesh(new THREE.SphereGeometry(4.5, 12, 8), ink);
-  pip.position.set(0, 0, BALL_RADIUS); // on the seam's axis
+  pip.position.set(0, 0, radius); // on the seam's axis
   ball.add(pip);
 
   return ball;
 }
 
-function createActorMeshes(field, meta) {
+function createActorMeshes(field, meta, spec) {
   return meta.slots.map((slot) => {
     const isBall = slot.kind === "ball";
     const color = isBall ? BALL_COLOR : carColor(slot, meta.tracked_team);
 
-    const obj = isBall ? buildBall(color) : buildCarModel(color);
+    const obj = isBall
+      ? buildBall(color, spec.ballRadius)
+      : buildCarModel(color);
     field.add(obj);
 
     const trail = makeTrail(color);
@@ -1149,12 +1208,15 @@ function buildScene(meta, positions) {
   if (meta.tracked_team === 1) field.rotation.z = Math.PI;
   world.add(field);
 
-  buildArena(field);
-  buildHalfTint(field, meta.tracked_team);
-  buildBoostPads(field);
-  buildGoals(field, meta.tracked_team);
-  const meshes = createActorMeshes(field, meta);
-  const goalFx = createGoalFx(field);
+  const spec = arenaSpec(meta.game_mode);
+  camScale = arenaCamScale(spec);
+
+  buildArena(field, spec);
+  buildHalfTint(field, spec, meta.tracked_team);
+  buildBoostPads(field, spec);
+  buildGoals(field, spec, meta.tracked_team);
+  const meshes = createActorMeshes(field, meta, spec);
+  const goalFx = createGoalFx(field, spec.goal.fxScale);
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1245,10 +1307,10 @@ function resize() {
 function applyCamPreset(name, controls) {
   const p = CAM_PRESETS[name];
   if (!p) return;
-  camera.up.set(...p.up);
-  camera.position.set(...p.pos);
-  controls.target.set(...p.target);
-  viewSize = p.size;
+  camera.up.set(...p.up); // a direction — never scaled
+  camera.position.set(...p.pos.map((v) => v * camScale));
+  controls.target.set(...p.target.map((v) => v * camScale));
+  viewSize = p.size * camScale;
   resize();
   controls.update();
 }

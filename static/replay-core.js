@@ -12,12 +12,12 @@ export const TRAIL_FRAMES = 45; // ~1.5 s of motion tail at rrrocket's ~30 Hz
 export const TRAIL_POINTS = TRAIL_FRAMES + 1; // head vertex + one per walked-back frame
 
 // Standard Rocket League field, unreal units (see replay.js for the full
-// geometry notes). Kept as named exports for back-compat; arenaSpec() below is
+// geometry notes) — the raw numbers behind STANDARD_SPEC. arenaSpec() below is
 // the structured, per-mode form the viewer's arena builders consume.
-export const FIELD_X = 8192;
-export const FIELD_Y = 10240;
-export const FIELD_Z = 2044;
-export const CORNER = 1152;
+const FIELD_X = 8192;
+const FIELD_Y = 10240;
+const FIELD_Z = 2044;
+const CORNER = 1152;
 
 // ── Arena specs ───────────────────────────────────────────────────────────
 // Per-mode field geometry: dimensions, chamfer, boost-pad layout and goal
