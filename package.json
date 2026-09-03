@@ -1,0 +1,14 @@
+{
+  "name": "rlstats-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Front-end tests for the RL Stats replay viewer. The runtime code has no build step and no npm deps — this is test tooling only.",
+  "scripts": {
+    "test": "node --test 'tests/js/**/*.test.js'",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

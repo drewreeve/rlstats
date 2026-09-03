@@ -23,3 +23,10 @@ problematic/
 
 # Playwright MCP scratch output (screenshots, page snapshots)
 .playwright-mcp/
+
+# Node / front-end test tooling
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+.playwright/

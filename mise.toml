@@ -6,6 +6,7 @@ python.uv_venv_auto = "source"
 
 [tools]
 "github:nickbabcock/rrrocket" = "0.11.5"
+node = "24"
 pre-commit = "latest"
 uv = "latest"
 
@@ -13,3 +14,13 @@ uv = "latest"
 run = '''
 chmod +x "$(mise where github:nickbabcock/rrrocket)/rrrocket"
 '''
+
+# Front-end tests for the replay viewer. `test-js` exercises the pure playback
+# core (static/replay-core.js) with Node's built-in runner — no browser, no deps.
+# `test-e2e` drives the real page in headless Chromium and needs `npm ci` +
+# `npx playwright install chromium` first.
+[tasks.test-js]
+run = "node --test 'tests/js/**/*.test.js'"
+
+[tasks.test-e2e]
+run = "npx playwright test"
