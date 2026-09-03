@@ -1,15 +1,18 @@
 # ADR-0005: Hoops arena for the replay viewer
 
-Status: **accepted; implementation pending.** Follow-up to ADR-0004, whose
-decision #11 flagged the exact gap this closes: the viewer draws every replay in
-the standard soccar arena, so a Hoops match with a replay on disk opens the
-viewer in the wrong field.
+Status: **accepted; implemented.** Follow-up to ADR-0004, whose decision #11
+flagged the exact gap this closes: the viewer draws every replay in the standard
+soccar arena, so a Hoops match with a replay on disk opens the viewer in the
+wrong field.
 
 The position `.bin` is already mode-agnostic (world coords, no arena assumptions),
 and `game_mode` (`"3v3" | "2v2" | "hoops"`) is already detected server-side
 (`ingest.detect_game_mode`) and serialised to the client as `meta.game_mode`
-(`server.py` → `match_replay_meta`). So this is **purely additive on the render
-side** — no data-path, transport, or server changes.
+(`server.py` → `match_replay_meta`). The render side was expected to be **purely
+additive** — but implementation found `extract_replay_frames` never produced any
+frames for a hoops replay (the ball actor is named `Ball_BasketBall`, not
+`Ball_Default`), so the viewer 404'd before the arena mattered. Decision #10
+covers that fix; it's the one non-render change.
 
 The model stays ADR-0004's: a ballchasing-style tactical overview, low-poly
 procedural shapes only, no ripped assets. The hoop shape in particular is copied
@@ -30,7 +33,8 @@ camera and the play).
 | 6 | Overview camera | `overviewSize` derived from the spec extents via one formula for both modes — `2 · max(halfX, halfY + goalClearance) · MARGIN`, `MARGIN ≈ 1.06`, `goalClearance` = 880 soccar / 0 hoops (the hoops rim sits inside the field). Verify the soccar result still lands ≈ 12800 (today's `OVERVIEW.size`). |
 | 7 | Goal-celebration FX | Reuse as-is; the burst already fires at the ball's real position on the goal frame. Only swap the `GOAL_H`-derived spread scalar for `spec.goal.fxScale` (643 soccar, ~500 hoops). Hoops-specific FX tuning deferred. |
 | 8 | Ball radius | Per-mode via `spec.ballRadius`: 98.38 hoops, 91.25 soccar. The ball surface/seams are already a deliberate detail (ADR-0004 era); get the size right too. |
-| 9 | Tests | Unit-test `arenaSpec` in `tests/js/replay-core.test.js` (pure, fixture-free — see "Test plan"). Rely on the existing `test_replay_context` hoops assertion for the data path. A **rendered-hoops e2e is deferred**: the Playwright fixture server ingests a committed `.replay`, and only parsed-JSON hoops fixtures exist (`tests/data/hoops.json`, `loss_hoops.json`). Tracked as a follow-up. |
+| 9 | Tests | Unit-test `arenaSpec` in `tests/js/replay-core.test.js` (pure, fixture-free — see "Test plan"). Data path: a `test_replay_frames.py` integration pass over `tests/data/hoops.json`. Rendered path: a committed 2v2 hoops `.replay` is ingested as **match 2** by the Playwright fixture server, and `tests/e2e/replay.spec.js` asserts the hoops footprint / ring goals / 20-pad layout are built and the frame renders. |
+| 10 | Ball archetype | `replay_frames._ball_archetype_oid()` resolves the ball actor from a list of known archetype names (`Ball_Default` soccar, `Ball_BasketBall` hoops) instead of the single hardcoded `NetObj.BALL_ARCHETYPE`. The frame walk is otherwise unchanged. `frame_analysis.py` keeps the `Ball_Default` assumption for its positional stats — out of scope; hoops match result/MVP come from the `PlayerStats` blob, not the frame walk, so ingest was never blocked. |
 
 ## `arenaSpec` shape
 
@@ -108,10 +112,9 @@ soccar's 34.
   `frame_analysis.BIG_PAD_POSITIONS["hoops"]` exactly; cross-check against it so
   the two lists can't drift (they cite the same wiki source, as the soccar pair
   already do).
-- **Small (14)** — pull the full list from the RLBot wiki hoops page at
-  implementation time (`wiki.rlbot.org/v4/botmaking/hoops/` — the page the
-  `frame_analysis.py` header already cites). Not transcribed here to avoid
-  committing an unverified list.
+- **Small (14)** — from the RLBot wiki hoops page
+  (`wiki.rlbot.org/v4/botmaking/hoops/`, the page `frame_analysis.py` already
+  cites): `(0, ±2816)`, `(±1280, ±2304)`, `(±1536, ±1024)`, `(±512, ±512)`.
 
 ## Test plan (decision #9)
 
@@ -130,30 +133,35 @@ New `describe` block in `tests/js/replay-core.test.js`:
 - The `overviewSize` formula for both modes — soccar ≈ 12800, hoops smaller,
   ratio ≈ the extent ratio.
 
-Data path: `tests/test_replay_context.py` already asserts
-`hoops.json → game_mode == "hoops"`; add an assertion in the replay-frames tests
-that `game_mode` reaches `ReplayFrames.game_mode` if one isn't already there.
+Data path: `test_replay_frames.py` gains a `_hoops()` integration block over
+`tests/data/hoops.json` — full buffer, one ball + four cars, the tracked pair,
+goals/countdowns, poses inside the hoops footprint. Rendered path: the
+`hoops arena` describe in `tests/e2e/replay.spec.js` (match 2).
 
 ## Follow-ups (out of scope here)
 
-1. **Rendered-hoops e2e** — commit a hoops `.replay` and add it to
-   `serve_fixture.py` as match 2, so Playwright renders the hoops arena
-   (currently only parsed-JSON hoops fixtures exist).
-2. **Full hoops small-pad list** — verify and add the 14 coords from the RLBot
-   wiki (implementation-time task, noted above).
-3. **Dropshot / Snowday arenas** — still fall back to soccar. Each is now one
-   more `arenaSpec` branch; ADR-0004 #11's gap is only *partly* closed.
-4. **`arena.js` extraction** — deferred cleanup (decision #1).
-5. **Hoops-specific goal FX** — vertical bias / ring-sized flash (decision #7).
+1. **Dropshot / Snowday arenas** — still fall back to soccar. Each is now one
+   more `arenaSpec` branch (plus its own ball archetype in decision #10's list);
+   ADR-0004 #11's gap is only *partly* closed.
+2. **`arena.js` extraction** — deferred cleanup (decision #1).
+3. **Hoops-specific goal FX** — vertical bias / ring-sized flash (decision #7).
+4. **`frame_analysis.py` ball archetype** — its positional stats still assume
+   `Ball_Default`, so hoops matches get no possession / zone numbers. Same
+   fix shape as decision #10 if those are ever wanted for hoops.
 
 ## Files touched
 
-- `static/replay-core.js` — add `arenaSpec` + `STANDARD_*` / `HOOPS_*` consts;
-  parameterise `outlineHalfWidth`; export.
-- `static/replay.js` — `buildArena`, `buildGoals`, `buildHalfTint`,
-  `buildBoostPads` take `spec`; `buildScene` calls `arenaSpec(meta.game_mode)`;
-  `buildGoals` branches on `spec.goal.kind`; camera `size` / resize and the ball
-  mesh radius and the `GOAL_FX` scalar read from the spec.
-- `tests/js/replay-core.test.js` — the new `describe` block.
-- `docs/adr/0004-browser-replay-viewer-design.md` — update decision #11 to point
-  here.
+- `static/replay-core.js` — `arenaSpec` + `STANDARD_SPEC` / `HOOPS_SPEC` +
+  `chamferedOutline`; `outlineHalfWidth` takes an optional spec.
+- `static/replay.js` — `buildArena` / `buildGoals` / `buildHalfTint` /
+  `buildBoostPads` take `spec`; `buildScene` calls `arenaSpec(meta.game_mode)`
+  and sets `camScale`; `buildGoals` splits into `buildBoxGoal` / `buildHoopGoal`
+  on `spec.goal.kind`; the camera presets, ball radius and `GOAL_FX` flash scale
+  read from the spec.
+- `replay_frames.py` — `_ball_archetype_oid()` (decision #10).
+- `tests/js/replay-core.test.js` — the `arenaSpec` block.
+- `tests/test_replay_frames.py` — the hoops integration block.
+- `tests/e2e/serve_fixture.py` — ingests both fixture replays, in order.
+- `tests/e2e/replay.spec.js` — the `hoops arena` describe.
+- `tests/data/D9C3347845961812E9817293F9886DDB.replay` — the 2v2 hoops fixture.
+- `docs/adr/0004-browser-replay-viewer-design.md` — decision #11 now points here.

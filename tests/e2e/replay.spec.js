@@ -371,3 +371,111 @@ test("slerpQuat matches THREE.Quaternion.slerp on the values the viewer feeds it
   });
   expect(worst).toBeLessThan(1e-6);
 });
+
+// ---------------------------------------------------------------------------
+// The hoops arena (match 2 — a 2v2 hoops replay). Guards that game_mode routes
+// the viewer to arenaSpec("hoops"): the smaller chamfered footprint, ring
+// goals, the 20-pad layout — and that it still renders. See docs/adr/0005.
+// ---------------------------------------------------------------------------
+
+test.describe("hoops arena", () => {
+  let hoopsPage;
+
+  test.beforeAll(async ({ browser }) => {
+    hoopsPage = await browser.newPage();
+    hoopsPage.on("pageerror", (e) => console.log(`[hoops page error] ${e.message}`));
+    await hoopsPage.goto("/match/2/replay?debug");
+    await hoopsPage.waitForFunction(() => window.__replay?.playback, null, {
+      timeout: 45_000,
+    });
+  });
+
+  test.afterAll(async () => {
+    await hoopsPage.close();
+  });
+
+  test("meta reports hoops", async () => {
+    const meta = await hoopsPage.evaluate(() =>
+      fetch("/api/matches/2/replay").then((r) => r.json()),
+    );
+    expect(meta.game_mode).toBe("hoops");
+  });
+
+  test("the scene is built from the hoops spec — footprint, ring goals, 20 pads", async () => {
+    const geom = await hoopsPage.evaluate(() => {
+      const { scene, THREE } = window.__replay;
+      const V = new THREE.Vector3();
+      let footprint = null;
+      const ringYs = [];
+      const padR = [];
+      scene.traverse((o) => {
+        if (o.isLineLoop && o.position.z === 0 && footprint === null) {
+          // arena floor loop — first LineLoop at z=0
+          o.geometry.computeBoundingBox();
+          const b = o.geometry.boundingBox;
+          footprint = { x: b.max.x, y: b.max.y };
+        }
+        if (o.isLine && !o.isLineLoop && !o.isLineSegments) {
+          o.geometry.computeBoundingBox();
+          const b = o.geometry.boundingBox;
+          // the rim arc: a semicircle of radius 655 at z = 364 whose flat side
+          // (the chord) sits at |y| = 2969 and bulges toward y = 0.
+          if (Math.abs(b.max.z - 364) < 1 && Math.abs(b.max.x - 655) < 2) {
+            const chord =
+              Math.abs(b.min.y) > Math.abs(b.max.y) ? b.min.y : b.max.y;
+            ringYs.push(Math.round(chord / 100) * 100);
+          }
+        }
+        if (o.isMesh && o.geometry?.type === "CircleGeometry") {
+          const r = o.geometry.parameters.radius;
+          if (r === 100 || r === 50) padR.push(r);
+        }
+      });
+      return {
+        footprint,
+        ringYs: ringYs.sort((a, b) => a - b),
+        big: padR.filter((r) => r === 100).length,
+        small: padR.filter((r) => r === 50).length,
+      };
+    });
+
+    // chamfered hoops footprint (±2966.67 × ±3581), not soccar's ±4096 × ±5120
+    expect(geom.footprint.x).toBeGreaterThan(2900);
+    expect(geom.footprint.x).toBeLessThan(3100);
+    expect(geom.footprint.y).toBeGreaterThan(3500);
+    expect(geom.footprint.y).toBeLessThan(3700);
+    // one rim per end, near y = ±2969 (rounded to ±3000 here)
+    expect(geom.ringYs).toEqual([-3000, 3000]);
+    // hoops boost layout: 6 big + 14 small
+    expect(geom.big).toBe(6);
+    expect(geom.small).toBe(14);
+  });
+
+  test("a rendered hoops frame is not a flat fill", async () => {
+    const sample = await hoopsPage.evaluate(() => {
+      const { playback, renderer, scene, camera } = window.__replay;
+      playback.state.playing = false;
+      playback.seek(playback.duration() * 0.5);
+      playback.applyPoses();
+      renderer.render(scene, camera);
+
+      const buf = document.createElement("canvas");
+      buf.width = 64;
+      buf.height = 64;
+      const ctx = buf.getContext("2d");
+      ctx.drawImage(renderer.domElement, 0, 0, 64, 64);
+      const { data } = ctx.getImageData(0, 0, 64, 64);
+      const buckets = new Uint32Array(16);
+      for (let i = 0; i < data.length; i += 4) {
+        const lum = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        buckets[(lum / 16) | 0]++;
+      }
+      return {
+        calls: renderer.info.render.calls,
+        populatedBuckets: buckets.reduce((n, c) => n + (c > 0 ? 1 : 0), 0),
+      };
+    });
+    expect(sample.calls).toBeGreaterThan(0);
+    expect(sample.populatedBuckets).toBeGreaterThanOrEqual(4);
+  });
+});
