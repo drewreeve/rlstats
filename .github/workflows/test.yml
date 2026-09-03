@@ -24,3 +24,28 @@ jobs:
       - run: uv sync
 
       - run: mise exec -- uv run pytest
+
+      # -- Front-end (replay viewer) tests --
+      # node/npm come from mise (mise.toml); wrap in `mise exec` for the same
+      # reason the pytest step does — bare tools aren't guaranteed on PATH.
+
+      - name: Pure replay-core tests
+        run: mise run test-js
+
+      - run: mise exec -- npm ci
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # On a cache hit the browser is already there — just pull the apt libs.
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: mise exec -- npx playwright install-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: mise exec -- npx playwright install --with-deps chromium
+
+      - name: Replay viewer e2e
+        run: mise run test-e2e

@@ -45,6 +45,7 @@ and there are working reference implementations on the same input.
 | 12 | Orientation | Normalise: the tracked team always attacks the same on-screen direction, every match, regardless of which colour they were. |
 | 13 | Link availability & failure | Show "Watch replay" only when `matches.replay_filename` is set and `replays/<that name>` exists; route 404s otherwise. On a view-time parse failure, return an error payload the page renders — and **never delete the file** (unlike the ingest path). |
 | 14 | Car shape | A composed low-poly battle car, not a bare box (`createCar` / `buildCarModel`): an extruded curved hull + tinted canopy, graphite aero (splitter, diffuser, skirts, wing, vents), chrome boost nozzles with emissive cores, emissive headlights, and four spoked wheels with body-colour fender flares. Inlined from a Claude-designed three.js model (`battle-car.js`), kept close to source so a re-export stays diffable — only the `<three-d-stage>` harness is dropped and the paint swapped for the team tint (hull + flares); the designed graphite / tinted glass / chrome / rubber are kept. The model's `MeshStandardMaterial` look is kept too: `buildScene` bakes a `RoomEnvironment` PMREM into `scene.environment` (`environmentIntensity` 0.6) so the metals don't render near-black; the line arena ignores it, and the ball (also `MeshStandardMaterial` now) picks it up. The model is authored +X forward / +Y up / +Z lateral, so `buildCarModel` turns it +90° about X (drops +Y onto RL's +Z-up, nose stays on +X — a proper rotation, no mirror), scales it ×`CAR_SCALE` and drops the wheels `CAR_DROP` (17 uu, measured from a grounded car's pose z) below the pose origin, nudged `CAR_NOSE_BIAS` forward. Still procedural, no assets; the one new CDN import (`RoomEnvironment`, same jsdelivr `/+esm` origin) is covered by the existing `script-src`. **Why:** a symmetric box gave no read on which way a car faced — the one thing a positional-habits tool most needs; successive hand-authored lofts never got past "generic car", so a ready-made model was dropped in instead. `CAR_SCALE` is pinned on **width**: the wheel track comes out ~85 uu ≈ the 118×84×36 hitbox's 84, with the ~135 uu length (~1.1×) and ~42 uu roof (~1.2×) the slight overhang a real RL body has over its collision box. |
+| 15 | Testability | Split the viewer into a pure core and a render shell. `static/replay-core.js` (zero imports — no THREE, no DOM) holds every bit of playback/timeline math: `bracket`, `slotLiveAt`, `writePoses` (per-slot lerp/slerp/visibility/trail into reusable buffers), `createTransport` (real ↔ compressed-seconds), the countdown text, `slerpQuat` (a verbatim port of `THREE.Quaternion.slerp@0.170.0`), and the small helpers. `replay.js` imports it: `createPlayback`'s `applyPoses()` calls `writePoses()` and does nothing but copy the buffer onto meshes + size labels; its transport delegates to `createTransport`. **One code path**, so `tests/js/replay-core.test.js` (`node --test`, no browser, no deps — sub-second) tests what ships. `tests/e2e/replay.spec.js` (Playwright) adds a transport smoke pass, a **parity test** (`applyPoses()` output must equal `writePoses()` output *exactly* for the same inputs — the guard against `applyPoses` growing a second, diverging pose computation), a THREE-vs-`slerpQuat` parity check, and a **render smoke check** — one test that a rendered frame's pixels span several luminance bands (not the CSS-blank "renders fine but the screen is black" failure mode a pose-math test can't see), one that the canvas is on-screen / sized / unobscured. Pixels are read in-`page.evaluate`, synchronous with a `renderer.render()`, so there is no test hook in the production module. **Why:** the only prior check on the viewer was a human replaying a match in the browser — fine for look-and-feel, blind to silent math regressions and no help when refactoring. `node --test` over Vitest because the awkwardness was `replay.js` being a self-booting DOM/WebGL script, not the runner; Vitest+jsdom papers over `document` then hits WebGL and tests a fake environment. No committed golden pose-trace — a recording of `writePoses()`'s own output is a circular oracle and pinning it across Chromium float builds is fragile; a one-shot uncommitted trace is the refactor safety net instead. |
 
 ### v1 feature scope (decision 7)
 
@@ -193,14 +194,18 @@ endpoint returns `positions`.
 The page fetches `/replay` + `/replay-frames.bin`, builds the scene, and plays it
 back. Coordinates stay in unreal units — no world scaling; the camera frustum
 does the framing. The `?debug` query flag exposes `window.__replay = { playback,
-meshes, camera, controls, renderer, scene, THREE }` plus a rolling frame-time
-HUD (`createDebugHud`). An earlier note here claimed headless Chromium
-`page.screenshot()` returns black for a WebGL canvas — that held for the old
-SwiftShader `--headless`, but `--headless=new` (Chrome's default since 112)
-composites WebGL through ANGLE and `page.screenshot()` via the Playwright MCP
-captures the viewer correctly. `gl.readPixels` after a paint is in fact the less
-reliable check: with `preserveDrawingBuffer` unset the buffer is cleared post
-composite, so a later read returns zeros while the screenshot is fine.
+meshes, camera, controls, renderer, scene, THREE, meta, countdownLabelAt,
+goalFx }` plus a rolling frame-time HUD (`createDebugHud`). An earlier note here
+claimed headless Chromium `page.screenshot()` returns black for a WebGL canvas —
+that held for the old SwiftShader `--headless`, but `--headless=new` (Chrome's
+default since 112) composites WebGL through ANGLE and `page.screenshot()` via the
+Playwright MCP captures the viewer correctly. A pixel read *after* the paint is
+the unreliable one: with `preserveDrawingBuffer` unset the buffer is cleared post
+composite, so a `readPixels`/`drawImage` in a later task returns zeros while the
+screenshot is fine. The render-smoke test (decision 15) reads pixels the third
+way — `renderer.render()` then `drawImage` into a 64×64 2D canvas, all in one
+`page.evaluate` so the read is synchronous with the render and needs no
+production hook and no PNG decoder.
 
 - **Scene / axes.** Wireframe soccar arena (8192 × 10240 × 2044 uu), a low-poly
   battle car per slot (`buildCarModel`, decision 14 — a `THREE.Group` wrapping
@@ -305,6 +310,15 @@ composite, so a later read returns zeros while the screenshot is fine.
   arena geometry is parented to `field` so it rides the orientation flip.
   `teamTint(team, trackedTeam)` is the shared colour rule (`carColor` delegates
   to it).
+- **Core / shell split (decision 15).** Everything above that is pure math —
+  `bracket`, `slotLiveAt`, `writePoses`, `createTransport`, `countdownLabelAt`,
+  `teamTint`/`carColor`, `outlineHalfWidth`, `slerpQuat`, `formatClock` — lives in
+  `static/replay-core.js`, a zero-import module (no THREE, no DOM). `replay.js` is
+  the shell: scene graph, DOM, camera, the rAF loop, and an `applyPoses()` that is
+  now just `writePoses()` + a copy loop onto the meshes. Tested by
+  `tests/js/replay-core.test.js` (`node --test`) with a Playwright parity test
+  pinning `applyPoses() === writePoses()`. `tests/data/replay-viewer/{meta.json,
+  frames.bin}` is regen'd by `tests/e2e/dump_fixture.py`.
 
 ## Known wrinkles
 

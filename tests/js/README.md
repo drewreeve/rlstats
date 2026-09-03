@@ -36,6 +36,12 @@ from the one committed replay, ingested as **match 1**.
 
 - transport/UI smoke — boot, clock format, goal ticks, play/pause, ArrowRight
   seek, kickoff countdown overlay, scoreboard tally
+- **render smoke** — two tests: a mid-match `renderer.render()` produces pixels
+  spanning several luminance bands (not a flat fill — the "renders fine but the
+  screen is black" CSS/layout class no pose-math test would see), and the canvas
+  is on-screen / sized / not covered at its centre. Pixels are read with
+  `drawImage` + `getImageData` inside one `page.evaluate`, synchronous with the
+  render — no production hook, no screenshot file.
 - **parity** — `applyPoses()` on the live page writes *exactly* (delta 0) what
   `writePoses()` produces for the same inputs. This guards against `applyPoses`
   growing a second, diverging pose computation (see `docs/adr/0004-*`); an
