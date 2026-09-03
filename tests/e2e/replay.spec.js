@@ -35,6 +35,7 @@ async function resetClock() {
     p.state.playing = false;
     p.seek(0);
     p.applyPoses();
+    window.__replay.boostPads.apply(0);
   });
 }
 
@@ -247,6 +248,75 @@ test("the scoreboard counts goals as the clock passes them", async () => {
   });
 });
 
+test("boost-pad orbs hide while collected and pop back in on respawn", async () => {
+  // Pick a pad from the meta that has a full collect -> respawn cycle, and read
+  // its orb's visibility/scale at four moments straight off the scene.
+  const probe = await page.evaluate(() => {
+    const { boostPads } = window.__replay;
+
+    // first pad index whose timeline is collect@i then available@i+1
+    let pad = -1;
+    for (let i = 0; i < boostPads.timeline.length; i++) {
+      const tl = boostPads.timeline[i];
+      if (tl && tl.collected[0] === 1 && tl.collected[1] === 0 && boostPads.bound.has(i)) {
+        pad = i;
+        break;
+      }
+    }
+    if (pad < 0) return null;
+    const tl = boostPads.timeline[pad];
+    const mesh = boostPads.bound.get(pad);
+    const tCollect = tl.times[0];
+    const tRespawn = tl.times[1];
+
+    const at = (t) => {
+      boostPads.apply(t);
+      return { visible: mesh.visible, scale: mesh.scale.x };
+    };
+    const byName = (n) => {
+      let count = 0;
+      window.__replay.scene.traverse((o) => {
+        if (o.name === n) count++;
+      });
+      return count;
+    };
+
+    return {
+      boundCount: boostPads.bound.size,
+      totalOrbs: byName("boost_orb_big") + byName("boost_orb_small"),
+      before: at(tCollect - 0.05),
+      collected: at((tCollect + tRespawn) / 2),
+      midPop: at(tRespawn + 0.05), // < BOOST_ORB_POP (0.15) after respawn
+      settled: at(tRespawn + 1),
+    };
+  });
+
+  expect(probe).not.toBeNull();
+  expect(probe.totalOrbs).toBe(34); // fixture replay is standard soccar
+  expect(probe.boundCount).toBe(34); // every pad index snapped to its own orb
+  expect(probe.before.visible).toBe(true);
+  expect(probe.before.scale).toBeCloseTo(1, 5);
+  expect(probe.collected.visible).toBe(false);
+  expect(probe.midPop.visible).toBe(true);
+  expect(probe.midPop.scale).toBeGreaterThan(0.35);
+  expect(probe.midPop.scale).toBeLessThan(1);
+  expect(probe.settled.visible).toBe(true);
+  expect(probe.settled.scale).toBeCloseTo(1, 5);
+});
+
+test("every boost-pad orb is visible at a kickoff", async () => {
+  // The raw pickup stream self-heals at kickoffs (ADR-0004): no pad reads
+  // collected when the countdown fires, so the orbs need no forced reset.
+  const allVisible = await page.evaluate(() => {
+    const { boostPads, meta } = window.__replay;
+    const kickoff = meta.countdowns.find(([, n]) => n === 3);
+    boostPads.apply(meta.frame_times[kickoff[0]]);
+    return [...boostPads.bound.values()].every((m) => m.visible);
+  });
+  expect(allVisible).toBe(true);
+  await resetClock();
+});
+
 test("applyPoses() writes exactly what replay-core.js writePoses() produces", async () => {
   // The copy loop is pure assignment — f64 -> THREE.Vector3/Quaternion (f64),
   // f32 -> f32 trail buffer — and both sides call the same writePoses() on the
@@ -406,8 +476,11 @@ test.describe("hoops arena", () => {
       let footprint = null;
       const ringYs = [];
       const ringReach = [];
-      const padR = [];
+      let bigPads = 0;
+      let smallPads = 0;
       window.__replay.scene.traverse((o) => {
+        if (o.name === "boost_orb_big") bigPads++;
+        if (o.name === "boost_orb_small") smallPads++;
         if (o.isLineLoop && o.position.z === 0 && footprint === null) {
           // arena floor loop — first LineLoop at z=0
           o.geometry.computeBoundingBox();
@@ -426,17 +499,13 @@ test.describe("hoops arena", () => {
             ringReach.push(Math.max(Math.abs(b.min.y), Math.abs(b.max.y)));
           }
         }
-        if (o.isMesh && o.geometry?.type === "CircleGeometry") {
-          const r = o.geometry.parameters.radius;
-          if (r === 100 || r === 50) padR.push(r);
-        }
       });
       return {
         footprint,
         ringYs: ringYs.sort((a, b) => a - b),
         ringReach,
-        big: padR.filter((r) => r === 100).length,
-        small: padR.filter((r) => r === 50).length,
+        big: bigPads,
+        small: smallPads,
       };
     });
 

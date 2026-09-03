@@ -14,7 +14,9 @@ import { test } from "node:test";
 
 import {
   arenaSpec,
+  boostPadStateAt,
   bracket,
+  buildBoostPadTimeline,
   countdownLabelAt,
   createTransport,
   formatClock,
@@ -133,6 +135,64 @@ test("countdownLabelAt: 3/2/1 hold, GO! flashes then clears, nothing before", ()
   assert.equal(countdownLabelAt(times, cds, 4.2), "GO!"); // within GO_HOLD (0.6)
   assert.equal(countdownLabelAt(times, cds, 4.8), null); // GO! has cleared
   assert.equal(countdownLabelAt(times, [], 3), null);
+});
+
+// ---------------------------------------------------------------------------
+// boost pads
+// ---------------------------------------------------------------------------
+
+test("buildBoostPadTimeline: groups rows per pad, records the first-collect snap", () => {
+  const times = [0, 1, 2, 3, 4, 5];
+  // [frame, pad, collected, x, y] — pad 2 collected@1 then respawned@3; pad 0
+  // collected@2 (with a re-grab@4 that keeps the original snap).
+  const rows = [
+    [1, 2, 1, 100, 200],
+    [2, 0, 1, -50, 60],
+    [3, 2, 0, 0, 0],
+    [4, 0, 1, -55, 61],
+  ];
+  const pads = buildBoostPadTimeline(times, rows);
+  assert.equal(pads[1], undefined); // a pad index that never appears is a hole
+  assert.deepEqual(pads[2].times, [1, 3]);
+  assert.deepEqual(pads[2].collected, [1, 0]);
+  assert.deepEqual(pads[2].snap, [100, 200]);
+  assert.deepEqual(pads[0].times, [2, 4]);
+  assert.deepEqual(pads[0].snap, [-50, 60]); // first collect wins
+});
+
+test("boostPadStateAt: available before the first transition, last transition <= t wins", () => {
+  const pad = { times: [10, 14, 24], collected: [1, 0, 1], snap: [0, 0] };
+  assert.deepEqual(boostPadStateAt(pad, 5), { collected: false, since: -Infinity });
+  assert.deepEqual(boostPadStateAt(pad, 10), { collected: true, since: 10 });
+  assert.deepEqual(boostPadStateAt(pad, 13.9), { collected: true, since: 10 });
+  assert.deepEqual(boostPadStateAt(pad, 14), { collected: false, since: 14 });
+  assert.deepEqual(boostPadStateAt(pad, 100), { collected: true, since: 24 });
+});
+
+test("real fixture: boost_pads group to ascending per-pad timelines", () => {
+  const { meta } = loadFixture();
+  assert.ok(Array.isArray(meta.boost_pads) && meta.boost_pads.length);
+  const pads = buildBoostPadTimeline(meta.frame_times, meta.boost_pads);
+  let seen = 0;
+  for (const pad of pads) {
+    if (!pad) continue;
+    seen++;
+    // times ascending, states strictly alternating, first state collected
+    for (let i = 1; i < pad.times.length; i++) {
+      assert.ok(pad.times[i] >= pad.times[i - 1]);
+      assert.notEqual(pad.collected[i], pad.collected[i - 1]);
+    }
+    assert.equal(pad.collected[0], 1);
+    assert.ok(pad.snap && pad.snap.length === 2);
+  }
+  assert.equal(seen, 34); // the fixture replay is a standard soccar map
+
+  // a manual "last row <= t" scan agrees with boostPadStateAt
+  const pad = pads.findIndex((p) => p && p.times.length > 4);
+  assert.ok(pad >= 0);
+  const entry = pads[pad];
+  const want = { collected: entry.collected[3] === 1, since: entry.times[3] };
+  assert.deepEqual(boostPadStateAt(entry, entry.times[3] + 0.01), want);
 });
 
 test("outlineHalfWidth: flat wall vs chamfered corner", () => {

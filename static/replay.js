@@ -21,6 +21,8 @@ import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.170.0/exam
 // DOM wiring, camera, and the rAF loop.
 import {
   arenaSpec,
+  boostPadStateAt,
+  buildBoostPadTimeline,
   carColor,
   countdownLabelAt,
   createTransport,
@@ -62,14 +64,21 @@ const CAR_NOSE_BIAS = 4; // uu forward — rrrocket's origin is a touch aft of h
 // (before the field flip).
 const GOAL_LINE = 0xaab8d8;
 
-// Boost-pad markers. Layouts (6 big + 28 small soccar, 6 + 14 hoops) come from
+// Boost pads. Layouts (6 big + 28 small soccar, 6 + 14 hoops) come from
 // spec.bigPads / spec.smallPads — coords from wiki.rlbot.org, the same source
-// as frame_analysis.BIG_PAD_POSITIONS. Drawn as flat discs just above the
-// floor: static field furniture, no pickup/respawn state.
-const BOOST_PAD_BIG_R = 100; // big pads read at ~2x the small ones
-const BOOST_PAD_SMALL_R = 50;
-const BOOST_PAD_COLOR = 0x8f8062; // dim grey-gold, deliberately not boost-yellow
-const BOOST_PAD_Z = 0.6; // above the floor grid (0.5), below the half tint (1)
+// as frame_analysis.BIG_PAD_POSITIONS. Drawn like the in-game pickup: a small
+// amber orb (core sphere + additive halo) hovering over the pad spot.
+// createBoostPads() hides each while it is collected and pops it back on
+// respawn, driven by meta.boost_pads.
+const BOOST_ORB_BIG_R = 26; // core sphere radius; big pads read a touch larger
+const BOOST_ORB_SMALL_R = 17;
+const BOOST_ORB_Z = 55; // uu the orb floats above the floor
+const BOOST_ORB_HALO = 6; // additive glow sprite scale, ×core radius
+const BOOST_ORB_CORE = 0xffd36b; // warm gold, brighter than the arena
+const BOOST_ORB_GLOW = 0xffab3d; // amber halo
+const BOOST_PAD_SNAP_MAX = 500; // uu — reject a pad-index → orb match farther than this
+const BOOST_ORB_POP = 0.15; // s — a respawned orb scales up over this window
+const BOOST_ORB_POP_MIN = 0.35; // scale it starts the pop-in at
 
 const SEEK_STEP = 5; // seconds, for arrow-key seeking
 // Name-label placement. The tag is bottom-anchored and screen-constant in size:
@@ -667,30 +676,94 @@ function buildHalfTint(parent, spec, trackedTeam) {
   }
 }
 
-// Static boost-pad markers: one flat disc per pad, big pads at twice the
-// radius, lying just above the floor grid. Furniture only — no collect /
-// respawn animation. Parented to `field` so it rides the orientation flip
-// with the rest of the arena geometry (a visual no-op: the layout is
-// symmetric under the 180° spin, but consistent — wrinkle 7).
+// Per pad: a glowing orb (bright core sphere + additive halo sprite) hovering
+// BOOST_ORB_Z above the pad spot. The orb is a Group so createBoostPads can
+// hide/pop it. Parented to `field` so it rides the orientation flip (a visual
+// no-op — the layout is symmetric under the 180° spin — but consistent,
+// wrinkle 7). Returns `{ mesh: group, x, y }` per pad (field-local coords).
 function buildBoostPads(parent, spec) {
-  const mat = new THREE.MeshBasicMaterial({
-    color: BOOST_PAD_COLOR,
+  // Size-independent — one instance shared across every pad.
+  const halo = makeDotTexture();
+  const coreMat = new THREE.MeshBasicMaterial({ color: BOOST_ORB_CORE });
+  const glowMat = new THREE.SpriteMaterial({
+    map: halo,
+    color: BOOST_ORB_GLOW,
     transparent: true,
-    opacity: 0.5,
     depthWrite: false,
-    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    opacity: 0.6,
   });
-  for (const [pads, r] of [
-    [spec.bigPads, BOOST_PAD_BIG_R],
-    [spec.smallPads, BOOST_PAD_SMALL_R],
+
+  const orbs = [];
+  for (const [pads, r, size] of [
+    [spec.bigPads, BOOST_ORB_BIG_R, "big"],
+    [spec.smallPads, BOOST_ORB_SMALL_R, "small"],
   ]) {
-    const geo = new THREE.CircleGeometry(r, 24); // in the x–y plane, faces +z
+    const coreGeo = new THREE.SphereGeometry(r, 16, 12);
     for (const [x, y] of pads) {
-      const disc = new THREE.Mesh(geo, mat);
-      disc.position.set(x, y, BOOST_PAD_Z);
-      parent.add(disc);
+      const grp = new THREE.Group();
+      grp.position.set(x, y, BOOST_ORB_Z);
+      const core = new THREE.Mesh(coreGeo, coreMat);
+      core.name = `boost_orb_${size}`;
+      grp.add(core);
+      const glow = new THREE.Sprite(glowMat);
+      glow.scale.setScalar(r * BOOST_ORB_HALO);
+      grp.add(glow);
+      parent.add(grp);
+      orbs.push({ mesh: grp, x, y });
     }
   }
+  return orbs;
+}
+
+// Drive the boost-pad orbs from meta.boost_pads: hide a pad while it is
+// collected, pop it back to full size over BOOST_ORB_POP seconds on respawn.
+// `pad` in the meta is a dense index whose physical location is not given, so
+// each is snapped to the nearest orb by the instigating car's position on its
+// first collect (server: replay_frames._resolve_pickups). A pad never collected,
+// or with no orb within BOOST_PAD_SNAP_MAX, is left untouched (visible).
+// apply(t) is a pure function of t — scrubbing restores pad state.
+function createBoostPads(meta, orbs) {
+  const timeline = buildBoostPadTimeline(meta.frame_times, meta.boost_pads || []);
+  const bound = new Map(); // pad index -> orb group
+
+  // Claim the globally-closest (pad, orb) pairs first, so the binding doesn't
+  // depend on pad-index order (which is unrelated to the physical layout).
+  const maxSq = BOOST_PAD_SNAP_MAX * BOOST_PAD_SNAP_MAX;
+  const pairs = [];
+  for (let pad = 0; pad < timeline.length; pad++) {
+    const entry = timeline[pad];
+    if (!entry || !entry.snap) continue;
+    const [px, py] = entry.snap;
+    for (const o of orbs) {
+      const dSq = (o.x - px) ** 2 + (o.y - py) ** 2;
+      if (dSq < maxSq) pairs.push([dSq, pad, o]);
+    }
+  }
+  pairs.sort((a, b) => a[0] - b[0]);
+  const taken = new Set();
+  for (const [, pad, o] of pairs) {
+    if (bound.has(pad) || taken.has(o)) continue;
+    bound.set(pad, o.mesh);
+    taken.add(o);
+  }
+
+  let lastT = NaN;
+  function apply(t) {
+    if (t === lastT) return; // pure in t — skip the redundant paused/dup frames
+    lastT = t;
+    for (const [pad, mesh] of bound) {
+      const { collected, since } = boostPadStateAt(timeline[pad], t);
+      mesh.visible = !collected;
+      if (collected) continue;
+      // pop the orb back in over the moment after its respawn
+      const age = t - since; // Infinity before the first transition -> full
+      const k = age >= 0 && age < BOOST_ORB_POP ? age / BOOST_ORB_POP : 1;
+      mesh.scale.setScalar(BOOST_ORB_POP_MIN + (1 - BOOST_ORB_POP_MIN) * k);
+    }
+  }
+
+  return { apply, bound, timeline };
 }
 
 // ── Battle-car model ────────────────────────────────────────────────────
@@ -1245,7 +1318,7 @@ function buildScene(meta, positions) {
 
   buildArena(field, spec);
   buildHalfTint(field, spec, meta.tracked_team);
-  buildBoostPads(field, spec);
+  const boostPads = createBoostPads(meta, buildBoostPads(field, spec));
   buildGoals(field, spec, meta.tracked_team);
   const meshes = createActorMeshes(field, meta, spec);
   const goalFx = createGoalFx(field, spec.goal.fxScale);
@@ -1275,6 +1348,7 @@ function buildScene(meta, positions) {
   const syncUI = wireControls(playback, meta);
   renderScrubMarks(meta, playback);
   playback.applyPoses();
+  boostPads.apply(playback.state.t);
   syncUI();
   controlsEl.hidden = false;
 
@@ -1292,6 +1366,7 @@ function buildScene(meta, positions) {
       meta,
       countdownLabelAt,
       goalFx,
+      boostPads,
     };
   }
 
@@ -1305,6 +1380,7 @@ function buildScene(meta, positions) {
     playback.advance(dt);
     watchGoals();
     playback.applyPoses();
+    boostPads.apply(playback.state.t);
     goalFx.update(dt);
     syncUI();
     controls.update();

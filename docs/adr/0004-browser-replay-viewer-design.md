@@ -246,10 +246,11 @@ HUD. Headless `page.screenshot()` captures the WebGL canvas correctly under
   `buildGoals` draws an open wireframe box at `y = ±5120` with the mouth filled
   by a translucent plane in the defending team's colour. `buildHalfTint` washes
   each half (split at `y = 0`) a faint `0.10` in the defending team's colour —
-  the cue that carries the TOP view. `buildBoostPads` draws the 34 standard pads
-  (coords from wiki.rlbot.org) as flat discs — static furniture, no
-  collect/respawn state. All arena geometry is parented to `field` so it rides
-  the orientation flip. `teamTint(team, trackedTeam)` is the shared colour rule.
+  the cue that carries the TOP view. `buildBoostPads` draws each pad
+  (coords from wiki.rlbot.org) as a small glowing orb; `createBoostPads` then
+  hides it while collected and pops it back on respawn from `meta.boost_pads`.
+  All arena geometry is parented to `field` so it rides the orientation flip.
+  `teamTint(team, trackedTeam)` is the shared colour rule.
 - **Core / shell split (decision 15).** All pure math lives in
   `static/replay-core.js` (zero imports). `replay.js` is the shell: scene graph,
   DOM, camera, the rAF loop, and an `applyPoses()` that is `writePoses()` + a

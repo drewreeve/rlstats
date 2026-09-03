@@ -173,6 +173,42 @@ export function countdownLabelAt(times, countdowns, t) {
   return dt < COUNTDOWN_TICK_HOLD ? String(n) : null;
 }
 
+// Group the meta's flat boost-pad rows ([frame, pad, collected, x, y] in frame
+// order — server: replay_frames._resolve_pickups) into one entry per pad index:
+// its transitions as parallel `times` / `collected` arrays (ascending, since the
+// rows are in frame order) and `snap`, the [x, y] of the instigating car on the
+// pad's first collect — the position the render shell snaps that pad's orb to.
+// The result is indexed by pad; a pad index that never appears is a hole.
+export function buildBoostPadTimeline(times, boostPads) {
+  const pads = [];
+  for (const [frame, pad, collected, x, y] of boostPads) {
+    let p = pads[pad];
+    if (!p) p = pads[pad] = { times: [], collected: [], snap: null };
+    p.times.push(times[frame]);
+    p.collected.push(collected);
+    if (collected && !p.snap) p.snap = [x, y];
+  }
+  return pads;
+}
+
+// A pad's state at replay-time `t`: `{ collected, since }`, where `since` is the
+// time of the last transition at or before `t` (`-Infinity` before the first, so
+// a pad reads available from the start) — the shell ramps the respawn pop from
+// `since`. Pure in `t`, so scrubbing restores pad state for free. `pad` is one
+// `buildBoostPadTimeline` entry.
+export function boostPadStateAt(pad, t) {
+  const ts = pad.times;
+  let lo = 0;
+  let hi = ts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (ts[mid] <= t) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo === 0) return { collected: false, since: -Infinity };
+  return { collected: pad.collected[lo - 1] === 1, since: ts[lo - 1] };
+}
+
 // Largest i with times[i] <= t, its successor j, and the [0,1] blend between.
 export function bracket(times, t) {
   const n = times.length;
