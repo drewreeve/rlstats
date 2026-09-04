@@ -555,9 +555,13 @@ def test_boost_pickup_holds_low_then_snaps_at_the_sample() -> None:
 
 
 def test_boost_holds_rather_than_lerps_across_a_kickoff_reset() -> None:
-    # Goal celebration leaves boost high; the kickoff re-announce resets it to a
-    # lower value. Without the resets check this decrease would lerp — wrong,
-    # since nothing drained, the round reset.
+    # The boost component isn't re-announced at kickoff (only the car is), so
+    # the reset frame and the next real boost sample are two independent
+    # network events — the sample confirming 33 typically lands a few frames
+    # *after* the car's re-announce, not on the same frame. A gap must be held
+    # whenever a reset falls anywhere inside it, not only when it closes the
+    # gap exactly — otherwise this reads as a multi-frame drain from 100 to 33
+    # that never happened, right as normal play resumes.
     frames = [
         cast(
             FrameData,
@@ -567,11 +571,11 @@ def test_boost_holds_rather_than_lerps_across_a_kickoff_reset() -> None:
                 "updated_actors": [
                     _rb_update(1, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
                     _vehicle_link(2, 1),
-                    _boost_update(2, 100),
+                    _boost_update(2, 100),  # last pre-goal reading
                 ],
             },
         ),
-        _frame(0.1),
+        _frame(0.1),  # goal replay / dead time
         cast(
             FrameData,
             {
@@ -585,15 +589,16 @@ def test_boost_holds_rather_than_lerps_across_a_kickoff_reset() -> None:
                         },
                     }
                 ],
-                "updated_actors": [_boost_update(2, 33)],
             },
-        ),
+        ),  # the kickoff re-announce itself — no boost sample this frame
         _frame(0.3),
+        _frame(0.4, updated=[_boost_update(2, 33)]),  # first post-kickoff sample
     ]
     rf = _extract(_replay(frames))
     idx = _car_idx(rf)
     assert _boost_at(rf, 1, idx) == 100  # held, not lerped toward 33
-    assert _boost_at(rf, 2, idx) == 33  # clean cut at the reset frame
+    assert _boost_at(rf, 3, idx) == 100  # still held — the reset was mid-gap
+    assert _boost_at(rf, 4, idx) == 33  # snaps only at the real sample
 
 
 def test_boost_absent_component_leaves_slot_marked_has_boost_false() -> None:
