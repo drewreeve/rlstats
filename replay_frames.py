@@ -30,7 +30,27 @@ from frame_analysis import IdentityResolver
 from player_identity import PlayerIdentity, from_network_frame
 from rrrocket_schema import NetObj, ParsedReplay
 
-_FLOATS_PER_POSE = 7  # x, y, z, qx, qy, qz, qw
+# x, y, z, qx, qy, qz, qw. Mirrors FLOATS_PER_POSE in static/replay-core.js —
+# keep in lockstep (structurally frozen: a position vec3 + an orientation
+# quaternion; there is no build step binding the two).
+FLOATS_PER_POSE = 7
+_BYTES_PER_FLOAT = 4
+
+
+def pose_offset(slot_count: int, frame: int, slot: int) -> int:
+    """Float index of ``(frame, slot)``'s pose in the row-major
+    ``[frame][slot][x, y, z, qx, qy, qz, qw]`` position buffer.
+
+    Verbatim twin of ``poseOffset()`` in ``static/replay-core.js`` — keep in
+    lockstep. See CONTEXT.md "Replay Wire".
+    """
+    return (frame * slot_count + slot) * FLOATS_PER_POSE
+
+
+def packed_buffer_bytes(frame_count: int, slot_count: int) -> int:
+    """Byte length of a full :attr:`ReplayFrames.positions` buffer."""
+    return _BYTES_PER_FLOAT * frame_count * slot_count * FLOATS_PER_POSE
+
 
 # Boost pads are per-map level actors; every one's object name carries this
 # ("<map>.TheWorld:PersistentLevel.VehiclePickup_Boost_TA_<n>"). The name is the
@@ -599,7 +619,7 @@ def _fill(
     """Write the 7-float ``row`` into one lane's frames ``[lo, hi)``."""
     for fidx in range(lo, hi):
         off = fidx * stride + lane_off
-        buf[off : off + _FLOATS_PER_POSE] = row
+        buf[off : off + FLOATS_PER_POSE] = row
 
 
 def _densify(
@@ -616,14 +636,14 @@ def _densify(
     the tail past the final sample. Frames outside every segment stay zero; the
     client hides the lane there.
     """
-    row_stride = slot_count * _FLOATS_PER_POSE
-    buf = array("f", bytes(4 * len(frame_times) * row_stride))
+    row_stride = slot_count * FLOATS_PER_POSE
+    buf = array("f", bytes(packed_buffer_bytes(len(frame_times), slot_count)))
 
     for seg in segments:
         if seg.slot < 0:
             continue
         kf = _keyframes(seg)
-        lane_off = seg.slot * _FLOATS_PER_POSE
+        lane_off = seg.slot * FLOATS_PER_POSE
 
         for (fa, pa), (fb, pb) in zip(kf, kf[1:], strict=False):
             ta = frame_times[fa]
@@ -634,7 +654,7 @@ def _densify(
             for fidx in range(fa, fb):
                 w = (frame_times[fidx] - ta) / span
                 off = fidx * row_stride + lane_off
-                buf[off : off + _FLOATS_PER_POSE] = array("f", _lerp_pose(pa, pb, w))
+                buf[off : off + FLOATS_PER_POSE] = array("f", _lerp_pose(pa, pb, w))
 
         last_f, last_p = kf[-1]
         _fill(buf, lane_off, row_stride, last_f, seg.end + 1, array("f", last_p))
@@ -669,7 +689,7 @@ def _resolve_pickups(
         if instigator is not None:
             for seg in car_segs.get(instigator, ()):
                 if seg.start <= frame <= seg.end:
-                    off = (frame * slot_count + seg.slot) * _FLOATS_PER_POSE
+                    off = pose_offset(slot_count, frame, seg.slot)
                     x, y = positions[off], positions[off + 1]
                     break
         rows.append((frame, pad_index[pad_oid], int(collected), x, y))

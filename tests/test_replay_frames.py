@@ -17,6 +17,7 @@ import pytest
 
 from ingest import build_replay_context
 from replay_frames import (
+    FLOATS_PER_POSE,
     GoalMarker,
     ReplayFrames,
     _dead_periods,  # type: ignore[reportPrivateUsage]
@@ -24,6 +25,8 @@ from replay_frames import (
     _scan_goals,  # type: ignore[reportPrivateUsage]
     _walk,  # type: ignore[reportPrivateUsage]
     extract_replay_frames,
+    packed_buffer_bytes,
+    pose_offset,
 )
 from rrrocket_schema import FrameData, ParsedReplay
 from rrrocket_schema import parse as parse_replay
@@ -91,8 +94,7 @@ def _frame(
 
 
 def _pose(rf: ReplayFrames, frame: int, slot: int) -> tuple[float, ...]:
-    n = len(rf.slots)
-    off = (frame * n + slot) * 7 * 4
+    off = pose_offset(len(rf.slots), frame, slot) * 4  # * 4: float32 -> bytes
     return struct.unpack_from("<7f", rf.positions, off)
 
 
@@ -105,6 +107,26 @@ def _extract(rf_replay: ParsedReplay, **kw: object) -> ReplayFrames:
     }
     base.update(kw)
     return extract_replay_frames(rf_replay, **base)  # type: ignore[arg-type]
+
+
+# --- packed-buffer geometry ---
+
+
+def test_pose_offset_matches_the_row_major_layout() -> None:
+    # The .bin is row-major [frame][slot][x,y,z,qx,qy,qz,qw]; pose_offset is the
+    # only Python expression of that geometry — verbatim twin of poseOffset() in
+    # static/replay-core.js. Hand-checked points.
+    assert FLOATS_PER_POSE == 7
+    assert pose_offset(4, 0, 0) == 0
+    assert pose_offset(4, 0, 3) == 21
+    assert pose_offset(4, 1, 0) == 28
+    assert pose_offset(4, 2, 1) == 63
+    assert pose_offset(1, 5, 0) == 35
+
+
+def test_packed_buffer_bytes_is_four_bytes_per_float() -> None:
+    assert packed_buffer_bytes(0, 5) == 0
+    assert packed_buffer_bytes(10, 3) == 4 * 10 * 3 * 7
 
 
 # --- synthetic frame-walk contract ---
@@ -703,7 +725,7 @@ def test_real_replay_top_level_shape() -> None:
     assert rf.frame_times == sorted(rf.frame_times)
     assert rf.tracked_team == 1
     assert rf.game_mode == "2v2"
-    assert len(rf.positions) == 4 * len(rf.frame_times) * len(rf.slots) * 7
+    assert len(rf.positions) == packed_buffer_bytes(len(rf.frame_times), len(rf.slots))
 
 
 def test_real_replay_has_one_ball_and_four_cars() -> None:
@@ -799,7 +821,7 @@ def test_hoops_replay_walks_to_a_full_buffer() -> None:
     assert rf.game_mode == "hoops"
     assert len(rf.frame_times) == 11184
     assert rf.frame_times == sorted(rf.frame_times)
-    assert len(rf.positions) == 4 * len(rf.frame_times) * len(rf.slots) * 7
+    assert len(rf.positions) == packed_buffer_bytes(len(rf.frame_times), len(rf.slots))
 
 
 def test_hoops_replay_has_one_ball_and_four_cars() -> None:

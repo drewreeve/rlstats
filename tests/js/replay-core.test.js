@@ -19,6 +19,7 @@ import {
   buildBoostPadTimeline,
   countdownLabelAt,
   createTransport,
+  FLOATS_PER_POSE,
   formatClock,
   makePoseBuffers,
   outlineHalfWidth,
@@ -103,6 +104,10 @@ test("slotLiveAt: inclusive ranges, gaps, multiple segments", () => {
 });
 
 test("poseOffset: float index into a [frame][slot][7] buffer", () => {
+  // FLOATS_PER_POSE and poseOffset are mirrored by hand in replay_frames.py
+  // (FLOATS_PER_POSE / pose_offset) — no build step binds them. Keep in
+  // lockstep; replay_frames also pins the 7 in tests/test_replay_frames.py.
+  assert.equal(FLOATS_PER_POSE, 7);
   assert.equal(poseOffset(3, 0, 0), 0);
   assert.equal(poseOffset(3, 0, 2), 14);
   assert.equal(poseOffset(3, 1, 0), 21);
