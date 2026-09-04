@@ -135,6 +135,21 @@ export function boostOffset(slotCount, frame, slot) {
   return frame * slotCount + slot;
 }
 
+// Discrete threshold bands rather than a continuous gradient — easier to read
+// at a glance across up to 6 nameplates than a fine hue interpolation. `frac`
+// is boost / 255.
+export const BOOST_LOW_FRAC = 0.2;
+export const BOOST_MID_FRAC = 0.7;
+export const BOOST_LOW_COLOR = 0xff5a5a;
+export const BOOST_MID_COLOR = 0xffb03f;
+export const BOOST_FULL_COLOR = 0x3ddc72;
+
+export function boostColor(frac) {
+  if (frac < BOOST_LOW_FRAC) return BOOST_LOW_COLOR;
+  if (frac < BOOST_MID_FRAC) return BOOST_MID_COLOR;
+  return BOOST_FULL_COLOR;
+}
+
 // ours (tracked) vs theirs, keyed on RL team not screen side — the field flip
 // then puts "ours" on the same side of the screen every match.
 export function teamTint(team, trackedTeam) {

@@ -21,6 +21,7 @@ import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.170.0/exam
 // DOM wiring, camera, and the rAF loop.
 import {
   arenaSpec,
+  boostColor,
   boostPadStateAt,
   buildBoostPadTimeline,
   carColor,
@@ -99,6 +100,7 @@ const BOOST_BAR_HEIGHT_FRAC = 0.006;
 const BOOST_BAR_GAP_FRAC = 0; // flush against the label — reads as one card
 const BOOST_BAR_TRACK_COLOR = 0x14161f;
 const BOOST_BAR_TRACK_OPACITY = 0.55;
+const BOOST_BAR_TRACK_TINT = 0.35; // how far the track leans toward the team colour
 
 // Goal celebration: a glowy particle burst at the ball's entry point. The goal
 // instant is trimmed from the timeline (advance() snaps over the dead span), so
@@ -216,18 +218,23 @@ function makeLabelSprite(text, cssColor) {
   return sprite;
 }
 
-// A live boost meter: a dim, fixed-width track plus a fill on top in the car's
-// own team colour (not a red/amber/green warning gradient — fill length alone
-// conveys the level), both solid-colour sprites (no canvas texture — nothing to
+// A live boost meter: a fixed-width track, faintly tinted toward the car's own
+// team colour, plus a fill on top graded red/amber/green by level (boostColor,
+// replay-core.js) — both solid-colour sprites (no canvas texture — nothing to
 // redraw as the value changes every frame). Both are left-top anchored and,
 // each frame, given the same world-space anchor point (applyPoses) so the
 // fill's left edge stays flush with the track's regardless of camera orbit —
-// only its width changes. The fill's colour is fixed at construction (the
-// team tint never changes mid-match), so applyPoses only ever touches scale.
-function makeBoostBarSprites(color) {
+// only its width (and the fill's colour) changes. The track's colour is fixed
+// at construction (the team tint never changes mid-match); the fill's is reset
+// every frame in applyPoses.
+function makeBoostBarSprites(teamColor) {
+  const trackColor = new THREE.Color(BOOST_BAR_TRACK_COLOR).lerp(
+    new THREE.Color(teamColor),
+    BOOST_BAR_TRACK_TINT,
+  );
   const track = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      color: BOOST_BAR_TRACK_COLOR,
+      color: trackColor,
       transparent: true,
       opacity: BOOST_BAR_TRACK_OPACITY,
       depthTest: false,
@@ -236,7 +243,6 @@ function makeBoostBarSprites(color) {
   );
   const fill = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      color,
       depthTest: false,
       depthWrite: false,
     }),
@@ -1130,6 +1136,7 @@ function createPlayback(
           bar.track.scale.set(trackWidth, barHeight, 1);
           const frac = pose.boost[s] / 255;
           bar.fill.scale.set(Math.max(trackWidth * frac, 0.01), barHeight, 1);
+          bar.fill.material.color.setHex(boostColor(frac));
           bar.track.visible = true;
           bar.fill.visible = true;
         } else {
