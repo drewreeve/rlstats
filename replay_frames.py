@@ -343,6 +343,17 @@ def _walk(
     ``NewReplicatedPickupData`` update is emitted only when it flips the pad's
     collected/available state — the game re-sends the current state periodically.
     """
+    # Unpacked once so the per-frame comparisons below are local-variable reads,
+    # not attribute lookups on `oids` — this loop runs per new/updated actor
+    # entry across every frame of the replay.
+    car_arch = oids.car_arch
+    ball_arch = oids.ball_arch
+    rb_oid = oids.rb_oid
+    pri_oid = oids.pri_oid
+    uid_oid = oids.uid_oid
+    paint_oid = oids.paint_oid
+    pickup_oid = oids.pickup_oid
+
     segments: list[_Segment] = []
     open_seg: dict[int, int] = {}  # actor_id -> index into segments
     car_actors: set[int] = set()
@@ -365,9 +376,9 @@ def _walk(
         #    spawn point.
         for na in frame.get("new_actors", []):
             oid = na.get("object_id")
-            if oid == oids.car_arch:
+            if oid == car_arch:
                 kind = "car"
-            elif oid == oids.ball_arch:
+            elif oid == ball_arch:
                 kind = "ball"
             elif oid is not None and oid in pad_oids:
                 actor_pad[na["actor_id"]] = oid
@@ -418,19 +429,19 @@ def _walk(
             oid = ua.get("object_id")
             aid = ua["actor_id"]
 
-            if oid == oids.pri_oid:
+            if oid == pri_oid:
                 pri = attr.get("ActiveActor", {}).get("actor")
                 if pri is not None and pri >= 0 and aid in car_actors:
                     resolver.link_car_to_pri(aid, pri)
-            elif oid == oids.uid_oid:
+            elif oid == uid_oid:
                 ident = from_network_frame(attr.get("UniqueId", {}))
                 if ident:
                     resolver.set_identity(aid, ident)
-            elif oid == oids.paint_oid:
+            elif oid == paint_oid:
                 team = attr.get("TeamPaint", {}).get("team")
                 if team is not None:
                     actor_team[aid] = team
-            elif oid == oids.rb_oid:
+            elif oid == rb_oid:
                 if aid not in car_actors and aid not in ball_actors:
                     continue
                 si = open_seg.get(aid)
@@ -458,7 +469,7 @@ def _walk(
                     )
                 )
 
-            elif oid == oids.pickup_oid:
+            elif oid == pickup_oid:
                 pad_oid = actor_pad.get(aid)
                 if pad_oid is None:
                     continue
