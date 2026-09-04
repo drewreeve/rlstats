@@ -1044,7 +1044,16 @@ const _boostAnchor = new THREE.Vector3();
 // dependencies are `camera` (screen-constant label sizing) and `names` / `boostOn`
 // (the shared, mutable show/hide boxes wireControls flips), all taken once here
 // rather than read from module scope.
-function createPlayback(meta, positions, boost, meshes, camera, names, boostOn) {
+function createPlayback(
+  meta,
+  positions,
+  boost,
+  meshes,
+  camera,
+  names,
+  boostOn,
+  fieldWorldInverse,
+) {
   const slotCount = meta.slots.length;
   const transport = createTransport(meta);
   const { tN, compressedEnd } = transport;
@@ -1064,8 +1073,14 @@ function createPlayback(meta, positions, boost, meshes, camera, names, boostOn) 
     // this world point fresh every render, using the CURRENT camera basis — so
     // reading the camera's right vector once here (a frame behind the pending
     // controls.update(), same as frustumH above) is enough to left-anchor every
-    // bar correctly regardless of orbit, with no per-slot camera math.
-    _boostRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    // bar correctly regardless of orbit, with no per-slot camera math. The
+    // vector comes out of camera.matrixWorld in world space, but mesh/label/bar
+    // positions below are field-local (field is rotated 180° for half the
+    // matches — decision 12) — transformDirection(fieldWorldInverse) converts
+    // it, rotation only, no translation.
+    _boostRight
+      .setFromMatrixColumn(camera.matrixWorld, 0)
+      .transformDirection(fieldWorldInverse);
     for (let s = 0; s < meshes.length; s++) {
       const mesh = meshes[s];
       const label = mesh.userData.label;
@@ -1450,6 +1465,13 @@ function buildScene(meta, positions, boost) {
   const field = new THREE.Group();
   if (meta.tracked_team === 1) field.rotation.z = Math.PI;
   world.add(field);
+  // field's world rotation is fixed for the whole match (only the camera
+  // orbits, never field/world), so this inverse is captured once rather than
+  // recomputed every frame — applyPoses uses it to turn the camera's
+  // world-space right vector into a direction it can add to a field-local
+  // position (mesh/label/bar positions all live in field-local space).
+  field.updateWorldMatrix(true, false);
+  const fieldWorldInverse = new THREE.Matrix4().copy(field.matrixWorld).invert();
 
   const spec = arenaSpec(meta.game_mode);
   const camScale = arenaCamScale(spec);
@@ -1491,6 +1513,7 @@ function buildScene(meta, positions, boost) {
     camera,
     names,
     boostOn,
+    fieldWorldInverse,
   );
   const watchGoals = makeGoalWatcher(meta, positions, playback, goalFx);
   const syncUI = wireControls(playback, meta, names, boostOn);
