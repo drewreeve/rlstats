@@ -14,6 +14,11 @@ import { test } from "node:test";
 
 import {
   arenaSpec,
+  boostColor,
+  BOOST_FULL_COLOR,
+  BOOST_LOW_COLOR,
+  BOOST_MID_COLOR,
+  boostOffset,
   boostPadStateAt,
   bracket,
   buildBoostPadTimeline,
@@ -37,17 +42,19 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = resolve(HERE, "..", "data", "replay-viewer");
 
-// The fixture is real server output (meta.json + the packed position buffer) for
-// the one committed replay — used here as *input* to the property tests, never
-// as a golden output oracle. Regenerate with tests/e2e/dump_fixture.py when the
-// server's frame format changes.
+// The fixture is real server output (meta.json + the packed position and boost
+// buffers) for the one committed replay — used here as *input* to the property
+// tests, never as a golden output oracle. Regenerate with
+// tests/e2e/dump_fixture.py when the server's frame format changes.
 function loadFixture() {
   const meta = JSON.parse(readFileSync(resolve(FIX, "meta.json"), "utf8"));
   const buf = readFileSync(resolve(FIX, "frames.bin"));
   // A Node Buffer is a view into a larger pooled ArrayBuffer — pass
   // byteOffset/length or the Float32Array reads neighbouring bytes.
   const positions = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
-  return { meta, positions };
+  const boostBuf = readFileSync(resolve(FIX, "boost.bin"));
+  const boost = new Uint8Array(boostBuf.buffer, boostBuf.byteOffset, boostBuf.byteLength);
+  return { meta, positions, boost };
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +119,24 @@ test("poseOffset: float index into a [frame][slot][7] buffer", () => {
   assert.equal(poseOffset(3, 0, 2), 14);
   assert.equal(poseOffset(3, 1, 0), 21);
   assert.equal(poseOffset(7, 10, 4), (10 * 7 + 4) * 7);
+});
+
+test("boostOffset: index into a [frame][slot] buffer, no per-pose stride", () => {
+  // boostOffset and boost_offset (replay_frames.py) are mirrored by hand — no
+  // build step binds them.
+  assert.equal(boostOffset(3, 0, 0), 0);
+  assert.equal(boostOffset(3, 0, 2), 2);
+  assert.equal(boostOffset(3, 1, 0), 3);
+  assert.equal(boostOffset(7, 10, 4), 10 * 7 + 4);
+});
+
+test("boostColor: discrete low/mid/full bands", () => {
+  assert.equal(boostColor(0), BOOST_LOW_COLOR);
+  assert.equal(boostColor(0.19), BOOST_LOW_COLOR);
+  assert.equal(boostColor(0.2), BOOST_MID_COLOR);
+  assert.equal(boostColor(0.69), BOOST_MID_COLOR);
+  assert.equal(boostColor(0.7), BOOST_FULL_COLOR);
+  assert.equal(boostColor(1), BOOST_FULL_COLOR);
 });
 
 test("teamTint: tracked -> ours, other -> theirs, unknown -> neutral", () => {
@@ -439,6 +464,43 @@ test("writePoses: quaternion is slerp'd (constant angular speed, not nlerp)", ()
   assert.ok(Math.abs(out.quaternion[3] - Math.cos(Math.PI / 16)) < 1e-6);
 });
 
+test("writePoses: boost is the linear blend of the bracketing samples, only when given", () => {
+  const meta = { frame_times: [0, 1], slots: [{ segments: [[0, 1]] }] };
+  const positions = packBuffer([
+    [[0, 0, 0, ...IDENT_Q]],
+    [[0, 0, 0, ...IDENT_Q]],
+  ]);
+  const boost = new Uint8Array([200, 100]); // [frame][slot]
+  const out = makePoseBuffers(1);
+
+  writePoses(meta, positions, 0.25, out, boost);
+  assert.ok(Math.abs(out.boost[0] - (200 + (100 - 200) * 0.25)) < 1e-6);
+
+  // omitted boost buffer: out.boost is left untouched, not zeroed or thrown on.
+  out.boost[0] = 42;
+  writePoses(meta, positions, 0.25, out);
+  assert.equal(out.boost[0], 42);
+});
+
+test("writePoses: boost snaps to the live end across a demolition gap, like position", () => {
+  const meta = {
+    frame_times: [0, 1, 2],
+    slots: [{ segments: [[0, 0], [2, 2]] }], // dead at frame 1
+  };
+  const positions = packBuffer([
+    [[0, 0, 0, ...IDENT_Q]],
+    [[0, 0, 0, ...IDENT_Q]],
+    [[0, 0, 0, ...IDENT_Q]],
+  ]);
+  const boost = new Uint8Array([10, 0, 90]);
+  const out = makePoseBuffers(1);
+
+  writePoses(meta, positions, 0.5, out, boost); // i live, j dead -> snap to i
+  assert.equal(out.boost[0], 10);
+  writePoses(meta, positions, 1.5, out, boost); // i dead, j live -> snap to j
+  assert.equal(out.boost[0], 90);
+});
+
 // ---------------------------------------------------------------------------
 // slerpQuat — the verbatim THREE.Quaternion.slerp port. Pinned here against
 // intent, independent of THREE; the e2e suite checks it against the real build.
@@ -588,7 +650,7 @@ test("writePoses: trail is capped at TRAIL_FRAMES look-back", () => {
 // Property tests over the real replay buffer (inputs, not a golden oracle)
 // ---------------------------------------------------------------------------
 
-const { meta, positions } = loadFixture();
+const { meta, positions, boost } = loadFixture();
 
 function grid(n) {
   const ft = meta.frame_times;
@@ -682,6 +744,23 @@ test("real buffer: trail head equals the live position, length within bounds", (
       }
     }
   }
+});
+
+test("real buffer: boost is only ever written for has_boost slots, and stays in range", () => {
+  const out = makePoseBuffers(meta.slots.length);
+  const everWritten = new Array(meta.slots.length).fill(false);
+  for (const t of grid(1000)) {
+    writePoses(meta, positions, t, out, boost);
+    for (let s = 0; s < meta.slots.length; s++) {
+      if (!out.visible[s]) continue;
+      assert.ok(out.boost[s] >= 0 && out.boost[s] <= 255, `t=${t} slot ${s} out of range`);
+      if (out.boost[s] !== 0) everWritten[s] = true;
+    }
+  }
+  for (let s = 0; s < meta.slots.length; s++) {
+    if (!everWritten[s]) assert.equal(meta.slots[s].has_boost, false, `slot ${s}`);
+  }
+  assert.ok(meta.slots.some((s) => s.has_boost));
 });
 
 test("real buffer: createTransport round-trips the whole real timeline", () => {

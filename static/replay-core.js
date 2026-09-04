@@ -128,6 +128,28 @@ export function poseOffset(slotCount, frame, slot) {
   return (frame * slotCount + slot) * FLOATS_PER_POSE;
 }
 
+// Index of slot `slot`'s value at frame `frame` in the packed [frame][slot]
+// boost buffer — one byte per pose, no FLOATS_PER_POSE stride. Verbatim twin
+// of boost_offset() in replay_frames.py — keep in lockstep.
+export function boostOffset(slotCount, frame, slot) {
+  return frame * slotCount + slot;
+}
+
+// Discrete threshold bands rather than a continuous gradient — easier to read
+// at a glance across up to 6 nameplates than a fine hue interpolation. `frac`
+// is boost / 255.
+export const BOOST_LOW_FRAC = 0.2;
+export const BOOST_MID_FRAC = 0.7;
+export const BOOST_LOW_COLOR = 0xff5a5a;
+export const BOOST_MID_COLOR = 0xffb03f;
+export const BOOST_FULL_COLOR = 0x3ddc72;
+
+export function boostColor(frac) {
+  if (frac < BOOST_LOW_FRAC) return BOOST_LOW_COLOR;
+  if (frac < BOOST_MID_FRAC) return BOOST_MID_COLOR;
+  return BOOST_FULL_COLOR;
+}
+
 // ours (tracked) vs theirs, keyed on RL team not screen side — the field flip
 // then puts "ours" on the same side of the screen every match.
 export function teamTint(team, trackedTeam) {
@@ -411,6 +433,11 @@ export function makePoseBuffers(slotCount) {
     visible: new Uint8Array(slotCount),
     trail: new Float32Array(slotCount * TRAIL_POINTS * 3),
     trailCount: new Int32Array(slotCount),
+    // Raw 0-255 boost, lerp'd like position — only written when writePoses is
+    // given a boost buffer; a slot the caller shouldn't render (has_boost ===
+    // false) is left at whatever value is here from the previous frame, so
+    // callers must gate on meta.slots[s].has_boost, not on this array.
+    boost: new Float32Array(slotCount),
   };
 }
 
@@ -425,7 +452,14 @@ const _q = [0, 0, 0, 0];
 // end is live and the other isn't, the blend snaps to the live end rather than
 // lerping toward a zero pose. The trail's head is the live position; the rest
 // walk backward through the buffer while the slot stays live, never across a gap.
-export function writePoses(meta, positions, t, out) {
+//
+// `boost` is the optional packed [frame][slot] buffer from replay-boost.bin —
+// when given, out.boost is lerp'd the same way as position, between the same
+// bracket and with the same live-end snap. The server (_densify_boost) already
+// resolved the discontinuity between draining and a pickup; a client-side lerp
+// across two already-densified, ~33ms-apart frames adds at most one frame of
+// blend, imperceptible next to that server-side shape.
+export function writePoses(meta, positions, t, out, boost = null) {
   const times = meta.frame_times;
   const slots = meta.slots;
   const slotCount = slots.length;
@@ -451,6 +485,12 @@ export function writePoses(meta, positions, t, out) {
     out.position[s * 3] = px;
     out.position[s * 3 + 1] = py;
     out.position[s * 3 + 2] = pz;
+
+    if (boost) {
+      const ba = boostOffset(slotCount, i, s);
+      const bb = boostOffset(slotCount, j, s);
+      out.boost[s] = boost[ba] + (boost[bb] - boost[ba]) * ff;
+    }
 
     slerpQuat(
       positions[a + 3],

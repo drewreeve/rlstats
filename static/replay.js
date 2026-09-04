@@ -21,6 +21,8 @@ import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.170.0/exam
 // DOM wiring, camera, and the rAF loop.
 import {
   arenaSpec,
+  boostColor,
+  BOOST_FULL_COLOR,
   boostPadStateAt,
   buildBoostPadTimeline,
   carColor,
@@ -90,6 +92,16 @@ const LABEL_VIEW_FRAC = 0.025;
 const LABEL_CLEAR_UU = 100;
 const LABEL_GAP_FRAC = 0.006;
 
+// Boost-bar placement: same width as the nameplate above it (label.userData.aspect
+// * pillH), a thin height, sitting BOOST_BAR_GAP_FRAC of the viewport below the
+// label's bottom edge. Track + fill are left-anchored sprites (center (0,1),
+// top-left) sharing one anchor point, so the fill grows rightward from a fixed
+// edge as boost rises rather than shrinking about the centre.
+const BOOST_BAR_HEIGHT_FRAC = 0.006;
+const BOOST_BAR_GAP_FRAC = 0.003;
+const BOOST_BAR_TRACK_COLOR = 0x14161f;
+const BOOST_BAR_TRACK_OPACITY = 0.55;
+
 // Goal celebration: a glowy particle burst at the ball's entry point. The goal
 // instant is trimmed from the timeline (advance() snaps over the dead span), so
 // this is a wall-clock overlay fired on the forward crossing, not a playback
@@ -144,6 +156,7 @@ const clockEl = document.querySelector('[data-role="clock"]');
 const speedsEl = document.querySelector('[data-role="speeds"]');
 const camEl = document.querySelector('[data-role="cam"]');
 const namesBtn = document.querySelector('[data-role="names"]');
+const boostBtn = document.querySelector('[data-role="boost"]');
 const scoreEl = document.querySelector('[data-role="score"]');
 const marksEl = document.querySelector('[data-role="marks"]');
 const countdownEl = document.querySelector('[data-role="countdown"]');
@@ -203,6 +216,35 @@ function makeLabelSprite(text, cssColor) {
   sprite.center.set(0.5, 0); // bottom-anchored, so the tag sits above the car at any size
   sprite.renderOrder = 10;
   return sprite;
+}
+
+// A live boost meter: a dim, fixed-width track plus a colour-graded fill on
+// top, both solid-colour sprites (no canvas texture — nothing to redraw as the
+// value changes every frame). Both are left-top anchored and, each frame, given
+// the same world-space anchor point (applyPoses) so the fill's left edge stays
+// flush with the track's regardless of camera orbit — only its width changes.
+function makeBoostBarSprites() {
+  const track = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      color: BOOST_BAR_TRACK_COLOR,
+      transparent: true,
+      opacity: BOOST_BAR_TRACK_OPACITY,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  const fill = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      color: BOOST_FULL_COLOR,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  track.center.set(0, 1);
+  fill.center.set(0, 1);
+  track.renderOrder = 10;
+  fill.renderOrder = 11; // over the track
+  return { track, fill };
 }
 
 // A polyline motion tail. Head vertex is the live position; the rest walk
@@ -975,19 +1017,33 @@ function createActorMeshes(field, meta, spec) {
       );
       obj.userData.label = label;
       field.add(label);
+
+      // No bar at all when the replay carries no boost data for this slot —
+      // an empty-looking bar would read as "0 boost", not "unknown".
+      if (slot.has_boost) {
+        const bar = makeBoostBarSprites();
+        obj.userData.boostBar = bar;
+        field.add(bar.track);
+        field.add(bar.fill);
+      }
     }
     return obj;
   });
 }
 
+// Reusable scratch vectors for the boost bar's per-frame placement — allocated
+// once at module scope rather than per slot per frame.
+const _boostRight = new THREE.Vector3();
+const _boostAnchor = new THREE.Vector3();
+
 // The playback clock + per-frame pose application, over one match's data. All
 // the interpolation and timeline math is in replay-core.js: writePoses() fills a
 // scratch buffer, createTransport() maps real <-> compressed seconds. applyPoses()
 // here copies that buffer onto the THREE meshes and sizes labels — its declared
-// dependencies are `camera` (screen-constant label sizing) and `names` (the
-// shared, mutable show/hide box wireControls flips), both taken once here
+// dependencies are `camera` (screen-constant label sizing) and `names` / `boostOn`
+// (the shared, mutable show/hide boxes wireControls flips), all taken once here
 // rather than read from module scope.
-function createPlayback(meta, positions, meshes, camera, names) {
+function createPlayback(meta, positions, boost, meshes, camera, names, boostOn) {
   const slotCount = meta.slots.length;
   const transport = createTransport(meta);
   const { tN, compressedEnd } = transport;
@@ -996,18 +1052,31 @@ function createPlayback(meta, positions, meshes, camera, names) {
   const state = { t: transport.tStart, playing: false, speed: 1 };
 
   function applyPoses() {
-    writePoses(meta, positions, state.t, pose);
+    writePoses(meta, positions, state.t, pose, boost);
     // Screen-constant label sizing — camera-only, so hoisted out of the per-slot loop.
     const frustumH = (camera.top - camera.bottom) / camera.zoom;
     const pillH = LABEL_VIEW_FRAC * frustumH;
     const labelBase = LABEL_CLEAR_UU + LABEL_GAP_FRAC * frustumH;
+    const barHeight = BOOST_BAR_HEIGHT_FRAC * frustumH;
+    const barGap = BOOST_BAR_GAP_FRAC * frustumH;
+    // THREE recomputes each sprite's screen-space rectangle from `center` +
+    // this world point fresh every render, using the CURRENT camera basis — so
+    // reading the camera's right vector once here (a frame behind the pending
+    // controls.update(), same as frustumH above) is enough to left-anchor every
+    // bar correctly regardless of orbit, with no per-slot camera math.
+    _boostRight.setFromMatrixColumn(camera.matrixWorld, 0);
     for (let s = 0; s < meshes.length; s++) {
       const mesh = meshes[s];
       const label = mesh.userData.label;
       const trail = mesh.userData.trail;
+      const bar = mesh.userData.boostBar;
       if (!pose.visible[s]) {
         mesh.visible = false;
         if (label) label.visible = false;
+        if (bar) {
+          bar.track.visible = false;
+          bar.fill.visible = false;
+        }
         trail.visible = false;
         continue;
       }
@@ -1032,6 +1101,26 @@ function createPlayback(meta, positions, meshes, camera, names) {
           mesh.position.y,
           mesh.position.z + labelBase,
         );
+      }
+
+      if (bar) {
+        if (boostOn.on) {
+          const trackWidth = pillH * label.userData.aspect; // matches the nameplate
+          _boostAnchor.copy(mesh.position);
+          _boostAnchor.z += labelBase - barGap;
+          _boostAnchor.addScaledVector(_boostRight, -trackWidth / 2);
+          bar.track.position.copy(_boostAnchor);
+          bar.fill.position.copy(_boostAnchor);
+          bar.track.scale.set(trackWidth, barHeight, 1);
+          const frac = pose.boost[s] / 255;
+          bar.fill.scale.set(Math.max(trackWidth * frac, 0.01), barHeight, 1);
+          bar.fill.material.color.setHex(boostColor(frac));
+          bar.track.visible = true;
+          bar.fill.visible = true;
+        } else {
+          bar.track.visible = false;
+          bar.fill.visible = false;
+        }
       }
 
       const count = pose.trailCount[s];
@@ -1095,7 +1184,7 @@ function renderScrubMarks(meta, playback) {
   }
 }
 
-function wireControls(playback, meta, names) {
+function wireControls(playback, meta, names, boostOn) {
   let scrubbing = false;
   const goals = meta.goals.map((g) => ({
     t: meta.frame_times[g.frame],
@@ -1118,6 +1207,15 @@ function wireControls(playback, meta, names) {
     }
   }
   if (namesBtn) namesBtn.addEventListener("click", () => setNames(!names.on));
+
+  function setBoost(on) {
+    boostOn.on = on;
+    if (boostBtn) {
+      boostBtn.classList.toggle("is-active", on);
+      boostBtn.setAttribute("aria-pressed", String(on));
+    }
+  }
+  if (boostBtn) boostBtn.addEventListener("click", () => setBoost(!boostOn.on));
 
   scrubEl.addEventListener("pointerdown", () => {
     scrubbing = true;
@@ -1148,6 +1246,8 @@ function wireControls(playback, meta, names) {
       playback.nudge(SEEK_STEP);
     } else if (e.key === "n" || e.key === "N") {
       setNames(!names.on);
+    } else if (e.key === "b" || e.key === "B") {
+      setBoost(!boostOn.on);
     }
   });
 
@@ -1327,7 +1427,7 @@ function createCameraRig(canvas, camScale) {
   return { camera, renderer, controls, resize, applyPreset };
 }
 
-function buildScene(meta, positions) {
+function buildScene(meta, positions, boost) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b0d15);
   scene.add(new THREE.AmbientLight(0xffffff, 0.75));
@@ -1376,14 +1476,24 @@ function buildScene(meta, positions) {
   wireCamera(rig);
   window.addEventListener("resize", rig.resize);
 
-  // Player name labels start on; the NAMES button / `n` key flip this. A shared
-  // mutable box (not a plain boolean) so createPlayback and wireControls can
-  // both hold the one reference — wireControls flips it, applyPoses reads it,
-  // constructed here before either needs it.
+  // Player name labels and boost bars start on; the NAMES/BOOST buttons and
+  // `n`/`b` keys flip these. Shared mutable boxes (not plain booleans) so
+  // createPlayback and wireControls can both hold the one reference —
+  // wireControls flips them, applyPoses reads them, constructed here before
+  // either needs them.
   const names = { on: true };
-  const playback = createPlayback(meta, positions, meshes, camera, names);
+  const boostOn = { on: true };
+  const playback = createPlayback(
+    meta,
+    positions,
+    boost,
+    meshes,
+    camera,
+    names,
+    boostOn,
+  );
   const watchGoals = makeGoalWatcher(meta, positions, playback, goalFx);
-  const syncUI = wireControls(playback, meta, names);
+  const syncUI = wireControls(playback, meta, names, boostOn);
   renderScrubMarks(meta, playback);
   playback.applyPoses();
   boostPads.apply(playback.state.t);
@@ -1474,15 +1584,19 @@ async function main() {
     }
     const meta = await metaRes.json();
 
-    const binRes = await fetch(`/api/matches/${matchId}/replay-frames.bin`);
-    if (!binRes.ok) {
+    const [binRes, boostRes] = await Promise.all([
+      fetch(`/api/matches/${matchId}/replay-frames.bin`),
+      fetch(`/api/matches/${matchId}/replay-boost.bin`),
+    ]);
+    if (!binRes.ok || !boostRes.ok) {
       showMessage("This replay could not be loaded.");
       return;
     }
     const positions = new Float32Array(await binRes.arrayBuffer());
+    const boost = new Uint8Array(await boostRes.arrayBuffer());
 
     await document.fonts.ready; // so name labels render in DM Mono, not fallback
-    buildScene(meta, positions);
+    buildScene(meta, positions, boost);
   } catch (err) {
     console.error(err);
     showMessage("This replay could not be loaded.");

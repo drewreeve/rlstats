@@ -275,7 +275,8 @@ html, body {
 }
 
 .replay-speeds button.is-active,
-.replay-names.is-active {
+.replay-names.is-active,
+.replay-boost.is-active {
     color: var(--bg);
     background: var(--cyan);
     border-color: var(--cyan);

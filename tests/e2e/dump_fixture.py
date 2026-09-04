@@ -1,5 +1,5 @@
 """Regenerate the Node-test input fixture: tests/data/replay-viewer/{meta.json,
-frames.bin}.
+frames.bin,boost.bin}.
 
 These are the server's replay-frames output for the one committed replay, used
 by tests/js/replay-core.test.js as *input* to the property tests (not as a
@@ -42,10 +42,12 @@ def main() -> None:
         json.dumps(meta, separators=(",", ":"), ensure_ascii=False)
     )
     (OUT_DIR / "frames.bin").write_bytes(frames.positions)
+    (OUT_DIR / "boost.bin").write_bytes(frames.boost)
     print(
         f"wrote meta.json ({len(frames.slots)} slots, "
         f"{len(frames.frame_times)} frames) + frames.bin "
-        f"({len(frames.positions)} bytes) -> {OUT_DIR}"
+        f"({len(frames.positions)} bytes) + boost.bin "
+        f"({len(frames.boost)} bytes) -> {OUT_DIR}"
     )
 
 
