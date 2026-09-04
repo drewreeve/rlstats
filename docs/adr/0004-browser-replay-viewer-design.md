@@ -133,8 +133,19 @@ actor ids recycle through the match, so the walk rebinds them to their
 pad on each `new_actors` announce and emits a row only when the pad's
 collected/available state actually flips (the game re-sends it).
 
-The JSON endpoint serialises everything except `positions`; the `.bin` endpoint
-returns `positions`.
+The JSON endpoint serialises everything except `positions` (via
+`ReplayFrames.meta_dict()`, the sole entry point); the `.bin` endpoint returns
+`positions`.
+
+Since v1 this shape is pinned in code, not only here: `replay_frames.py` carries a
+hand-written `WIRE_META_KEYS` / `WIRE_SLOT_FIELDS` / `WIRE_GOAL_FIELDS` /
+`WIRE_TUPLE_WIDTHS` manifest, the `.bin` geometry is `pose_offset()` /
+`packed_buffer_bytes()` (twins of `poseOffset` / `FLOATS_PER_POSE` in
+`replay-core.js`), and `tests/test_replay_wire.py` asserts the serialised output
+against the manifest — the replay-side analogue of `tests/test_stats_registry.py`.
+The listing above is a v1 snapshot; **CONTEXT.md "Replay Wire" and that code are
+authoritative.** `meta_dict()` is the one serialisation entry point, not the shape
+declaration.
 
 ### Extraction rules (server-side invariants, not obvious from the walk)
 
