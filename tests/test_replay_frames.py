@@ -15,7 +15,6 @@ from typing import cast
 
 import pytest
 
-from ingest import build_replay_context
 from replay_frames import (
     FLOATS_PER_POSE,
     GoalMarker,
@@ -30,7 +29,7 @@ from replay_frames import (
 )
 from rrrocket_schema import FrameData, ParsedReplay
 from rrrocket_schema import parse as parse_replay
-from tests.fixtures import TRACKED_PLAYERS, load_replay
+from tests.fixtures import load_replay, replay_frames_of
 
 _OBJECTS = [
     "Archetypes.Car.Car_Default",
@@ -607,18 +606,6 @@ def test_walk_ignores_pickup_updates_for_an_unbound_actor() -> None:
     assert _walk_pads(frames) == []
 
 
-def _boost_pads(name: str) -> ReplayFrames:
-    replay = parse_replay(load_replay(name))
-    context = build_replay_context(replay, TRACKED_PLAYERS)
-    return extract_replay_frames(
-        replay,
-        tracked_team=context.perspective.team,
-        tracked_identities=context.tracked_identities,
-        player_names=context.player_names,
-        game_mode=context.game_mode,
-    )
-
-
 def _pad_events(rf: ReplayFrames) -> dict[int, list[tuple[int, int]]]:
     """Per pad index, its ``(frame, collected)`` rows in frame order."""
     per_pad: dict[int, list[tuple[int, int]]] = {}
@@ -633,7 +620,7 @@ def _pad_events(rf: ReplayFrames) -> dict[int, list[tuple[int, int]]]:
 def test_real_replay_boost_pads_cover_every_pad_and_alternate(
     name: str, pad_count: int
 ) -> None:
-    rf = _boost_pads(name)
+    rf = replay_frames_of(name)
     rows = rf.boost_pads
     assert rows
 
@@ -657,7 +644,7 @@ def test_real_replay_boost_pads_cover_every_pad_and_alternate(
 
 @pytest.mark.parametrize("name", ["match.json", "hoops.json"])
 def test_real_replay_boost_pad_respawns_match_canonical_timers(name: str) -> None:
-    rf = _boost_pads(name)
+    rf = replay_frames_of(name)
     ft = rf.frame_times
     deltas = [
         ft[f1] - ft[f0]
@@ -678,7 +665,7 @@ def test_real_replay_boost_pad_respawns_match_canonical_timers(name: str) -> Non
 def test_real_replay_boost_pads_all_available_at_every_kickoff(name: str) -> None:
     """The raw pickup stream self-heals — no pad reads collected when a kickoff
     countdown fires, so the viewer needs no forced reset (ADR 0004)."""
-    rf = _boost_pads(name)
+    rf = replay_frames_of(name)
     per_pad = _pad_events(rf)
 
     def collected_at(pad: int, f: int) -> int:
@@ -696,7 +683,7 @@ def test_real_replay_boost_pads_all_available_at_every_kickoff(name: str) -> Non
 
 
 def test_real_replay_boost_pad_collects_are_located_inside_the_arena() -> None:
-    rf = _boost_pads("match.json")
+    rf = replay_frames_of("match.json")
     collects = [(x, y) for _, _, c, x, y in rf.boost_pads if c == 1]
     located = [p for p in collects if p != (0.0, 0.0)]
     assert len(located) / len(collects) > 0.9
@@ -708,15 +695,7 @@ def test_real_replay_boost_pad_collects_are_located_inside_the_arena() -> None:
 
 
 def _real() -> ReplayFrames:
-    replay = parse_replay(load_replay("team_size_2.json"))
-    context = build_replay_context(replay, TRACKED_PLAYERS)
-    return extract_replay_frames(
-        replay,
-        tracked_team=context.perspective.team,
-        tracked_identities=context.tracked_identities,
-        player_names=context.player_names,
-        game_mode=context.game_mode,
-    )
+    return replay_frames_of("team_size_2.json")
 
 
 def test_real_replay_top_level_shape() -> None:
@@ -769,6 +748,13 @@ def test_real_replay_countdowns_and_dead_periods() -> None:
     assert all(0 <= n <= 3 for _, n in rf.countdowns)
     assert [f for f, _ in rf.countdowns] == sorted(f for f, _ in rf.countdowns)
     assert all(0 <= f <= last for f, _ in rf.countdowns)
+    # one clean 3 -> ... -> 0 run per kickoff: pre-match + one per goal (holds
+    # for overtime too — the OT-start countdown offsets the missing one after
+    # the golden goal)
+    assert sum(1 for _, n in rf.countdowns if n == 0) == len(rf.goals) + 1
+    assert sum(1 for _, n in rf.countdowns if n == 3) == len(rf.goals) + 1
+
+    assert all(0 <= g.frame <= last for g in rf.goals)
 
     assert rf.dead_periods
     assert rf.dead_periods[0][0] == 0  # pre-match warmup is always trimmed
@@ -781,6 +767,14 @@ def test_real_replay_countdowns_and_dead_periods() -> None:
     # every span past the pre-match one starts on a goal frame
     assert all(start in goal_frames for start, _ in rf.dead_periods[1:])
     assert len(rf.dead_periods) <= len(rf.goals) + 1
+
+
+def test_dead_period_count_is_exact_on_a_no_overtime_replay() -> None:
+    # match.json ends in regulation: exactly one trimmed span per kickoff —
+    # pre-match + one per goal. Overtime relaxes this to <= (a golden goal has
+    # no following countdown; see test_overtime_replay_golden_goal_gets_no_dead_period).
+    rf = replay_frames_of("match.json")
+    assert len(rf.dead_periods) == len(rf.goals) + 1 == 10
 
 
 def test_real_replay_poses_decode_to_plausible_values() -> None:
@@ -805,15 +799,7 @@ def test_real_replay_poses_decode_to_plausible_values() -> None:
 
 
 def _hoops() -> ReplayFrames:
-    replay = parse_replay(load_replay("hoops.json"))
-    context = build_replay_context(replay, TRACKED_PLAYERS)
-    return extract_replay_frames(
-        replay,
-        tracked_team=context.perspective.team,
-        tracked_identities=context.tracked_identities,
-        player_names=context.player_names,
-        game_mode=context.game_mode,
-    )
+    return replay_frames_of("hoops.json")
 
 
 def test_hoops_replay_walks_to_a_full_buffer() -> None:

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import queries
+import replay_frames
 from process import process_unprocessed
 from server import create_app
 from tests.fixtures import TEST_DATA_DIR, TRACKED_PLAYERS, cached_db, file_db
@@ -234,73 +235,15 @@ def test_has_replay_false_when_file_missing(replay_client: TestClient, tmp_path:
     assert replay_client.get(f"/match/{ghost_id}/replay").status_code == 404
 
 
-def test_replay_meta_shape(replay_client: TestClient) -> None:
+def test_replay_meta_route_serializes_the_wire_shape(replay_client: TestClient) -> None:
+    # The wire shape itself is owned by tests/test_replay_wire.py (key sets, row
+    # widths) and its semantics by tests/test_replay_frames.py. Here we only
+    # prove the HTTP route emits it — 200, JSON, the manifest key set — through
+    # FastAPI + jsonable_encoder + gzip.
     r = replay_client.get("/api/matches/1/replay")
     assert r.status_code == 200
-    data: Any = r.json()
-    assert set(data) == {
-        "frame_times",
-        "tracked_team",
-        "game_mode",
-        "slots",
-        "goals",
-        "countdowns",
-        "dead_periods",
-        "boost_pads",
-    }
-    assert isinstance(data["frame_times"], list) and data["frame_times"]
-    assert data["frame_times"] == sorted(data["frame_times"])
-    kinds = {s["kind"] for s in data["slots"]}
-    assert kinds == {"car", "ball"}
-    for slot in data["slots"]:
-        assert set(slot) == {
-            "identity",
-            "name",
-            "team",
-            "is_tracked",
-            "kind",
-            "segments",
-        }
-    assert isinstance(data["goals"], list) and data["goals"]
-    last = len(data["frame_times"]) - 1
-    for g in data["goals"]:
-        assert set(g) == {"frame", "team"}
-        assert 0 <= g["frame"] <= last and g["team"] in (0, 1)
-
-
-def test_replay_meta_countdowns_and_dead_periods(replay_client: TestClient) -> None:
-    data: Any = replay_client.get("/api/matches/1/replay").json()
-    last = len(data["frame_times"]) - 1
-    goal_frames = {g["frame"] for g in data["goals"]}
-
-    cds = data["countdowns"]
-    assert cds and all(len(t) == 2 and 0 <= t[1] <= 3 for t in cds)
-    assert [t[0] for t in cds] == sorted(t[0] for t in cds)
-    # this replay: pre-match + one kickoff per goal, each a clean 3 -> 2 -> 1 -> 0
-    assert sum(1 for _, n in cds if n == 0) == len(data["goals"]) + 1
-    assert sum(1 for _, n in cds if n == 3) == len(data["goals"]) + 1
-
-    dps = data["dead_periods"]
-    assert dps[0][0] == 0  # pre-match warmup
-    prev_end = -1
-    for start, end in dps:
-        assert 0 <= start <= end <= last
-        assert start > prev_end
-        prev_end = end
-    assert all(start in goal_frames for start, _ in dps[1:])
-    assert len(dps) == len(data["goals"]) + 1
-
-
-def test_replay_meta_boost_pads(replay_client: TestClient) -> None:
-    # Wire shape only — the row invariants (frame order, dense index, alternation)
-    # are covered by test_replay_frames; here it is just "5-element rows survive
-    # the JSON round-trip".
-    rows: Any = replay_client.get("/api/matches/1/replay").json()["boost_pads"]
-    assert rows and all(len(r) == 5 for r in rows)
-    frame, pad, collected, x, y = rows[0]
-    assert isinstance(frame, int) and isinstance(pad, int)
-    assert collected in (0, 1)
-    assert isinstance(x, (int, float)) and isinstance(y, (int, float))
+    assert r.headers["content-type"].startswith("application/json")
+    assert set(r.json()) == replay_frames.WIRE_META_KEYS
 
 
 def test_replay_frames_bin_length_matches_meta(replay_client: TestClient) -> None:
@@ -308,8 +251,9 @@ def test_replay_frames_bin_length_matches_meta(replay_client: TestClient) -> Non
     r = replay_client.get("/api/matches/1/replay-frames.bin")
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/octet-stream"
-    expected = 4 * len(meta["frame_times"]) * len(meta["slots"]) * 7
-    assert len(r.content) == expected
+    assert len(r.content) == replay_frames.packed_buffer_bytes(
+        len(meta["frame_times"]), len(meta["slots"])
+    )
 
 
 def test_replay_routes_404_for_unknown_match(replay_client: TestClient) -> None:
