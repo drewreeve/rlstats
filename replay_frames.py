@@ -310,15 +310,27 @@ def _last_quat(samples: list[_Sample]) -> tuple[float, float, float, float]:
     return 0.0, 0.0, 0.0, 1.0
 
 
+@dataclass(frozen=True)
+class _WalkObjectIds:
+    """Object IDs resolved from the replay's objects list, used by _walk.
+
+    car_arch/ball_arch/rb_oid are guaranteed non-None by extract_replay_frames'
+    early-return guard before _walk is ever called; the rest are genuinely
+    optional (a replay can lack PRI/UniqueId/TeamPaint/pickup network data).
+    """
+
+    car_arch: int
+    ball_arch: int
+    rb_oid: int
+    pri_oid: int | None
+    uid_oid: int | None
+    paint_oid: int | None
+    pickup_oid: int | None
+
+
 def _walk(
     replay: ParsedReplay,
-    car_arch: int,
-    ball_arch: int,
-    rb_oid: int,
-    pri_oid: int | None,
-    uid_oid: int | None,
-    paint_oid: int | None,
-    pickup_oid: int | None,
+    oids: _WalkObjectIds,
     pad_oids: AbstractSet[int],
 ) -> tuple[list[_Segment], list[_RawPickup]]:
     """Single pass over the frames, producing one ``_Segment`` per actor life
@@ -353,9 +365,9 @@ def _walk(
         #    spawn point.
         for na in frame.get("new_actors", []):
             oid = na.get("object_id")
-            if oid == car_arch:
+            if oid == oids.car_arch:
                 kind = "car"
-            elif oid == ball_arch:
+            elif oid == oids.ball_arch:
                 kind = "ball"
             elif oid is not None and oid in pad_oids:
                 actor_pad[na["actor_id"]] = oid
@@ -406,19 +418,19 @@ def _walk(
             oid = ua.get("object_id")
             aid = ua["actor_id"]
 
-            if oid == pri_oid:
+            if oid == oids.pri_oid:
                 pri = attr.get("ActiveActor", {}).get("actor")
                 if pri is not None and pri >= 0 and aid in car_actors:
                     resolver.link_car_to_pri(aid, pri)
-            elif oid == uid_oid:
+            elif oid == oids.uid_oid:
                 ident = from_network_frame(attr.get("UniqueId", {}))
                 if ident:
                     resolver.set_identity(aid, ident)
-            elif oid == paint_oid:
+            elif oid == oids.paint_oid:
                 team = attr.get("TeamPaint", {}).get("team")
                 if team is not None:
                     actor_team[aid] = team
-            elif oid == rb_oid:
+            elif oid == oids.rb_oid:
                 if aid not in car_actors and aid not in ball_actors:
                     continue
                 si = open_seg.get(aid)
@@ -446,7 +458,7 @@ def _walk(
                     )
                 )
 
-            elif oid == pickup_oid:
+            elif oid == oids.pickup_oid:
                 pad_oid = actor_pad.get(aid)
                 if pad_oid is None:
                     continue
@@ -791,17 +803,16 @@ def extract_replay_frames(
         return ReplayFrames([], [], b"", tracked_team, game_mode)
 
     pad_oids = frozenset(oid for name, oid in obj.items() if _BOOST_PAD_MARKER in name)
-    segments, raw_pickups = _walk(
-        replay,
-        car_arch,
-        ball_arch,
-        rb_oid,
-        obj.get(NetObj.PAWN_PRI),
-        obj.get(NetObj.PRI_UNIQUE_ID),
-        obj.get(NetObj.TEAM_PAINT),
-        obj.get(NetObj.PICKUP_DATA),
-        pad_oids,
+    oids = _WalkObjectIds(
+        car_arch=car_arch,
+        ball_arch=ball_arch,
+        rb_oid=rb_oid,
+        pri_oid=obj.get(NetObj.PAWN_PRI),
+        uid_oid=obj.get(NetObj.PRI_UNIQUE_ID),
+        paint_oid=obj.get(NetObj.TEAM_PAINT),
+        pickup_oid=obj.get(NetObj.PICKUP_DATA),
     )
+    segments, raw_pickups = _walk(replay, oids, pad_oids)
     slots = _build_slots(segments, tracked_identities, player_names)
     frame_times = [float(f["time"]) for f in replay.frames]
     buf = _densify(segments, frame_times, len(slots))

@@ -25,6 +25,7 @@ from replay_frames import (
     _scan_goals,  # type: ignore[reportPrivateUsage]
     _slerp,  # type: ignore[reportPrivateUsage]
     _walk,  # type: ignore[reportPrivateUsage]
+    _WalkObjectIds,  # type: ignore[reportPrivateUsage]
     extract_replay_frames,
     packed_buffer_bytes,
     pose_offset,
@@ -607,17 +608,16 @@ def _pickup(
 
 
 def _walk_pads(frames: list[FrameData]) -> list[tuple[int, int, bool, int | None]]:
-    _segments, pickups = _walk(
-        _replay(frames),
-        _CAR,
-        _BALL,
-        _RB,
-        _PRI,
-        _UID,
-        _PAINT,
-        _PICKUP,
-        frozenset({_PAD_A, _PAD_B}),
+    oids = _WalkObjectIds(
+        car_arch=_CAR,
+        ball_arch=_BALL,
+        rb_oid=_RB,
+        pri_oid=_PRI,
+        uid_oid=_UID,
+        paint_oid=_PAINT,
+        pickup_oid=_PICKUP,
     )
+    _segments, pickups = _walk(_replay(frames), oids, frozenset({_PAD_A, _PAD_B}))
     return pickups
 
 
