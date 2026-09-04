@@ -14,10 +14,6 @@ import { test } from "node:test";
 
 import {
   arenaSpec,
-  boostColor,
-  BOOST_FULL_COLOR,
-  BOOST_LOW_COLOR,
-  BOOST_MID_COLOR,
   boostOffset,
   boostPadStateAt,
   bracket,
@@ -128,15 +124,6 @@ test("boostOffset: index into a [frame][slot] buffer, no per-pose stride", () =>
   assert.equal(boostOffset(3, 0, 2), 2);
   assert.equal(boostOffset(3, 1, 0), 3);
   assert.equal(boostOffset(7, 10, 4), 10 * 7 + 4);
-});
-
-test("boostColor: discrete low/mid/full bands", () => {
-  assert.equal(boostColor(0), BOOST_LOW_COLOR);
-  assert.equal(boostColor(0.19), BOOST_LOW_COLOR);
-  assert.equal(boostColor(0.2), BOOST_MID_COLOR);
-  assert.equal(boostColor(0.69), BOOST_MID_COLOR);
-  assert.equal(boostColor(0.7), BOOST_FULL_COLOR);
-  assert.equal(boostColor(1), BOOST_FULL_COLOR);
 });
 
 test("teamTint: tracked -> ours, other -> theirs, unknown -> neutral", () => {

@@ -21,8 +21,6 @@ import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.170.0/exam
 // DOM wiring, camera, and the rAF loop.
 import {
   arenaSpec,
-  boostColor,
-  BOOST_FULL_COLOR,
   boostPadStateAt,
   buildBoostPadTimeline,
   carColor,
@@ -98,7 +96,7 @@ const LABEL_GAP_FRAC = 0.006;
 // top-left) sharing one anchor point, so the fill grows rightward from a fixed
 // edge as boost rises rather than shrinking about the centre.
 const BOOST_BAR_HEIGHT_FRAC = 0.006;
-const BOOST_BAR_GAP_FRAC = 0.003;
+const BOOST_BAR_GAP_FRAC = 0; // flush against the label — reads as one card
 const BOOST_BAR_TRACK_COLOR = 0x14161f;
 const BOOST_BAR_TRACK_OPACITY = 0.55;
 
@@ -218,12 +216,15 @@ function makeLabelSprite(text, cssColor) {
   return sprite;
 }
 
-// A live boost meter: a dim, fixed-width track plus a colour-graded fill on
-// top, both solid-colour sprites (no canvas texture — nothing to redraw as the
-// value changes every frame). Both are left-top anchored and, each frame, given
-// the same world-space anchor point (applyPoses) so the fill's left edge stays
-// flush with the track's regardless of camera orbit — only its width changes.
-function makeBoostBarSprites() {
+// A live boost meter: a dim, fixed-width track plus a fill on top in the car's
+// own team colour (not a red/amber/green warning gradient — fill length alone
+// conveys the level), both solid-colour sprites (no canvas texture — nothing to
+// redraw as the value changes every frame). Both are left-top anchored and,
+// each frame, given the same world-space anchor point (applyPoses) so the
+// fill's left edge stays flush with the track's regardless of camera orbit —
+// only its width changes. The fill's colour is fixed at construction (the
+// team tint never changes mid-match), so applyPoses only ever touches scale.
+function makeBoostBarSprites(color) {
   const track = new THREE.Sprite(
     new THREE.SpriteMaterial({
       color: BOOST_BAR_TRACK_COLOR,
@@ -235,7 +236,7 @@ function makeBoostBarSprites() {
   );
   const fill = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      color: BOOST_FULL_COLOR,
+      color,
       depthTest: false,
       depthWrite: false,
     }),
@@ -1021,7 +1022,7 @@ function createActorMeshes(field, meta, spec) {
       // No bar at all when the replay carries no boost data for this slot —
       // an empty-looking bar would read as "0 boost", not "unknown".
       if (slot.has_boost) {
-        const bar = makeBoostBarSprites();
+        const bar = makeBoostBarSprites(color);
         obj.userData.boostBar = bar;
         field.add(bar.track);
         field.add(bar.fill);
@@ -1114,7 +1115,6 @@ function createPlayback(meta, positions, boost, meshes, camera, names, boostOn) 
           bar.track.scale.set(trackWidth, barHeight, 1);
           const frac = pose.boost[s] / 255;
           bar.fill.scale.set(Math.max(trackWidth * frac, 0.01), barHeight, 1);
-          bar.fill.material.color.setHex(boostColor(frac));
           bar.track.visible = true;
           bar.fill.visible = true;
         } else {
