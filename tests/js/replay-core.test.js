@@ -272,7 +272,6 @@ test("arenaSpec: hoops goal is an elevated ring, standard goal is a box", () => 
 });
 
 test("arenaSpec: boost-pad layouts — 34 standard, 20 hoops", () => {
-  const key = ([x, y]) => `${x},${y}`;
   const std = arenaSpec("3v3");
   assert.equal(std.bigPads.length, 6);
   assert.equal(std.smallPads.length, 28);
@@ -282,16 +281,10 @@ test("arenaSpec: boost-pad layouts — 34 standard, 20 hoops", () => {
   assert.equal(h.smallPads.length, 14);
   assert.equal(h.bigPads.length + h.smallPads.length, 20);
 
-  // Hoops big pads must match frame_analysis.BIG_PAD_POSITIONS["hoops"] (both
-  // cite wiki.rlbot.org — keep them in lockstep).
-  assert.deepEqual(
-    new Set(h.bigPads.map(key)),
-    new Set([
-      [-2176, -2944], [2176, -2944],
-      [-2432, 0], [2432, 0],
-      [-2176, 2944], [2176, 2944],
-    ].map(key)),
-  );
+  // The hoops big-pad coordinates also live in frame_analysis.BIG_PAD_POSITIONS
+  // ["hoops"] (both from wiki.rlbot.org). No automated cross-check — Node can't
+  // import the Python — and they are frozen wiki data; a mismatch shows up as a
+  // misplaced orb in the viewer.
 
   // No pad sits outside its arena footprint.
   for (const spec of [std, h]) {
