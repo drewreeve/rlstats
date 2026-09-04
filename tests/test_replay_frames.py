@@ -26,6 +26,7 @@ from replay_frames import (
     _slerp,  # type: ignore[reportPrivateUsage]
     _walk,  # type: ignore[reportPrivateUsage]
     _WalkObjectIds,  # type: ignore[reportPrivateUsage]
+    boost_offset,
     extract_replay_frames,
     packed_buffer_bytes,
     pose_offset,
@@ -46,10 +47,24 @@ _OBJECTS = [
     "TAGame.VehiclePickup_TA:NewReplicatedPickupData",
     "stadium_p.TheWorld:PersistentLevel.VehiclePickup_Boost_TA_0",
     "stadium_p.TheWorld:PersistentLevel.VehiclePickup_Boost_TA_1",
+    "TAGame.CarComponent_Boost_TA:ReplicatedBoost",
+    "TAGame.CarComponent_TA:Vehicle",
 ]
-_CAR, _BALL, _RB, _PRI, _UID, _PAINT, _SCORED, _COUNTDOWN, _PICKUP, _PAD_A, _PAD_B = (
-    range(len(_OBJECTS))
-)
+(
+    _CAR,
+    _BALL,
+    _RB,
+    _PRI,
+    _UID,
+    _PAINT,
+    _SCORED,
+    _COUNTDOWN,
+    _PICKUP,
+    _PAD_A,
+    _PAD_B,
+    _BOOST,
+    _VEHICLE,
+) = range(len(_OBJECTS))
 
 
 def _replay(frames: list[FrameData]) -> ParsedReplay:
@@ -98,6 +113,26 @@ def _frame(
 def _pose(rf: ReplayFrames, frame: int, slot: int) -> tuple[float, ...]:
     off = pose_offset(len(rf.slots), frame, slot) * 4  # * 4: float32 -> bytes
     return struct.unpack_from("<7f", rf.positions, off)
+
+
+def _boost_at(rf: ReplayFrames, frame: int, slot: int) -> int:
+    return rf.boost[boost_offset(len(rf.slots), frame, slot)]
+
+
+def _vehicle_link(comp_aid: int, car_aid: int) -> dict[str, object]:
+    return {
+        "actor_id": comp_aid,
+        "object_id": _VEHICLE,
+        "attribute": {"ActiveActor": {"actor": car_aid}},
+    }
+
+
+def _boost_update(comp_aid: int, amount: int) -> dict[str, object]:
+    return {
+        "actor_id": comp_aid,
+        "object_id": _BOOST,
+        "attribute": {"ReplicatedBoost": {"boost_amount": amount}},
+    }
 
 
 def _extract(rf_replay: ParsedReplay, **kw: object) -> ReplayFrames:
@@ -466,6 +501,144 @@ def test_kickoff_reannounce_is_a_cut_not_a_glide() -> None:
     assert _pose(rf, 1, idx)[:3] == (1000.0, 2000.0, 100.0)
     assert _pose(rf, 2, idx)[:3] == (1000.0, 2000.0, 100.0)
     assert _pose(rf, 3, idx)[:3] == (0.0, 0.0, 93.0)  # clean cut to spawn
+
+
+# --- per-player boost (_densify_boost) ---
+
+
+def _car_with_boost(*boost_frames: FrameData) -> ParsedReplay:
+    """A single car (actor 1, boost component actor 2) spawned at frame 0, plus
+    whatever additional frames the caller supplies."""
+    spawn = _frame(
+        0.0,
+        new=[{"actor_id": 1, "object_id": _CAR}],
+        updated=[
+            _rb_update(1, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            _vehicle_link(2, 1),
+        ],
+    )
+    return _replay([spawn, *boost_frames])
+
+
+def test_boost_drain_between_samples_is_wallclock_lerped() -> None:
+    # _car_with_boost's spawn frame (index 0) carries no boost sample, so the
+    # segment's first real sample (200) is held back to it — frames 0-1 both
+    # read 200; the interpolated midpoint is frame 2, between the 200 and 100
+    # samples at frames 1 and 3.
+    rf = _extract(
+        _car_with_boost(
+            _frame(0.0, updated=[_boost_update(2, 200)]),
+            _frame(0.15),
+            _frame(0.2, updated=[_boost_update(2, 100)]),
+        )
+    )
+    idx = _car_idx(rf)
+    assert _boost_at(rf, 1, idx) == 200
+    assert _boost_at(rf, 2, idx) == round(200 + (100 - 200) * 0.75)
+    assert _boost_at(rf, 3, idx) == 100
+
+
+def test_boost_pickup_holds_low_then_snaps_at_the_sample() -> None:
+    # A pickup is an increase — held at the lower value through the gap and only
+    # visible once the real (higher) sample lands, not ramped up to it.
+    rf = _extract(
+        _car_with_boost(
+            _frame(0.0, updated=[_boost_update(2, 20)]),
+            _frame(0.1),
+            _frame(0.2, updated=[_boost_update(2, 100)]),
+        )
+    )
+    idx = _car_idx(rf)
+    assert _boost_at(rf, 1, idx) == 20
+    assert _boost_at(rf, 2, idx) == 20  # still held, one frame short of the pickup
+    assert _boost_at(rf, 3, idx) == 100  # snaps exactly at the real sample
+
+
+def test_boost_holds_rather_than_lerps_across_a_kickoff_reset() -> None:
+    # Goal celebration leaves boost high; the kickoff re-announce resets it to a
+    # lower value. Without the resets check this decrease would lerp — wrong,
+    # since nothing drained, the round reset.
+    frames = [
+        cast(
+            FrameData,
+            {
+                "time": 0.0,
+                "new_actors": [{"actor_id": 1, "object_id": _CAR}],
+                "updated_actors": [
+                    _rb_update(1, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+                    _vehicle_link(2, 1),
+                    _boost_update(2, 100),
+                ],
+            },
+        ),
+        _frame(0.1),
+        cast(
+            FrameData,
+            {
+                "time": 0.2,
+                "new_actors": [
+                    {
+                        "actor_id": 1,
+                        "object_id": _CAR,
+                        "initial_trajectory": {
+                            "location": {"x": 0.0, "y": 0.0, "z": 0.0}
+                        },
+                    }
+                ],
+                "updated_actors": [_boost_update(2, 33)],
+            },
+        ),
+        _frame(0.3),
+    ]
+    rf = _extract(_replay(frames))
+    idx = _car_idx(rf)
+    assert _boost_at(rf, 1, idx) == 100  # held, not lerped toward 33
+    assert _boost_at(rf, 2, idx) == 33  # clean cut at the reset frame
+
+
+def test_boost_absent_component_leaves_slot_marked_has_boost_false() -> None:
+    frame = cast(
+        FrameData,
+        {
+            "time": 0.0,
+            "new_actors": [{"actor_id": 1, "object_id": _CAR}],
+            "updated_actors": [_rb_update(1, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))],
+        },
+    )
+    rf = _extract(_replay([frame]))
+    car = next(s for s in rf.slots if s.kind == "car")
+    assert car.has_boost is False
+    assert _boost_at(rf, 0, _car_idx(rf)) == 0
+
+
+def test_boost_present_component_marks_slot_has_boost_true_and_holds_before_first_sample() -> (
+    None
+):
+    rf = _extract(
+        _car_with_boost(
+            _frame(0.1),
+            _frame(0.2, updated=[_boost_update(2, 77)]),
+        )
+    )
+    car = next(s for s in rf.slots if s.kind == "car")
+    idx = _car_idx(rf)
+    assert car.has_boost is True
+    assert _boost_at(rf, 0, idx) == 77  # held back to segment start
+    assert _boost_at(rf, 1, idx) == 77
+    assert _boost_at(rf, 2, idx) == 77
+
+
+def test_real_replay_boost_buffer_is_full_length_and_in_range() -> None:
+    rf = replay_frames_of("match.json")
+    assert len(rf.boost) == len(rf.frame_times) * len(rf.slots)
+    assert all(0 <= b <= 255 for b in rf.boost)
+
+    ball = next(s for s in rf.slots if s.kind == "ball")
+    assert ball.has_boost is False
+
+    tracked = [s for s in rf.slots if s.is_tracked]
+    assert tracked
+    assert all(s.has_boost for s in tracked)
 
 
 # --- goal markers ---

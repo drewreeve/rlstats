@@ -122,5 +122,8 @@ class IdentityResolver:
             return None
         return self.resolve_car(car_id)
 
+    def car_for_component(self, comp_id: int) -> int | None:
+        return self._component_to_car.get(comp_id)
+
     def find_pri_ids_for(self, identities: AbstractSet[PlayerIdentity]) -> list[int]:
         return [aid for aid, ident in self._pri_identity.items() if ident in identities]

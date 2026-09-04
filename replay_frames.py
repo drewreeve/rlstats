@@ -52,6 +52,17 @@ def packed_buffer_bytes(frame_count: int, slot_count: int) -> int:
     return _BYTES_PER_FLOAT * frame_count * slot_count * FLOATS_PER_POSE
 
 
+def boost_offset(slot_count: int, frame: int, slot: int) -> int:
+    """Byte index of ``(frame, slot)``'s value in the row-major
+    ``[frame][slot]`` uint8 boost buffer — one byte per pose, no
+    ``FLOATS_PER_POSE`` stride.
+
+    Verbatim twin of ``boostOffset()`` in ``static/replay-core.js`` — keep in
+    lockstep. See CONTEXT.md "Replay Wire".
+    """
+    return frame * slot_count + slot
+
+
 # Boost pads are per-map level actors; every one's object name carries this
 # ("<map>.TheWorld:PersistentLevel.VehiclePickup_Boost_TA_<n>"). The name is the
 # pad's stable identity — the network updates that report pickups all share one
@@ -88,6 +99,10 @@ _Sample = tuple[int, float, float, float, float, float, float, float]
 # (x, y, z, qx, qy, qz, qw) — one row of the position buffer
 _Pose = tuple[float, float, float, float, float, float, float]
 
+# (frame_idx, boost_amount) — a raw 0-255 ReplicatedBoost sample on a car's
+# open segment, attributed via its boost component's Vehicle link.
+_BoostSample = tuple[int, int]
+
 _IDENTITY_POSE: _Pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
 
 
@@ -106,6 +121,10 @@ class ActorSlot:
     is_tracked: bool
     kind: str  # "car" | "ball"
     segments: list[tuple[int, int]]  # (start_frame, end_frame) inclusive, sorted
+    # False for the ball and for a car whose boost component never resolved (no
+    # network data to show) — the viewer hides the boost bar rather than
+    # rendering a misleading empty one. See CONTEXT.md "Replay Wire".
+    has_boost: bool
 
 
 @dataclass(frozen=True)
@@ -123,6 +142,11 @@ class ReplayFrames:
     positions: bytes  # F * N * 7 little-endian float32, row-major [frame][slot][x,y,z,qx,qy,qz,qw]
     tracked_team: int | None
     game_mode: str | None
+    # F * N uint8, row-major [frame][slot], raw 0-255 ReplicatedBoost scale.
+    # Served like `positions`, via its own .bin route — not part of meta_dict().
+    # A slot with has_boost == False holds all zeros here; the client must not
+    # render it as "empty tank".
+    boost: bytes = b""
     # all three in frame order; default empty for the no-network-data case
     goals: list[GoalMarker] = field(default_factory=list[GoalMarker])
     # (frame_index, n) per kickoff tick
@@ -140,7 +164,7 @@ class ReplayFrames:
 
     def meta_dict(self) -> dict[str, Any]:
         """The ``/api/matches/{id}/replay`` JSON body — every field except
-        ``positions`` (served raw by the ``.bin`` route).
+        ``positions`` and ``boost`` (each served raw by its own ``.bin`` route).
 
         The sole serialization entry point: ``server.py``'s route and
         ``tests/e2e/dump_fixture`` both call this rather than assembling the dict
@@ -186,7 +210,7 @@ WIRE_META_KEYS = frozenset(
 # path reads them today (they are there for a future per-player view); a rename
 # is still a breaking change once that view exists.
 WIRE_SLOT_FIELDS = frozenset(
-    {"identity", "name", "team", "is_tracked", "kind", "segments"}
+    {"identity", "name", "team", "is_tracked", "kind", "segments", "has_boost"}
 )
 
 WIRE_GOAL_FIELDS = frozenset({"frame", "team"})
@@ -213,6 +237,9 @@ class _Segment:
     samples: list[_Sample] = field(default_factory=list[_Sample])
     resets: set[int] = field(default_factory=set[int])  # kickoff re-announce frames
     slot: int = -1
+    # Raw ReplicatedBoost samples for this car's life, frame order. Empty for
+    # the ball and for a car whose boost component never resolved.
+    boost_samples: list[_BoostSample] = field(default_factory=list[_BoostSample])
 
 
 def _actor_updates(
@@ -326,6 +353,11 @@ class _WalkObjectIds:
     uid_oid: int | None
     paint_oid: int | None
     pickup_oid: int | None
+    # Boost: a CarComponent_Boost actor's Vehicle ActiveActor names its car;
+    # its ReplicatedBoost then carries the 0-255 amount. Both optional — a
+    # replay can lack boost network data entirely.
+    boost_oid: int | None = None
+    vehicle_oid: int | None = None
 
 
 def _walk(
@@ -353,6 +385,8 @@ def _walk(
     uid_oid = oids.uid_oid
     paint_oid = oids.paint_oid
     pickup_oid = oids.pickup_oid
+    boost_oid = oids.boost_oid
+    vehicle_oid = oids.vehicle_oid
 
     segments: list[_Segment] = []
     open_seg: dict[int, int] = {}  # actor_id -> index into segments
@@ -469,6 +503,19 @@ def _walk(
                     )
                 )
 
+            elif oid == vehicle_oid:
+                car_id = attr.get("ActiveActor", {}).get("actor")
+                if car_id is not None and car_id >= 0:
+                    resolver.link_component_to_car(aid, car_id)
+
+            elif oid == boost_oid:
+                amount = attr.get("ReplicatedBoost", {}).get("boost_amount")
+                if amount is not None:
+                    car_id = resolver.car_for_component(aid)
+                    si = open_seg.get(car_id) if car_id is not None else None
+                    if si is not None:
+                        segments[si].boost_samples.append((fidx, amount))
+
             elif oid == pickup_oid:
                 pad_oid = actor_pad.get(aid)
                 if pad_oid is None:
@@ -549,6 +596,7 @@ def _build_slots(
                 is_tracked=False,
                 kind="ball",
                 segments=sorted((s.start, s.end) for s in ball_segs),
+                has_boost=False,
             )
         )
 
@@ -575,6 +623,7 @@ def _build_slots(
                 is_tracked=identity in tracked_identities,
                 kind="car",
                 segments=sorted((s.start, s.end) for s in segs),
+                has_boost=any(s.boost_samples for s in segs),
             )
         )
 
@@ -591,6 +640,7 @@ def _build_slots(
                 is_tracked=False,
                 kind="car",
                 segments=[(seg.start, seg.end)],
+                has_boost=bool(seg.boost_samples),
             )
         )
 
@@ -753,6 +803,67 @@ def _densify(
     return buf
 
 
+def _boost_keyframes(seg: _Segment) -> list[tuple[int, int]]:
+    """The samples ``_densify_boost`` interpolates between, or ``[]`` if this
+    segment's boost component never resolved.
+
+    Unlike ``_keyframes`` there is no seed to fall back on: a leading gap before
+    the first real sample just holds that sample's value back to ``seg.start``.
+    """
+    samples = seg.boost_samples
+    if not samples:
+        return []
+    kf = list(samples)
+    if kf[0][0] > seg.start:
+        kf.insert(0, (seg.start, kf[0][1]))
+    return kf
+
+
+def _densify_boost(
+    segments: list[_Segment], frame_times: list[float], slot_count: int
+) -> "array[int]":
+    """Fill a dense F*N uint8 buffer of raw 0-255 boost amounts.
+
+    Mirrors ``_densify``'s shape (real samples, held gaps, a tail fill) but with
+    an asymmetric interpolation rule instead of a uniform lerp: boost *drains*
+    close to linearly, so a gap that ends lower than it started is lerped by
+    wall-clock time, same as pose. A gap that ends *higher* is a pickup — those
+    are effectively instantaneous, so it is held at the earlier (lower) value and
+    snaps only at the closing sample, exactly like a kickoff reset
+    (``seg.resets``, also held rather than lerped — everyone resets to the same
+    value, and lerping across the gap would invent a ramp that never happened).
+    A segment with no boost samples (component never resolved) is left at 0 —
+    the caller marks such slots ``has_boost=False`` so the client never renders
+    the resulting zeros as an empty tank.
+    """
+    buf = array("B", bytes(len(frame_times) * slot_count))
+
+    for seg in segments:
+        if seg.slot < 0:
+            continue
+        kf = _boost_keyframes(seg)
+        if not kf:
+            continue
+        lane_off = seg.slot
+
+        for (fa, va), (fb, vb) in zip(kf, kf[1:], strict=False):
+            ta = frame_times[fa]
+            span = frame_times[fb] - ta
+            if span <= 0.0 or vb > va or fb in seg.resets:
+                for fidx in range(fa, fb):
+                    buf[fidx * slot_count + lane_off] = va
+                continue
+            for fidx in range(fa, fb):
+                w = (frame_times[fidx] - ta) / span
+                buf[fidx * slot_count + lane_off] = round(va + (vb - va) * w)
+
+        last_f, last_v = kf[-1]
+        for fidx in range(last_f, seg.end + 1):
+            buf[fidx * slot_count + lane_off] = last_v
+
+    return buf
+
+
 def _resolve_pickups(
     raw: list[_RawPickup],
     segments: list[_Segment],
@@ -822,11 +933,14 @@ def extract_replay_frames(
         uid_oid=obj.get(NetObj.PRI_UNIQUE_ID),
         paint_oid=obj.get(NetObj.TEAM_PAINT),
         pickup_oid=obj.get(NetObj.PICKUP_DATA),
+        boost_oid=obj.get(NetObj.REPLICATED_BOOST),
+        vehicle_oid=obj.get(NetObj.VEHICLE),
     )
     segments, raw_pickups = _walk(replay, oids, pad_oids)
     slots = _build_slots(segments, tracked_identities, player_names)
     frame_times = [float(f["time"]) for f in replay.frames]
     buf = _densify(segments, frame_times, len(slots))
+    boost_buf = _densify_boost(segments, frame_times, len(slots))
     goals = _scan_goals(replay, obj.get(NetObj.SCORED_ON_TEAM))
     countdowns = _scan_countdowns(replay, obj.get(NetObj.COUNTDOWN))
     dead_periods = _dead_periods(goals, countdowns)
@@ -838,6 +952,7 @@ def extract_replay_frames(
         positions=buf.tobytes(),
         tracked_team=tracked_team,
         game_mode=game_mode,
+        boost=boost_buf.tobytes(),
         goals=goals,
         countdowns=countdowns,
         dead_periods=dead_periods,

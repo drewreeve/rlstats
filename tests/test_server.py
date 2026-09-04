@@ -256,9 +256,18 @@ def test_replay_frames_bin_length_matches_meta(replay_client: TestClient) -> Non
     )
 
 
+def test_replay_boost_bin_length_matches_meta(replay_client: TestClient) -> None:
+    meta: Any = replay_client.get("/api/matches/1/replay").json()
+    r = replay_client.get("/api/matches/1/replay-boost.bin")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert len(r.content) == len(meta["frame_times"]) * len(meta["slots"])
+
+
 def test_replay_routes_404_for_unknown_match(replay_client: TestClient) -> None:
     assert replay_client.get("/api/matches/9999/replay").status_code == 404
     assert replay_client.get("/api/matches/9999/replay-frames.bin").status_code == 404
+    assert replay_client.get("/api/matches/9999/replay-boost.bin").status_code == 404
     assert replay_client.get("/match/9999/replay").status_code == 404
 
 

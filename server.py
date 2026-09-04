@@ -377,6 +377,17 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.get("/api/matches/{match_id}/replay-boost.bin")
+    async def match_replay_boost_bin(
+        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
+    ) -> Response:
+        frames = _replay_frames_or_404(conn, match_id)
+        return Response(
+            content=frames.boost,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "no-store"},
+        )
+
     # -- Stats routes --
 
     def game_mode(mode: str = "3v3") -> str:
