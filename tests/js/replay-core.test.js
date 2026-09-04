@@ -24,6 +24,7 @@ import {
   buildBoostPadTimeline,
   countdownLabelAt,
   createTransport,
+  decodeReplayEnvelope,
   FLOATS_PER_POSE,
   formatClock,
   makePoseBuffers,
@@ -223,6 +224,56 @@ test("real fixture: boost_pads group to ascending per-pad timelines", () => {
   const entry = pads[pad];
   const want = { collected: entry.collected[3] === 1, since: entry.times[3] };
   assert.deepEqual(boostPadStateAt(entry, entry.times[3] + 0.01), want);
+});
+
+// ---------------------------------------------------------------------------
+// decodeReplayEnvelope
+// ---------------------------------------------------------------------------
+
+// Builds the same wire shape server.py sends: a 12-byte header (three LE
+// uint32 lengths — positions, boost, meta) then positions, boost, meta bytes.
+// Takes the typed arrays directly (not raw byte buffers) so call sites don't
+// each re-derive a Buffer view onto `.buffer`/byteOffset/byteLength by hand.
+function buildEnvelope(metaObj, positions, boost) {
+  const positionsBytes = Buffer.from(positions.buffer, positions.byteOffset, positions.byteLength);
+  const boostBytes = Buffer.from(boost.buffer, boost.byteOffset, boost.byteLength);
+  const metaBytes = Buffer.from(JSON.stringify(metaObj), "utf8");
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(positionsBytes.length, 0);
+  header.writeUInt32LE(boostBytes.length, 4);
+  header.writeUInt32LE(metaBytes.length, 8);
+  const combined = Buffer.concat([header, positionsBytes, boostBytes, metaBytes]);
+  return combined.buffer.slice(combined.byteOffset, combined.byteOffset + combined.byteLength);
+}
+
+test("decodeReplayEnvelope: round-trips the real fixture", () => {
+  const { meta, positions, boost } = loadFixture();
+  const envelope = buildEnvelope(meta, positions, boost);
+  const decoded = decodeReplayEnvelope(envelope);
+  assert.deepEqual(decoded.meta, meta);
+  assert.deepEqual(Array.from(decoded.positions), Array.from(positions));
+  assert.deepEqual(Array.from(decoded.boost), Array.from(boost));
+});
+
+test("decodeReplayEnvelope: round-trips a small synthetic buffer (odd meta length, odd boost length)", () => {
+  // Distinct from the real-fixture round trip above: exercises byte lengths
+  // that don't divide evenly, on a buffer small enough to eyeball by hand.
+  const meta = { odd: "x" };
+  const positions = Float32Array.from([1, -2.5, 3, 4.25]);
+  const boost = Uint8Array.from([9, 8, 7]);
+  const envelope = buildEnvelope(meta, positions, boost);
+  const decoded = decodeReplayEnvelope(envelope);
+  assert.deepEqual(decoded.meta, meta);
+  assert.deepEqual(Array.from(decoded.positions), Array.from(positions));
+  assert.deepEqual(Array.from(decoded.boost), Array.from(boost));
+});
+
+test("decodeReplayEnvelope: throws on a truncated buffer", () => {
+  const positions = Float32Array.from([1, 2]);
+  const boost = Uint8Array.from([1]);
+  const envelope = buildEnvelope({ a: 1 }, positions, boost);
+  const truncated = envelope.slice(0, envelope.byteLength - 1);
+  assert.throws(() => decodeReplayEnvelope(truncated));
 });
 
 test("outlineHalfWidth: flat wall vs chamfered corner", () => {

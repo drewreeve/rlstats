@@ -27,6 +27,7 @@ import {
   carColor,
   countdownLabelAt,
   createTransport,
+  decodeReplayEnvelope,
   formatClock,
   makePoseBuffers,
   outlineHalfWidth,
@@ -1542,6 +1543,8 @@ function buildScene(meta, positions, boost) {
     scene,
     THREE,
     meta,
+    positions,
+    boost,
     goalFx,
     boostPads,
   };
@@ -1603,27 +1606,16 @@ async function main() {
     return;
   }
   try {
-    const metaRes = await fetch(`/api/matches/${matchId}/replay`);
-    if (!metaRes.ok) {
+    const res = await fetch(`/api/matches/${matchId}/replay`);
+    if (!res.ok) {
       showMessage(
-        metaRes.status === 404
+        res.status === 404
           ? "No replay file for this match."
           : "This replay could not be loaded.",
       );
       return;
     }
-    const meta = await metaRes.json();
-
-    const [binRes, boostRes] = await Promise.all([
-      fetch(`/api/matches/${matchId}/replay-frames.bin`),
-      fetch(`/api/matches/${matchId}/replay-boost.bin`),
-    ]);
-    if (!binRes.ok || !boostRes.ok) {
-      showMessage("This replay could not be loaded.");
-      return;
-    }
-    const positions = new Float32Array(await binRes.arrayBuffer());
-    const boost = new Uint8Array(await boostRes.arrayBuffer());
+    const { meta, positions, boost } = decodeReplayEnvelope(await res.arrayBuffer());
 
     await document.fonts.ready; // so name labels render in DM Mono, not fallback
     buildScene(meta, positions, boost);

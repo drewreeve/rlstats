@@ -19,10 +19,12 @@ test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
   page.on("pageerror", (e) => console.log(`[page error] ${e.message}`));
   await page.goto("/match/1/replay?debug");
+  // window.__replay.playback only exists once main() has fetched and decoded
+  // the real envelope over HTTP to build the scene, so this already exercises
+  // the merged envelope's wire (docs/adr/0004's addendum) — no separate fetch
+  // needed here.
   await page.waitForFunction(() => window.__replay?.playback, null, { timeout: 45_000 });
-  meta = await page.evaluate(() =>
-    fetch("/api/matches/1/replay").then((r) => r.json()),
-  );
+  meta = await page.evaluate(() => window.__replay.meta);
 });
 
 test.afterAll(async () => {
@@ -324,11 +326,8 @@ test("applyPoses() writes exactly what replay-core.js writePoses() produces", as
   // would let an independent nudge/clamp added inside applyPoses() slip past,
   // which is the drift this test exists to catch.
   const worst = await page.evaluate(async () => {
-    const { playback, meshes, meta } = window.__replay;
+    const { playback, meshes, meta, positions } = window.__replay;
     const core = await import("/static/replay-core.js");
-    const positions = new Float32Array(
-      await (await fetch("/api/matches/1/replay-frames.bin")).arrayBuffer(),
-    );
     const buf = core.makePoseBuffers(meta.slots.length);
     const TP = core.TRAIL_POINTS;
 
@@ -465,10 +464,8 @@ test.describe("hoops arena", () => {
   });
 
   test("meta reports hoops", async () => {
-    const meta = await hoopsPage.evaluate(() =>
-      fetch("/api/matches/2/replay").then((r) => r.json()),
-    );
-    expect(meta.game_mode).toBe("hoops");
+    const gameMode = await hoopsPage.evaluate(() => window.__replay.meta.game_mode);
+    expect(gameMode).toBe("hoops");
   });
 
   test("the scene is built from the hoops spec — footprint, ring goals, 20 pads", async () => {

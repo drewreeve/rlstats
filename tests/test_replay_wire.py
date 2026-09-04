@@ -2,7 +2,7 @@
 
 Modelled on ``tests/test_stats_registry.py``: run a real parsed replay through
 ``extract_replay_frames``, serialize it exactly as the ``/api/matches/{id}/replay``
-route does (``jsonable_encoder(frames.meta_dict())``), and assert every emitted
+route does (``replay_view.encode_replay_meta``), and assert every emitted
 key set and packed-row width matches the hand-written ``WIRE_*`` manifest in
 ``replay_frames``. A renamed ``ActorSlot`` field or a changed tuple width fails
 here — fast, no browser.
@@ -14,8 +14,6 @@ what binds the two, in both directions.
 from dataclasses import fields
 from typing import Any
 
-from fastapi.encoders import jsonable_encoder
-
 from replay_frames import (
     WIRE_GOAL_FIELDS,
     WIRE_META_KEYS,
@@ -26,6 +24,7 @@ from replay_frames import (
     ReplayFrames,
     packed_buffer_bytes,
 )
+from replay_view import encode_replay_meta
 from tests.fixtures import replay_frames_of
 
 
@@ -33,7 +32,7 @@ def _wire(name: str = "match.json") -> tuple[ReplayFrames, Any]:
     """A real ``ReplayFrames`` and its serialized meta — the exact pair the
     route and ``tests/e2e/dump_fixture`` produce."""
     frames = replay_frames_of(name)
-    return frames, jsonable_encoder(frames.meta_dict())
+    return frames, encode_replay_meta(frames)
 
 
 # --- the manifest vs the dataclasses (fixture-free, both directions) ---
@@ -98,7 +97,7 @@ def test_empty_replay_frames_still_carries_every_meta_key() -> None:
     empty = ReplayFrames(
         frame_times=[], slots=[], positions=b"", tracked_team=None, game_mode=None
     )
-    meta = jsonable_encoder(empty.meta_dict())
+    meta = encode_replay_meta(empty)
     assert set(meta) == WIRE_META_KEYS
     assert meta["frame_times"] == []
     assert meta["slots"] == []

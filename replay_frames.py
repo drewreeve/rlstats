@@ -143,9 +143,9 @@ class ReplayFrames:
     tracked_team: int | None
     game_mode: str | None
     # F * N uint8, row-major [frame][slot], raw 0-255 ReplicatedBoost scale.
-    # Served like `positions`, via its own .bin route — not part of meta_dict().
-    # A slot with has_boost == False holds all zeros here; the client must not
-    # render it as "empty tank".
+    # Served like `positions`, packed into the same wire envelope — not part of
+    # meta_dict(). A slot with has_boost == False holds all zeros here; the
+    # client must not render it as "empty tank".
     boost: bytes = b""
     # all three in frame order; default empty for the no-network-data case
     goals: list[GoalMarker] = field(default_factory=list[GoalMarker])
@@ -163,13 +163,15 @@ class ReplayFrames:
     )
 
     def meta_dict(self) -> dict[str, Any]:
-        """The ``/api/matches/{id}/replay`` JSON body — every field except
-        ``positions`` and ``boost`` (each served raw by its own ``.bin`` route).
+        """The meta slice of the ``/api/matches/{id}/replay`` wire envelope —
+        every field except ``positions`` and ``boost`` (packed into the same
+        envelope raw, alongside this JSON; see ``replay_view.serialize_replay_envelope``).
 
-        The sole serialization entry point: ``server.py``'s route and
-        ``tests/e2e/dump_fixture`` both call this rather than assembling the dict
-        themselves. It is *not* the wire-shape declaration — that is the
-        ``WIRE_*`` manifest below. See CONTEXT.md "Replay Wire".
+        The sole serialization entry point: ``replay_view.encode_replay_meta``
+        (used by the route, ``tests/e2e/dump_fixture`` and ``test_replay_wire``)
+        calls this rather than assembling the dict itself. It is *not* the
+        wire-shape declaration — that is the ``WIRE_*`` manifest below. See
+        CONTEXT.md "Replay Wire".
         """
         return {
             "frame_times": self.frame_times,

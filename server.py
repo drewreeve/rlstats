@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -351,39 +352,26 @@ def create_app(
         path = replay_view.replay_path_for(conn, upload_dir, match_id)
         return {"has_replay": path is not None}
 
-    def _replay_frames_or_404(conn: sqlite3.Connection, match_id: int):
+    @app.get("/api/matches/{match_id}/replay")
+    async def match_replay(
+        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
+    ) -> Response:
+        """The merged replay envelope: meta + positions + boost from a single
+        rrrocket parse. See docs/adr/0004's addendum — this used to be 3 routes,
+        each re-parsing the file from scratch."""
         path = replay_view.replay_path_for(conn, upload_dir, match_id)
         if path is None:
             raise HTTPException(status_code=404, detail="No replay for this match")
-        frames = replay_view.build_replay_frames(path, tracked_players)
+        # Only the parse goes to a worker thread — replay_path_for's DB read
+        # above is sub-millisecond, nothing to gain by moving it too. Without
+        # this, rrrocket's ~250ms subprocess call blocks the whole event loop.
+        frames = await asyncio.to_thread(
+            replay_view.build_replay_frames, path, tracked_players
+        )
         if frames is None:
             raise HTTPException(status_code=422, detail="Replay could not be read")
-        return frames
-
-    @app.get("/api/matches/{match_id}/replay")
-    async def match_replay_meta(
-        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
-    ) -> Any:
-        return _replay_frames_or_404(conn, match_id).meta_dict()
-
-    @app.get("/api/matches/{match_id}/replay-frames.bin")
-    async def match_replay_frames_bin(
-        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
-    ) -> Response:
-        frames = _replay_frames_or_404(conn, match_id)
         return Response(
-            content=frames.positions,
-            media_type="application/octet-stream",
-            headers={"Cache-Control": "no-store"},
-        )
-
-    @app.get("/api/matches/{match_id}/replay-boost.bin")
-    async def match_replay_boost_bin(
-        match_id: int, conn: Annotated[sqlite3.Connection, Depends(get_conn)]
-    ) -> Response:
-        frames = _replay_frames_or_404(conn, match_id)
-        return Response(
-            content=frames.boost,
+            content=replay_view.serialize_replay_envelope(frames),
             media_type="application/octet-stream",
             headers={"Cache-Control": "no-store"},
         )

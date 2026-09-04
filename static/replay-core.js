@@ -441,6 +441,33 @@ export function makePoseBuffers(slotCount) {
   };
 }
 
+// Decode the merged `/api/matches/{id}/replay` response: a 12-byte header —
+// three little-endian uint32 lengths (positions, boost, meta) — followed by
+// the positions buffer, the boost buffer, then the meta JSON bytes, in that
+// order. Positions sits right after the fixed-size header so a Float32Array
+// view onto it stays 4-byte aligned; meta goes last because a JSON byte length
+// is essentially never 4-aligned itself. See docs/adr/0004's addendum.
+export function decodeReplayEnvelope(buffer) {
+  const header = new DataView(buffer, 0, 12);
+  const positionsLen = header.getUint32(0, true);
+  const boostLen = header.getUint32(4, true);
+  const metaLen = header.getUint32(8, true);
+  const positionsStart = 12;
+  const boostStart = positionsStart + positionsLen;
+  const metaStart = boostStart + boostLen;
+  const metaEnd = metaStart + metaLen;
+  if (metaEnd !== buffer.byteLength) {
+    throw new Error(
+      `replay envelope: header claims ${metaEnd} bytes, buffer has ${buffer.byteLength}`,
+    );
+  }
+  const positions = new Float32Array(buffer, positionsStart, positionsLen / 4);
+  const boost = new Uint8Array(buffer, boostStart, boostLen);
+  const metaBytes = new Uint8Array(buffer, metaStart, metaLen);
+  const meta = JSON.parse(new TextDecoder().decode(metaBytes));
+  return { meta, positions, boost };
+}
+
 const _q = [0, 0, 0, 0];
 
 // Fill `out` (from makePoseBuffers) with every slot's pose at wall-clock time
@@ -453,12 +480,13 @@ const _q = [0, 0, 0, 0];
 // lerping toward a zero pose. The trail's head is the live position; the rest
 // walk backward through the buffer while the slot stays live, never across a gap.
 //
-// `boost` is the optional packed [frame][slot] buffer from replay-boost.bin —
-// when given, out.boost is lerp'd the same way as position, between the same
-// bracket and with the same live-end snap. The server (_densify_boost) already
-// resolved the discontinuity between draining and a pickup; a client-side lerp
-// across two already-densified, ~33ms-apart frames adds at most one frame of
-// blend, imperceptible next to that server-side shape.
+// `boost` is the optional packed [frame][slot] buffer from the replay envelope
+// (see decodeReplayEnvelope) — when given, out.boost is lerp'd the same way as
+// position, between the same bracket and with the same live-end snap. The
+// server (_densify_boost) already resolved the discontinuity between draining
+// and a pickup; a client-side lerp across two already-densified, ~33ms-apart
+// frames adds at most one frame of blend, imperceptible next to that
+// server-side shape.
 export function writePoses(meta, positions, t, out, boost = null) {
   const times = meta.frame_times;
   const slots = meta.slots;

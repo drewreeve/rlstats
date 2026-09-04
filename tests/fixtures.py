@@ -1,13 +1,15 @@
 import functools
 import json
 import sqlite3
+import struct
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from config import load_settings
 from db import apply_migrations
 from ingest import Analyzed, analyze_replay, build_replay_context, write_match
 from replay_frames import ReplayFrames, extract_replay_frames
+from replay_view import ENVELOPE_HEADER_FORMAT, ENVELOPE_HEADER_SIZE
 from rrrocket_schema import ReplayJSON
 from rrrocket_schema import parse as parse_replay
 
@@ -38,6 +40,26 @@ def replay_frames_of(name: str) -> ReplayFrames:
         player_names=context.player_names,
         game_mode=context.game_mode,
     )
+
+
+def unpack_replay_envelope(content: bytes) -> tuple[bytes, bytes, Any]:
+    """Split a ``replay_view.serialize_replay_envelope`` response back into
+    ``(positions, boost, meta)`` — the one place tests decode the header
+    rather than each hand-rolling the offset arithmetic."""
+    positions_len, boost_len, meta_len = struct.unpack(
+        ENVELOPE_HEADER_FORMAT, content[:ENVELOPE_HEADER_SIZE]
+    )
+    positions_start = ENVELOPE_HEADER_SIZE
+    boost_start = positions_start + positions_len
+    meta_start = boost_start + boost_len
+    meta_end = meta_start + meta_len
+    assert meta_end == len(content), (
+        f"envelope header claims {meta_end} bytes, got {len(content)}"
+    )
+    positions = content[positions_start:boost_start]
+    boost = content[boost_start:meta_start]
+    meta = json.loads(content[meta_start:meta_end])
+    return positions, boost, meta
 
 
 def in_memory_db() -> sqlite3.Connection:

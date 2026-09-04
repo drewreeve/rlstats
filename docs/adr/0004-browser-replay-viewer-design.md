@@ -30,9 +30,9 @@ field visible, no game camera). **This is the model we copied.** `calculated.gg`
 | 5 | Server extraction | `replay_frames.py`: a pure reshape over a `ParsedReplay`, own lean single pass over `replay.frames`. **Not** routed through `queries.py` (not a DB read) or `analyze_frames` (not the aggregate pipeline). |
 | 6 | Player identity | Full identity in v1: each car labelled with the player's name, coloured tracked-team vs opponent. Reuses the `car → PRI → (platform, id)` chain from `frame_analysis.py`. |
 | 7 | v1 feature scope | See below. |
-| 8 | Transport | Small JSON metadata doc + a separate packed **little-endian `Float32`** `.bin` of positions. One-shot, server gzip, no chunking. |
+| 8 | Transport | ~~Small JSON metadata doc + a separate packed **little-endian `Float32`** `.bin` of positions.~~ **Superseded — see addendum.** One-shot, server gzip, no chunking. |
 | 9 | Three.js delivery | No importmap. `static/replay.js` imports Three + `OrbitControls` + `RoomEnvironment` by full jsdelivr `/+esm` URL (pre-resolves all bare specifiers). All covered by the existing `script-src cdn.jsdelivr.net` — **no CSP change.** An inline importmap would have needed one. |
-| 10 | Caching | None in v1 (measured: rrrocket + reshape well under a second). Add an in-process LRU only if click-to-view latency annoys. **Never an on-disk sidecar** — that is the persistence layer rejected in #2. |
+| 10 | Caching | ~~None in v1 (measured: rrrocket + reshape well under a second). Add an in-process LRU only if click-to-view latency annoys.~~ **Moot — see addendum.** **Never an on-disk sidecar** — that is the persistence layer rejected in #2. |
 | 11 | Arena / mode coverage | Standard soccar arena only (`buildArena` is hardcoded soccar; covers 3v3, 2v2, any soccar-arena mode). Positions in the `.bin` are mode-agnostic, so a second arena is purely additive. **Gap:** the link is *not* mode-gated — `has-replay` is a file-existence probe, so a Hoops/Dropshot match with a replay on disk still opens the viewer, in a soccar arena. **Resolved for hoops in ADR-0005** (`arenaSpec(game_mode)` + a hoops arena; Dropshot/Snowday still fall back to soccar). |
 | 12 | Orientation | Normalise: the tracked team always attacks the same on-screen direction, every match, regardless of their colour. Enforced client-side by `field.rotation.z = π` when `tracked_team === 1`. |
 | 13 | Link availability & failure | Show "▶ WATCH REPLAY" only when `matches.replay_filename` is set and `replays/<name>` exists; 404 otherwise. On a view-time parse failure return an error payload the page renders — and **never delete the file** (unlike the ingest path). |
@@ -89,23 +89,28 @@ trace) is regen'd by `tests/e2e/dump_fixture.py`.
 ```
 GET /match/{id}/replay                   -> replay.html   (404 if no file on disk)
 GET /api/matches/{id}/has-replay         -> {"has_replay": bool}   (1 query + stat, no parse)
-GET /api/matches/{id}/replay             -> metadata JSON: frame_times, slots, tracked_team, game_mode, goals, countdowns, dead_periods, boost_pads  (404 no file / 422 unparseable)
-GET /api/matches/{id}/replay-frames.bin  -> Float32 position buffer, octet-stream
+GET /api/matches/{id}/replay             -> the wire envelope: positions + boost + meta JSON, octet-stream  (404 no file / 422 unparseable)
 ```
+
+(Superseded — see addendum below. `/replay` originally returned JSON, with a
+separate `GET /api/matches/{id}/replay-frames.bin` alongside it; a third route,
+`replay-boost.bin`, was added later. All three are now the single envelope
+route above.)
 
 - `has-replay` gates the match-page link without paying an rrrocket parse on
   every match-page load. `422` covers "file present but rrrocket failed / no
   network data" — the page renders that, not a dead viewer.
-- `GZipMiddleware` (`minimum_size=1024`) compresses the metadata and the buffer.
-- The meta and `.bin` routes **each** re-parse the replay (~250 ms rrrocket +
-  ~40 ms reshape) — opening the viewer costs two parses, within decision 10's
-  budget.
+- `GZipMiddleware` (`minimum_size=1024`) compresses the envelope.
 - Route glue is in **`replay_view.py`** (`replay_path_for`,
-  `build_replay_frames`), keeping `server.py`'s closures thin.
+  `build_replay_frames`, `encode_replay_meta`/`encode_replay_meta_bytes`,
+  `serialize_replay_envelope`), keeping `server.py`'s closures thin.
   `build_replay_frames` builds the `extract_replay_frames` inputs via
   `ingest.build_replay_context()` (the shared pre-frame preamble — see
-  CONTEXT.md "Replay Context") and uses **`process.run_rrrocket()`**, a
-  non-deleting sibling of `parse_replay()`.
+  CONTEXT.md "Replay Context") and uses **`rrrocket.run_rrrocket()`**, a
+  non-deleting sibling of `process.parse_replay()`. The route offloads only
+  the `build_replay_frames` call to a worker thread
+  (`asyncio.to_thread`) — the preceding `replay_path_for` DB read stays on the
+  event loop, since it's sub-millisecond and offloading it would buy nothing.
 - **Match id → file.** Replay files are named by the uploader, *not* by
   `MatchGUID` (`matches.replay_hash` stores the GUID — the two never match). The
   nullable `matches.replay_filename` column (migration 020, source basename) is
@@ -163,13 +168,14 @@ actor ids recycle through the match, so the walk rebinds them to their
 pad on each `new_actors` announce and emits a row only when the pad's
 collected/available state actually flips (the game re-sends it).
 
-The JSON endpoint serialises everything except `positions` (via
+*(Pre-addendum snapshot — see below for the current, merged-envelope
+transport.)* The JSON endpoint serialises everything except `positions` (via
 `ReplayFrames.meta_dict()`, the sole entry point); the `.bin` endpoint returns
 `positions`.
 
 Since v1 this shape is pinned in code, not only here: `replay_frames.py` carries a
 hand-written `WIRE_META_KEYS` / `WIRE_SLOT_FIELDS` / `WIRE_GOAL_FIELDS` /
-`WIRE_TUPLE_WIDTHS` manifest, the `.bin` geometry is `pose_offset()` /
+`WIRE_TUPLE_WIDTHS` manifest, the positions-buffer geometry is `pose_offset()` /
 `packed_buffer_bytes()` (twins of `poseOffset` / `FLOATS_PER_POSE` in
 `replay-core.js`), and `tests/test_replay_wire.py` asserts the serialised output
 against the manifest — the replay-side analogue of `tests/test_stats_registry.py`.
@@ -333,3 +339,51 @@ above.)
 - Desktop-first; no mobile/touch tuning in v1.
 - The read endpoints follow the same auth posture as `/api/matches/{id}`.
 - The full frame stream is shown (warmup + celebrations); the user scrubs past.
+
+## Addendum (2026-09-04): merge the three routes into one envelope
+
+Decision 8 (transport) and decision 10 (caching) are **superseded**.
+
+**What changed.** A third route, `/api/matches/{id}/replay-boost.bin`, was
+added (per-player boost meter) without revisiting decision 10's stated budget
+of "two re-parses, well under a second." Opening the viewer was now paying
+**three** independent rrrocket subprocess calls for the same file — one per
+route, each running the full `build_replay_frames` (parse + reshape) from
+scratch. Separately, all three routes were `async def` handlers calling
+blocking `subprocess.run` directly: on uvicorn's default single-worker /
+single-event-loop setup, each ~250-290ms rrrocket call froze the *entire*
+server — every user, every page — not just the requesting viewer's own
+request.
+
+**Why not the decision-10 LRU escape hatch instead.** An in-process cache
+would cut the rrrocket calls back down without touching the transport split,
+but it buys less than merging: it needs invalidation (on `--force`
+reprocessing) and a memory bound, for a saving the merge gets for free by
+deleting two-thirds of the redundant work outright, with no new state. Nothing
+decision 8 protected turns out to be load-bearing today: neither `.bin` route
+ever sent cache validators (`Cache-Control: no-store` on both), so no browser
+HTTP caching was ever in play; and `replay.js` always awaited all three
+responses before building the scene, so there was no progressive-rendering
+benefit to losing either. The one real cost is that the meta JSON is no longer
+independently curl-able / pretty-printable in devtools — `window.__replay.meta`
+under `?debug` covers that in practice.
+
+**New shape.** `GET /api/matches/{id}/replay` (same URL, no longer JSON) now
+returns one `application/octet-stream` envelope built by
+`replay_view.serialize_replay_envelope()`: a 12-byte header of three
+little-endian `uint32` lengths (`positionsLen`, `boostLen`, `metaLen`), then
+the positions buffer, then the boost buffer, then the meta JSON bytes.
+Positions is placed right after the fixed-size header — not after meta — so
+its `Float32Array` view stays 4-byte-aligned regardless of the JSON's byte
+length; `metaLen` lets the decoder assert the buffer's total length rather
+than trusting an implicit remainder. `decodeReplayEnvelope()` in
+`static/replay-core.js` is the client-side counterpart (pure, zero-import,
+covered by `tests/js/replay-core.test.js`). `/replay-frames.bin` and
+`/replay-boost.bin` are deleted.
+
+The remaining blocking-call problem is fixed independently: the route now
+offloads only `replay_view.build_replay_frames()` — not the DB lookup ahead of
+it — to a worker thread via `asyncio.to_thread`, so a replay parse no longer
+stalls other requests.
+
+See CONTEXT.md "Replay Wire" for the current (post-merge) contract.

@@ -12,17 +12,14 @@ then eyeball ``mise run test-js``:
     uv run python tests/e2e/dump_fixture.py
 """
 
-import json
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from fastapi.encoders import jsonable_encoder  # noqa: E402
-
 from config import load_settings  # noqa: E402
-from replay_view import build_replay_frames  # noqa: E402
+from replay_view import build_replay_frames, encode_replay_meta_bytes  # noqa: E402
 
 DATA_DIR = REPO_ROOT / "tests" / "data"
 OUT_DIR = DATA_DIR / "replay-viewer"
@@ -35,12 +32,11 @@ def main() -> None:
     if frames is None:
         raise SystemExit("build_replay_frames returned None (rrrocket on PATH?)")
 
-    # The same dict the match_replay_meta route serves (ReplayFrames.meta_dict).
-    meta = jsonable_encoder(frames.meta_dict())
+    # The exact bytes the merged /api/matches/{id}/replay route's meta slice
+    # carries.
+    meta_bytes = encode_replay_meta_bytes(frames)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUT_DIR / "meta.json").write_text(
-        json.dumps(meta, separators=(",", ":"), ensure_ascii=False)
-    )
+    (OUT_DIR / "meta.json").write_bytes(meta_bytes)
     (OUT_DIR / "frames.bin").write_bytes(frames.positions)
     (OUT_DIR / "boost.bin").write_bytes(frames.boost)
     print(

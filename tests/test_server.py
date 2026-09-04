@@ -10,7 +10,13 @@ import queries
 import replay_frames
 from process import process_unprocessed
 from server import create_app
-from tests.fixtures import TEST_DATA_DIR, TRACKED_PLAYERS, cached_db, file_db
+from tests.fixtures import (
+    TEST_DATA_DIR,
+    TRACKED_PLAYERS,
+    cached_db,
+    file_db,
+    unpack_replay_envelope,
+)
 
 
 @pytest.fixture
@@ -235,39 +241,27 @@ def test_has_replay_false_when_file_missing(replay_client: TestClient, tmp_path:
     assert replay_client.get(f"/match/{ghost_id}/replay").status_code == 404
 
 
-def test_replay_meta_route_serializes_the_wire_shape(replay_client: TestClient) -> None:
+def test_replay_route_serializes_the_merged_envelope(replay_client: TestClient) -> None:
     # The wire shape itself is owned by tests/test_replay_wire.py (key sets, row
     # widths) and its semantics by tests/test_replay_frames.py. Here we only
-    # prove the HTTP route emits it — 200, JSON, the manifest key set — through
-    # FastAPI + jsonable_encoder + gzip.
+    # prove the HTTP route emits it — 200, octet-stream, no-store, the manifest
+    # key set, and buffer lengths matching the meta dimensions — through
+    # FastAPI + the envelope serializer + gzip.
     r = replay_client.get("/api/matches/1/replay")
     assert r.status_code == 200
-    assert r.headers["content-type"].startswith("application/json")
-    assert set(r.json()) == replay_frames.WIRE_META_KEYS
-
-
-def test_replay_frames_bin_length_matches_meta(replay_client: TestClient) -> None:
-    meta: Any = replay_client.get("/api/matches/1/replay").json()
-    r = replay_client.get("/api/matches/1/replay-frames.bin")
-    assert r.status_code == 200
     assert r.headers["content-type"] == "application/octet-stream"
-    assert len(r.content) == replay_frames.packed_buffer_bytes(
+    assert r.headers["cache-control"] == "no-store"
+
+    positions, boost, meta = unpack_replay_envelope(r.content)
+    assert set(meta) == replay_frames.WIRE_META_KEYS
+    assert len(positions) == replay_frames.packed_buffer_bytes(
         len(meta["frame_times"]), len(meta["slots"])
     )
-
-
-def test_replay_boost_bin_length_matches_meta(replay_client: TestClient) -> None:
-    meta: Any = replay_client.get("/api/matches/1/replay").json()
-    r = replay_client.get("/api/matches/1/replay-boost.bin")
-    assert r.status_code == 200
-    assert r.headers["content-type"] == "application/octet-stream"
-    assert len(r.content) == len(meta["frame_times"]) * len(meta["slots"])
+    assert len(boost) == len(meta["frame_times"]) * len(meta["slots"])
 
 
 def test_replay_routes_404_for_unknown_match(replay_client: TestClient) -> None:
     assert replay_client.get("/api/matches/9999/replay").status_code == 404
-    assert replay_client.get("/api/matches/9999/replay-frames.bin").status_code == 404
-    assert replay_client.get("/api/matches/9999/replay-boost.bin").status_code == 404
     assert replay_client.get("/match/9999/replay").status_code == 404
 
 

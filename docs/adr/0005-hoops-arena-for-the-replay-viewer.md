@@ -5,10 +5,11 @@ flagged the exact gap this closes: the viewer draws every replay in the standard
 soccar arena, so a Hoops match with a replay on disk opens the viewer in the
 wrong field.
 
-The position `.bin` is already mode-agnostic (world coords, no arena assumptions),
+The positions buffer is already mode-agnostic (world coords, no arena assumptions),
 and `game_mode` (`"3v3" | "2v2" | "hoops"`) is already detected server-side
 (`ingest.detect_game_mode`) and serialised to the client as `meta.game_mode`
-(`server.py` → `match_replay_meta`). The render side was expected to be **purely
+(`server.py` → `match_replay`, the merged replay-envelope route — see
+ADR-0004's addendum). The render side was expected to be **purely
 additive** — but implementation found `extract_replay_frames` never produced any
 frames for a hoops replay (the ball actor is named `Ball_BasketBall`, not
 `Ball_Default`), so the viewer 404'd before the arena mattered. Decision #10
