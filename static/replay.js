@@ -132,13 +132,10 @@ const CAM_PRESETS = {
   },
 };
 
-let viewSize = CAM_PRESETS.broadcast.size;
-
 // The presets above are tuned to the standard footprint. Other arenas scale
 // `pos` / `target` / `size` by whichever axis is largest relative to standard's
-// same axis, so the field frames the same; `applyCamPreset` applies it. 1 for
-// standard.
-let camScale = 1;
+// same axis, so the field frames the same; `createCameraRig`'s `applyPreset`
+// applies it. 1 for standard.
 const STD_SPEC = arenaSpec(null);
 const arenaCamScale = (spec) =>
   Math.max(
@@ -146,9 +143,6 @@ const arenaCamScale = (spec) =>
     (spec.halfY + spec.goalClearance) /
       (STD_SPEC.halfY + STD_SPEC.goalClearance),
   );
-
-// Player name labels start on; the NAMES button / `n` key flip this.
-let showNames = true;
 
 const stage =
   document.querySelector('[data-role="stage"]') ||
@@ -169,9 +163,6 @@ const countdownEl = document.querySelector('[data-role="countdown"]');
 const matchId = location.pathname.split("/").filter(Boolean)[1];
 const backEl = document.querySelector('[data-role="back"]');
 if (backEl) backEl.href = `/match/${matchId}`;
-
-let renderer;
-let camera;
 
 function showMessage(text) {
   if (canvas) canvas.hidden = true;
@@ -1068,8 +1059,11 @@ function createActorMeshes(field, meta, spec) {
 // The playback clock + per-frame pose application, over one match's data. All
 // the interpolation and timeline math is in replay-core.js: writePoses() fills a
 // scratch buffer, createTransport() maps real <-> compressed seconds. applyPoses()
-// here does nothing but copy that buffer onto the THREE meshes and size labels.
-function createPlayback(meta, positions, meshes) {
+// here copies that buffer onto the THREE meshes and sizes labels — its declared
+// dependencies are `camera` (screen-constant label sizing) and `names` (the
+// shared, mutable show/hide box wireControls flips), both taken once here
+// rather than read from module scope.
+function createPlayback(meta, positions, meshes, camera, names) {
   const slotCount = meta.slots.length;
   const transport = createTransport(meta);
   const { tN, compressedEnd } = transport;
@@ -1107,7 +1101,7 @@ function createPlayback(meta, positions, meshes) {
       );
 
       if (label) {
-        label.visible = showNames;
+        label.visible = names.on;
         label.scale.set(pillH * label.userData.aspect, pillH, 1);
         label.position.set(
           mesh.position.x,
@@ -1177,7 +1171,7 @@ function renderScrubMarks(meta, playback) {
   }
 }
 
-function wireControls(playback, meta) {
+function wireControls(playback, meta, names) {
   let scrubbing = false;
   const goals = meta.goals.map((g) => ({
     t: meta.frame_times[g.frame],
@@ -1193,13 +1187,13 @@ function wireControls(playback, meta) {
   playBtn.addEventListener("click", () => setPlaying(!playback.state.playing));
 
   function setNames(on) {
-    showNames = on;
+    names.on = on;
     if (namesBtn) {
       namesBtn.classList.toggle("is-active", on);
       namesBtn.setAttribute("aria-pressed", String(on));
     }
   }
-  if (namesBtn) namesBtn.addEventListener("click", () => setNames(!showNames));
+  if (namesBtn) namesBtn.addEventListener("click", () => setNames(!names.on));
 
   scrubEl.addEventListener("pointerdown", () => {
     scrubbing = true;
@@ -1229,7 +1223,7 @@ function wireControls(playback, meta) {
     } else if (e.key === "ArrowRight") {
       playback.nudge(SEEK_STEP);
     } else if (e.key === "n" || e.key === "N") {
-      setNames(!showNames);
+      setNames(!names.on);
     }
   });
 
@@ -1367,6 +1361,48 @@ function createDebugHud(meshes) {
   };
 }
 
+// Owns the camera, renderer, and orbit controls together — the one piece of
+// scene state that, unlike playback/boostPads/goalFx below, never got its own
+// factory and instead lived as module-level `let`s reached into by a bare
+// `resize()` / `applyCamPreset()`. `resize`/`applyPreset` close over the rig's
+// own `camera`/`renderer`/`viewSize` instead. `camScale` (from arenaCamScale,
+// fixed for the match's arena) is a constructor argument, not a per-call one.
+function createCameraRig(canvas, camScale) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200000);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+
+  let viewSize = CAM_PRESETS.broadcast.size;
+
+  function resize() {
+    const w = stage.clientWidth;
+    const h = stage.clientHeight;
+    renderer.setSize(w, h, false);
+    const aspect = w / h || 1;
+    camera.left = (-viewSize * aspect) / 2;
+    camera.right = (viewSize * aspect) / 2;
+    camera.top = viewSize / 2;
+    camera.bottom = -viewSize / 2;
+    camera.updateProjectionMatrix();
+  }
+
+  function applyPreset(name) {
+    const p = CAM_PRESETS[name];
+    if (!p) return;
+    camera.up.set(...p.up); // a direction — never scaled
+    camera.position.set(...p.pos.map((v) => v * camScale));
+    controls.target.set(...p.target.map((v) => v * camScale));
+    viewSize = p.size * camScale;
+    resize();
+    controls.update();
+  }
+
+  return { camera, renderer, controls, resize, applyPreset };
+}
+
 function buildScene(meta, positions) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b0d15);
@@ -1392,7 +1428,7 @@ function buildScene(meta, positions) {
   world.add(field);
 
   const spec = arenaSpec(meta.game_mode);
-  camScale = arenaCamScale(spec);
+  const camScale = arenaCamScale(spec);
 
   buildArena(field, spec);
   buildHalfTint(field, spec, meta.tracked_team);
@@ -1401,8 +1437,8 @@ function buildScene(meta, positions) {
   const meshes = createActorMeshes(field, meta, spec);
   const goalFx = createGoalFx(field, spec.goal.fxScale);
 
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const rig = createCameraRig(canvas, camScale);
+  const { camera, renderer, controls } = rig;
 
   // Image-based lighting for the MeshStandardMaterial cars and ball — without an
   // environment, metalness renders near-black. A one-off PMREM bake of three's
@@ -1412,41 +1448,43 @@ function buildScene(meta, positions) {
   scene.environmentIntensity = 0.6; // studio room is bright; dial it into our dark scene
   pmrem.dispose();
 
-  camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200000);
+  rig.applyPreset("broadcast");
+  wireCamera(rig);
+  window.addEventListener("resize", rig.resize);
 
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-
-  applyCamPreset("broadcast", controls);
-  wireCamera(controls);
-  window.addEventListener("resize", resize);
-
-  const playback = createPlayback(meta, positions, meshes);
+  // Player name labels start on; the NAMES button / `n` key flip this. A shared
+  // mutable box (not a plain boolean) so createPlayback and wireControls can
+  // both hold the one reference — wireControls flips it, applyPoses reads it,
+  // constructed here before either needs it.
+  const names = { on: true };
+  const playback = createPlayback(meta, positions, meshes, camera, names);
   const watchGoals = makeGoalWatcher(meta, positions, playback, goalFx);
-  const syncUI = wireControls(playback, meta);
+  const syncUI = wireControls(playback, meta, names);
   renderScrubMarks(meta, playback);
   playback.applyPoses();
   boostPads.apply(playback.state.t);
   syncUI();
   controlsEl.hidden = false;
 
+  // The viewer's real interface, always built — `?debug` only decides whether
+  // it's also mirrored onto `window` for interactive poking (and the e2e suite,
+  // which navigates with `?debug` for exactly that reason).
+  const handle = {
+    playback,
+    meshes,
+    camera,
+    controls,
+    renderer,
+    scene,
+    THREE,
+    meta,
+    goalFx,
+    boostPads,
+  };
+
   const debug = location.search.includes("debug");
   const hud = debug ? createDebugHud(meshes) : null;
-  if (debug) {
-    window.__replay = {
-      playback,
-      meshes,
-      camera,
-      controls,
-      renderer,
-      scene,
-      THREE,
-      meta,
-      countdownLabelAt,
-      goalFx,
-      boostPads,
-    };
-  }
+  if (debug) window.__replay = handle;
 
   let lastNow = null;
   function frameLoop(now) {
@@ -1475,44 +1513,22 @@ function buildScene(meta, positions) {
       .filter(Boolean)
       .join("  ·  ");
   }
-}
 
-function resize() {
-  if (!renderer || !camera) return;
-  const w = stage.clientWidth;
-  const h = stage.clientHeight;
-  renderer.setSize(w, h, false);
-  const aspect = w / h || 1;
-  camera.left = (-viewSize * aspect) / 2;
-  camera.right = (viewSize * aspect) / 2;
-  camera.top = viewSize / 2;
-  camera.bottom = -viewSize / 2;
-  camera.updateProjectionMatrix();
-}
-
-function applyCamPreset(name, controls) {
-  const p = CAM_PRESETS[name];
-  if (!p) return;
-  camera.up.set(...p.up); // a direction — never scaled
-  camera.position.set(...p.pos.map((v) => v * camScale));
-  controls.target.set(...p.target.map((v) => v * camScale));
-  viewSize = p.size * camScale;
-  resize();
-  controls.update();
+  return handle;
 }
 
 // Camera preset buttons, and clearing the active state once the user orbits.
-function wireCamera(controls) {
+function wireCamera(rig) {
   if (!camEl) return;
   camEl.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-view]");
     if (!btn) return;
-    applyCamPreset(btn.dataset.view, controls);
+    rig.applyPreset(btn.dataset.view);
     for (const b of camEl.querySelectorAll("button")) {
       b.classList.toggle("is-active", b === btn);
     }
   });
-  controls.addEventListener("start", () => {
+  rig.controls.addEventListener("start", () => {
     for (const b of camEl.querySelectorAll("button")) b.classList.remove("is-active");
   });
 }

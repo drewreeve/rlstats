@@ -37,7 +37,7 @@ field visible, no game camera). **This is the model we copied.** `calculated.gg`
 | 12 | Orientation | Normalise: the tracked team always attacks the same on-screen direction, every match, regardless of their colour. Enforced client-side by `field.rotation.z = π` when `tracked_team === 1`. |
 | 13 | Link availability & failure | Show "▶ WATCH REPLAY" only when `matches.replay_filename` is set and `replays/<name>` exists; 404 otherwise. On a view-time parse failure return an error payload the page renders — and **never delete the file** (unlike the ingest path). |
 | 14 | Car shape | A composed low-poly battle car, not a bare box (`buildCarModel` wrapping the inlined `battle-car.js` model) — a symmetric box gave no read on which way a car faced, the one thing a positional-habits tool most needs. Still procedural, no assets. `CAR_SCALE` is pinned on **width** (wheel track ≈ the 84 uu hitbox width); the ~1.1× length and ~1.2× roof are the overhang a real body has over its collision box. A `RoomEnvironment` PMREM is baked into `scene.environment` so the model's `MeshStandardMaterial` metals don't render near-black. |
-| 15 | Testability | Split into a pure core and a render shell. `static/replay-core.js` (**zero imports** — no THREE, no DOM) holds all playback/timeline math: `bracket`, `slotLiveAt`, `writePoses`, `createTransport` (real ↔ compressed seconds), `countdownLabelAt`, `teamTint`/`carColor`, `outlineHalfWidth`, `slerpQuat` (a verbatim port of `THREE.Quaternion.slerp@0.170.0`), `formatClock`. `replay.js` is the shell; its `applyPoses()` is `writePoses()` + a copy onto meshes. **One code path.** `tests/js/replay-core.test.js` (`node --test`, no browser/deps) tests the math; `tests/e2e/replay.spec.js` (Playwright) adds a transport smoke pass, an `applyPoses() === writePoses()` **parity test** (the guard against `applyPoses` growing a second, diverging pose computation), a THREE-vs-`slerpQuat` check, and a **render-smoke check** (a rendered frame's pixels span several luminance bands; the canvas is on-screen / sized / unobscured — the "renders fine but the screen is black" failure a pose-math test can't see). Pixels are read in-`page.evaluate` synchronous with `renderer.render()`, so there is no production test hook. **No committed golden pose-trace** — a recording of `writePoses()`'s own output is a circular oracle and fragile across Chromium float builds; a one-shot uncommitted trace is the refactor net. `tests/data/replay-viewer/{meta.json, frames.bin}` (the fixture, *not* a trace) is regen'd by `tests/e2e/dump_fixture.py`. |
+| 15 | Testability | Split into a pure core and a render shell. `static/replay-core.js` (**zero imports** — no THREE, no DOM) holds all playback/timeline math: `bracket`, `slotLiveAt`, `writePoses`, `createTransport` (real ↔ compressed seconds), `countdownLabelAt`, `teamTint`/`carColor`, `outlineHalfWidth`, `slerpQuat` (a verbatim port of `THREE.Quaternion.slerp@0.170.0`), `formatClock`. `replay.js` is the shell; its `applyPoses()` (inside `createPlayback`) copies `writePoses()`'s buffer onto meshes and sizes labels, taking `camera` and a shared `names` box as constructor arguments rather than reading module scope. **One code path.** `tests/js/replay-core.test.js` (`node --test`, no browser/deps) tests the math; `tests/e2e/replay.spec.js` (Playwright) adds a transport smoke pass, an `applyPoses() === writePoses()` **parity test** (the guard against `applyPoses` growing a second, diverging pose computation), a THREE-vs-`slerpQuat` check, and a **render-smoke check** (a rendered frame's pixels span several luminance bands; the canvas is on-screen / sized / unobscured — the "renders fine but the screen is black" failure a pose-math test can't see). Pixels are read in-`page.evaluate` synchronous with `renderer.render()`, so there is no production test hook. **No committed golden pose-trace** — a recording of `writePoses()`'s own output is a circular oracle and fragile across Chromium float builds; a one-shot uncommitted trace is the refactor net. `tests/data/replay-viewer/{meta.json, frames.bin}` (the fixture, *not* a trace) is regen'd by `tests/e2e/dump_fixture.py`. |
 
 ### v1 feature scope (decision 7)
 
@@ -192,8 +192,12 @@ declaration.
 
 Coordinates stay in unreal units — no world scaling; the camera frustum frames.
 `?debug` exposes `window.__replay` (`playback, meshes, camera, controls,
-renderer, scene, THREE, meta, countdownLabelAt, goalFx`) + a rolling frame-time
-HUD. Headless `page.screenshot()` captures the WebGL canvas correctly under
+renderer, scene, THREE, meta, goalFx, boostPads`) + a rolling frame-time
+HUD. The object is `buildScene`'s real return value — always built, not
+`?debug`-only — and `?debug` only decides whether it's mirrored onto `window`;
+`countdownLabelAt` isn't on it (a plain pure import from `replay-core.js`, not
+state — a test wanting it imports the module directly, as the `slerpQuat`
+cross-check already does). Headless `page.screenshot()` captures the WebGL canvas correctly under
 `--headless=new`; a `readPixels` in a *later* task returns zeros
 (`preserveDrawingBuffer` unset) — see `reference_replay_viewer_debug`.
 
@@ -264,8 +268,13 @@ HUD. Headless `page.screenshot()` captures the WebGL canvas correctly under
   `teamTint(team, trackedTeam)` is the shared colour rule.
 - **Core / shell split (decision 15).** All pure math lives in
   `static/replay-core.js` (zero imports). `replay.js` is the shell: scene graph,
-  DOM, camera, the rAF loop, and an `applyPoses()` that is `writePoses()` + a
-  copy onto the meshes.
+  DOM, camera, the rAF loop, and an `applyPoses()` (inside `createPlayback`)
+  that copies `writePoses()`'s buffer onto the meshes and sizes labels, reading
+  `camera` and the shared `names` show/hide box — both taken once as
+  constructor arguments, not module-scope reads. `camera`/`renderer`/`controls`
+  themselves live behind one `createCameraRig(canvas, camScale)` factory (the
+  same shape as `createPlayback`/`createBoostPads`/`createGoalFx` below it),
+  not module-level `let`s — `resize`/`applyPreset` are closures the rig owns.
 
 ## Known wrinkles
 
