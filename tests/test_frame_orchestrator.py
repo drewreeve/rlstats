@@ -14,6 +14,7 @@ from frame_analysis import (
     _FrameLoopObjectIds,  # type: ignore[reportPrivateUsage]
     _process_frame,  # type: ignore[reportPrivateUsage]
 )
+from player_identity import PlayerIdentity
 from rrrocket_schema import FrameData, UpdatedActor
 
 _EMPTY_OBJ_IDS = _FrameLoopObjectIds(
@@ -50,7 +51,7 @@ def test_deleted_actor_sees_identity_before_resolver_cleanup() -> None:
     ctx = FrameContext()
     ctx.car_actors.add(10)
     ctx.resolver.link_car_to_pri(10, 20)
-    ctx.resolver.set_identity(20, "steam", "abc123")
+    ctx.resolver.set_identity(20, PlayerIdentity("steam", "abc123"))
 
     spy = _SpyHandler()
     frame = cast(FrameData, {"time": 1.0, "deleted_actors": [10]})
@@ -72,7 +73,7 @@ def test_two_pass_deletion_second_actor_sees_first_in_same_frame() -> None:
     ctx.boost_comp_actors.add(11)
     ctx.resolver.link_component_to_car(11, 10)
     ctx.resolver.link_car_to_pri(10, 20)
-    ctx.resolver.set_identity(20, "steam", "abc123")
+    ctx.resolver.set_identity(20, PlayerIdentity("steam", "abc123"))
 
     car_present_when_boost_comp_notified: list[bool] = []
 

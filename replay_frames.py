@@ -27,8 +27,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from typing import Any
 
-from frame_analysis import IdentityResolver
-from player_identity import PlayerIdentity, from_network_frame
+from player_identity import IdentityResolver, PlayerIdentity, from_network_frame
 from rrrocket_schema import NetObj, ParsedReplay
 
 # x, y, z, qx, qy, qz, qw. Mirrors FLOATS_PER_POSE in static/replay-core.js —
@@ -311,11 +310,6 @@ def _last_quat(samples: list[_Sample]) -> tuple[float, float, float, float]:
     return 0.0, 0.0, 0.0, 1.0
 
 
-def _resolve_identity(resolver: IdentityResolver, aid: int) -> PlayerIdentity | None:
-    ident = resolver.resolve_car(aid)
-    return PlayerIdentity(*ident) if ident is not None else None
-
-
 def _walk(
     replay: ParsedReplay,
     car_arch: int,
@@ -419,7 +413,7 @@ def _walk(
             elif oid == uid_oid:
                 ident = from_network_frame(attr.get("UniqueId", {}))
                 if ident:
-                    resolver.set_identity(aid, *ident)
+                    resolver.set_identity(aid, ident)
             elif oid == paint_oid:
                 team = attr.get("TeamPaint", {}).get("team")
                 if team is not None:
@@ -480,7 +474,7 @@ def _walk(
                 continue
             seg = segments[si]
             if seg.kind == "car":
-                seg.identity = _resolve_identity(resolver, aid)
+                seg.identity = resolver.resolve_car(aid)
             seg.team = actor_team.get(aid)
             seg.end = fidx
         for aid in deleted:
@@ -494,7 +488,7 @@ def _walk(
     for aid, si in open_seg.items():
         seg = segments[si]
         if seg.kind == "car":
-            seg.identity = _resolve_identity(resolver, aid)
+            seg.identity = resolver.resolve_car(aid)
         seg.team = actor_team.get(aid)
         seg.end = last_frame
 

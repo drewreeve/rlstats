@@ -7,6 +7,7 @@ and the per-frame UniqueId network actor attributes.
 See CONTEXT.md for the full definition.
 """
 
+from collections.abc import Set as AbstractSet
 from typing import Any, NamedTuple, cast
 
 from rrrocket_schema import PlayerStatEntry
@@ -73,3 +74,53 @@ def from_network_frame(uid: dict[str, Any]) -> PlayerIdentity | None:
     if not platform_id:
         return None
     return PlayerIdentity(platform, str(platform_id))
+
+
+class IdentityResolver:
+    """Owns the three-map identity chain and exposes typed resolution methods.
+
+    Chain: car_actor_id → pri_actor_id → PlayerIdentity(platform, platform_id)
+    Boost components add a fourth entry point: component_actor_id → car_actor_id.
+
+    Shared by both frame walks — `frame_analysis.analyze_frames` (the aggregate
+    stats pass) and `replay_frames.extract_replay_frames` (the viewer pass).
+    The per-frame wiring that feeds it is deliberately not shared between the
+    two walks (ADR-0003); this class is the reusable part.
+    """
+
+    def __init__(self) -> None:
+        self._car_to_pri: dict[int, int] = {}
+        self._pri_identity: dict[int, PlayerIdentity] = {}
+        self._component_to_car: dict[int, int] = {}
+
+    def link_car_to_pri(self, car_id: int, pri_id: int) -> None:
+        self._car_to_pri[car_id] = pri_id
+
+    def set_identity(self, pri_id: int, identity: PlayerIdentity) -> None:
+        self._pri_identity[pri_id] = identity
+
+    def link_component_to_car(self, comp_id: int, car_id: int) -> None:
+        self._component_to_car[comp_id] = car_id
+
+    def remove_actor(self, aid: int) -> None:
+        self._car_to_pri.pop(aid, None)
+        self._pri_identity.pop(aid, None)
+        self._component_to_car.pop(aid, None)
+
+    def resolve_car(self, car_id: int) -> PlayerIdentity | None:
+        pri = self._car_to_pri.get(car_id)
+        if pri is None:
+            return None
+        return self._pri_identity.get(pri)
+
+    def resolve_pri(self, pri_id: int) -> PlayerIdentity | None:
+        return self._pri_identity.get(pri_id)
+
+    def resolve_component(self, comp_id: int) -> PlayerIdentity | None:
+        car_id = self._component_to_car.get(comp_id)
+        if car_id is None:
+            return None
+        return self.resolve_car(car_id)
+
+    def find_pri_ids_for(self, identities: AbstractSet[PlayerIdentity]) -> list[int]:
+        return [aid for aid, ident in self._pri_identity.items() if ident in identities]

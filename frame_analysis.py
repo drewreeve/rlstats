@@ -8,8 +8,8 @@ Identity resolution chain:
   car_actor_id  →  pri_actor_id    (Engine.Pawn:PlayerReplicationInfo)
   pri_actor_id  →  (platform, id)  (Engine.PlayerReplicationInfo:UniqueId)
 Cars get a new actor ID each life; PRIs persist the whole match; (platform, id)
-is the stable key that joins to the `players` table. `IdentityResolver` owns
-this chain and is also imported by `replay_frames.py`; the per-frame wiring
+is the stable key that joins to the `players` table. `player_identity.IdentityResolver`
+owns this chain and is also imported by `replay_frames.py`; the per-frame wiring
 that feeds it is deliberately not shared between the two frame walks (ADR-0003).
 
 Per-frame processing order enforced by analyze_frames:
@@ -26,7 +26,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from itertools import pairwise
 
-from player_identity import PlayerIdentity, from_network_frame
+from player_identity import IdentityResolver, PlayerIdentity, from_network_frame
 from rrrocket_schema import FrameData, NetObj, ParsedReplay, UpdatedActor
 
 # Coordinates are taken from wiki.rlbot.org
@@ -54,51 +54,6 @@ BIG_PAD_POSITIONS = {
 # car size and positional jitter in replay network frames.
 BIG_PAD_RADIUS = 400
 BIG_PAD_RADIUS_SQ = BIG_PAD_RADIUS**2
-
-
-class IdentityResolver:
-    """Owns the three-map identity chain and exposes typed resolution methods.
-
-    Chain: car_actor_id → pri_actor_id → (platform, platform_id)
-    Boost components add a fourth entry point: component_actor_id → car_actor_id.
-    """
-
-    def __init__(self) -> None:
-        self._car_to_pri: dict[int, int] = {}
-        self._pri_identity: dict[int, tuple[str, str]] = {}
-        self._component_to_car: dict[int, int] = {}
-
-    def link_car_to_pri(self, car_id: int, pri_id: int) -> None:
-        self._car_to_pri[car_id] = pri_id
-
-    def set_identity(self, pri_id: int, platform: str, platform_id: str) -> None:
-        self._pri_identity[pri_id] = (platform, platform_id)
-
-    def link_component_to_car(self, comp_id: int, car_id: int) -> None:
-        self._component_to_car[comp_id] = car_id
-
-    def remove_actor(self, aid: int) -> None:
-        self._car_to_pri.pop(aid, None)
-        self._pri_identity.pop(aid, None)
-        self._component_to_car.pop(aid, None)
-
-    def resolve_car(self, car_id: int) -> tuple[str, str] | None:
-        pri = self._car_to_pri.get(car_id)
-        if pri is None:
-            return None
-        return self._pri_identity.get(pri)
-
-    def resolve_pri(self, pri_id: int) -> tuple[str, str] | None:
-        return self._pri_identity.get(pri_id)
-
-    def resolve_component(self, comp_id: int) -> tuple[str, str] | None:
-        car_id = self._component_to_car.get(comp_id)
-        if car_id is None:
-            return None
-        return self.resolve_car(car_id)
-
-    def find_pri_ids_for(self, identities: AbstractSet[tuple[str, str]]) -> list[int]:
-        return [aid for aid, ident in self._pri_identity.items() if ident in identities]
 
 
 @dataclass(frozen=True)
@@ -801,7 +756,7 @@ class MatchEventsHandler(FrameHandler):
         cls,
         obj_ids: dict[str, int | None],
         tracked_team: int | None,
-        tracked_identities: AbstractSet[tuple[str, str]],
+        tracked_identities: AbstractSet[PlayerIdentity],
     ) -> "MatchEventsHandler | None":
         if tracked_team is None:
             return None
@@ -826,7 +781,7 @@ class MatchEventsHandler(FrameHandler):
         team_obj_id: int,
         counter_obj_ids: dict[int, str],
         tracked_team: int,
-        tracked_identities: AbstractSet[tuple[str, str]],
+        tracked_identities: AbstractSet[PlayerIdentity],
     ) -> None:
         self.update_obj_ids = frozenset(
             {sr_obj_id, team_obj_id} | set(counter_obj_ids.keys())
@@ -996,7 +951,7 @@ def _process_frame(
             uid = actor.get("attribute", {}).get("UniqueId", {})
             identity = from_network_frame(uid)
             if identity:
-                ctx.resolver.set_identity(aid, *identity)
+                ctx.resolver.set_identity(aid, identity)
         elif oid == obj_ids.team_paint_obj_id:
             team = actor.get("attribute", {}).get("TeamPaint", {}).get("team")
             if team is not None:
@@ -1034,7 +989,7 @@ def _process_frame(
 def analyze_frames(
     replay: ParsedReplay,
     tracked_team: int | None,
-    tracked_identities: AbstractSet[tuple[str, str]],
+    tracked_identities: AbstractSet[PlayerIdentity],
     duration: int | None,
     game_mode: str | None,
 ) -> FrameAnalysis:

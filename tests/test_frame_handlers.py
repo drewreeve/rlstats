@@ -15,13 +15,12 @@ from frame_analysis import (
     DemosReceivedHandler,
     FrameAnalysis,
     FrameContext,
-    IdentityResolver,
     MatchEventsHandler,
     MovementHandler,
     PlayerZonesHandler,
     PossessionHandler,
 )
-from player_identity import PlayerIdentity
+from player_identity import IdentityResolver, PlayerIdentity
 from rrrocket_schema import UpdatedActor
 
 HIT_TEAM_OID = 100
@@ -47,7 +46,7 @@ def _hit(team_num: int) -> UpdatedActor:
 def test_resolve_car_follows_full_chain():
     r = IdentityResolver()
     r.link_car_to_pri(7, 100)
-    r.set_identity(100, "steam", "abc123")
+    r.set_identity(100, PlayerIdentity("steam", "abc123"))
     assert r.resolve_car(7) == ("steam", "abc123")
 
 
@@ -64,7 +63,7 @@ def test_resolve_car_returns_none_when_identity_not_yet_set():
 
 def test_resolve_pri_returns_identity_directly():
     r = IdentityResolver()
-    r.set_identity(100, "epic", "xyz")
+    r.set_identity(100, PlayerIdentity("epic", "xyz"))
     assert r.resolve_pri(100) == ("epic", "xyz")
     assert r.resolve_pri(999) is None
 
@@ -73,7 +72,7 @@ def test_resolve_component_follows_three_hops():
     r = IdentityResolver()
     r.link_component_to_car(10, 7)
     r.link_car_to_pri(7, 100)
-    r.set_identity(100, "steam", "abc123")
+    r.set_identity(100, PlayerIdentity("steam", "abc123"))
     assert r.resolve_component(10) == ("steam", "abc123")
 
 
@@ -86,14 +85,14 @@ def test_resolve_component_returns_none_when_car_missing():
 def test_remove_actor_clears_car_entry():
     r = IdentityResolver()
     r.link_car_to_pri(7, 100)
-    r.set_identity(100, "steam", "abc")
+    r.set_identity(100, PlayerIdentity("steam", "abc"))
     r.remove_actor(7)
     assert r.resolve_car(7) is None
 
 
 def test_remove_actor_clears_pri_entry():
     r = IdentityResolver()
-    r.set_identity(100, "steam", "abc")
+    r.set_identity(100, PlayerIdentity("steam", "abc"))
     r.remove_actor(100)
     assert r.resolve_pri(100) is None
 
@@ -105,9 +104,9 @@ def test_remove_actor_is_silent_for_unknown_actor():
 
 def test_find_pri_ids_for_returns_matching_ids():
     r = IdentityResolver()
-    r.set_identity(5, "steam", "TRACKED")
-    r.set_identity(6, "steam", "OTHER")
-    result = r.find_pri_ids_for({("steam", "TRACKED")})
+    r.set_identity(5, PlayerIdentity("steam", "TRACKED"))
+    r.set_identity(6, PlayerIdentity("steam", "OTHER"))
+    result = r.find_pri_ids_for({PlayerIdentity("steam", "TRACKED")})
     assert result == [5]
 
 
@@ -283,7 +282,7 @@ def test_player_zones_handler_ignores_frames_not_playing():
     h = PlayerZonesHandler(RB_OID, tracked_team=0)
     ctx = FrameContext()
     ctx.car_actors.add(10)
-    ctx.resolver.set_identity(20, "steam", "AAA")
+    ctx.resolver.set_identity(20, PlayerIdentity("steam", "AAA"))
     ctx.resolver.link_car_to_pri(10, 20)
     ctx.is_playing = False
 
@@ -301,7 +300,7 @@ def test_player_zones_handler_buckets_time_team0():
     h = PlayerZonesHandler(RB_OID, tracked_team=0)
     ctx = FrameContext()
     ctx.car_actors.add(10)
-    ctx.resolver.set_identity(20, "steam", "AAA")
+    ctx.resolver.set_identity(20, PlayerIdentity("steam", "AAA"))
     ctx.resolver.link_car_to_pri(10, 20)
     ctx.is_playing = True
 
@@ -328,7 +327,7 @@ def test_player_zones_handler_reversed_for_team1():
     h = PlayerZonesHandler(RB_OID, tracked_team=1)
     ctx = FrameContext()
     ctx.car_actors.add(10)
-    ctx.resolver.set_identity(20, "steam", "BBB")
+    ctx.resolver.set_identity(20, PlayerIdentity("steam", "BBB"))
     ctx.resolver.link_car_to_pri(10, 20)
     ctx.is_playing = True
 
@@ -355,7 +354,7 @@ def test_player_zones_handler_reversed_for_team1():
 def test_player_zones_handler_accumulates_across_respawn():
     h = PlayerZonesHandler(RB_OID, tracked_team=0)
     ctx = FrameContext()
-    ctx.resolver.set_identity(20, "steam", "AAA")
+    ctx.resolver.set_identity(20, PlayerIdentity("steam", "AAA"))
 
     # First life: car_id=10, two samples 1.5s apart in defensive zone
     ctx.car_actors.add(10)
@@ -394,8 +393,8 @@ def test_player_zones_handler_accumulates_across_respawn():
 def test_demolitions_handler_maps_counter_max_to_identity():
     h = DemolitionsHandler(DEMO_OID)
     ctx = FrameContext()
-    ctx.resolver.set_identity(5, "steam", "AAA")
-    ctx.resolver.set_identity(6, "steam", "BBB")
+    ctx.resolver.set_identity(5, PlayerIdentity("steam", "AAA"))
+    ctx.resolver.set_identity(6, PlayerIdentity("steam", "BBB"))
 
     h.on_update(ctx, {"actor_id": 5, "object_id": DEMO_OID, "attribute": {"Int": 2}})
     h.on_update(
@@ -448,7 +447,7 @@ def test_demos_received_handler_counts_active_transitions():
     ctx = FrameContext()
     ctx.car_actors.add(7)
     ctx.resolver.link_car_to_pri(7, 100)
-    ctx.resolver.set_identity(100, "steam", "VICTIM")
+    ctx.resolver.set_identity(100, PlayerIdentity("steam", "VICTIM"))
 
     h.on_update(ctx, _demolish(actor_id=7, victim_active=True, victim_actor=7))
     # Still active — not a new transition
@@ -468,7 +467,7 @@ def test_demos_received_handler_skips_self_demolish():
     ctx = FrameContext()
     ctx.car_actors.add(7)
     ctx.resolver.link_car_to_pri(7, 100)
-    ctx.resolver.set_identity(100, "steam", "VICTIM")
+    ctx.resolver.set_identity(100, PlayerIdentity("steam", "VICTIM"))
 
     h.on_update(
         ctx,
@@ -484,7 +483,7 @@ def test_demos_received_handler_skips_when_attacker_inactive():
     ctx = FrameContext()
     ctx.car_actors.add(7)
     ctx.resolver.link_car_to_pri(7, 100)
-    ctx.resolver.set_identity(100, "steam", "VICTIM")
+    ctx.resolver.set_identity(100, PlayerIdentity("steam", "VICTIM"))
 
     h.on_update(
         ctx,
@@ -502,7 +501,7 @@ def test_demos_received_handler_cleans_up_on_delete():
     ctx = FrameContext()
     ctx.car_actors.add(7)
     ctx.resolver.link_car_to_pri(7, 100)
-    ctx.resolver.set_identity(100, "steam", "VICTIM")
+    ctx.resolver.set_identity(100, PlayerIdentity("steam", "VICTIM"))
 
     h.on_update(ctx, _demolish(actor_id=7, victim_active=True, victim_actor=7))
     h.on_deleted_actor(ctx, 7)
@@ -651,7 +650,7 @@ def test_movement_handler_attributes_boost_consumption_on_delete():
     ctx.boost_comp_actors.add(10)
     ctx.resolver.link_component_to_car(10, 1)
     ctx.resolver.link_car_to_pri(1, 100)
-    ctx.resolver.set_identity(100, "steam", "PLAYER")
+    ctx.resolver.set_identity(100, PlayerIdentity("steam", "PLAYER"))
 
     h.on_update(ctx, _boost_amount(10, 255))
     h.on_update(ctx, _boost_amount(10, 200))  # 55 consumed
@@ -683,7 +682,7 @@ def test_movement_handler_accumulates_speed_samples():
     ctx = FrameContext(is_playing=True)
     ctx.car_actors.add(1)
     ctx.resolver.link_car_to_pri(1, 100)
-    ctx.resolver.set_identity(100, "steam", "PLAYER")
+    ctx.resolver.set_identity(100, PlayerIdentity("steam", "PLAYER"))
 
     ctx.frame_time = 0.0
     h.on_update(ctx, _car_velocity(1, x=2300.0))  # supersonic
@@ -710,10 +709,10 @@ def test_match_events_handler_emits_goal_event_with_game_time():
         team_obj_id=TEAM_OID,
         counter_obj_ids={GOALS_OID: "goal"},
         tracked_team=0,
-        tracked_identities={("steam", "TRACKED")},
+        tracked_identities={PlayerIdentity("steam", "TRACKED")},
     )
     ctx = FrameContext()
-    ctx.resolver.set_identity(5, "steam", "TRACKED")
+    ctx.resolver.set_identity(5, PlayerIdentity("steam", "TRACKED"))
 
     # Establish clock: starts at 300s, ticks down
     h.on_update(ctx, {"actor_id": 0, "object_id": SR_OID, "attribute": {"Int": 300}})
@@ -745,10 +744,10 @@ def test_match_events_handler_emits_nothing_without_clock():
         team_obj_id=TEAM_OID,
         counter_obj_ids={GOALS_OID: "goal"},
         tracked_team=0,
-        tracked_identities={("steam", "TRACKED")},
+        tracked_identities={PlayerIdentity("steam", "TRACKED")},
     )
     ctx = FrameContext()
-    ctx.resolver.set_identity(5, "steam", "TRACKED")
+    ctx.resolver.set_identity(5, PlayerIdentity("steam", "TRACKED"))
     h.on_update(ctx, {"actor_id": 5, "object_id": GOALS_OID, "attribute": {"Int": 1}})
 
     fa = FrameAnalysis()
@@ -762,10 +761,10 @@ def test_match_events_handler_emits_multiple_when_counter_jumps():
         team_obj_id=TEAM_OID,
         counter_obj_ids={GOALS_OID: "goal"},
         tracked_team=0,
-        tracked_identities={("steam", "TRACKED")},
+        tracked_identities={PlayerIdentity("steam", "TRACKED")},
     )
     ctx = FrameContext()
-    ctx.resolver.set_identity(5, "steam", "TRACKED")
+    ctx.resolver.set_identity(5, PlayerIdentity("steam", "TRACKED"))
     h.on_update(ctx, {"actor_id": 0, "object_id": SR_OID, "attribute": {"Int": 300}})
     h.on_update(
         ctx,
