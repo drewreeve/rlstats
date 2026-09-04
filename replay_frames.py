@@ -139,10 +139,14 @@ class ReplayFrames:
     )
 
     def meta_dict(self) -> dict[str, Any]:
-        """Everything the ``/api/matches/{id}/replay`` JSON carries — i.e. every
-        field except ``positions`` (served raw by the ``.bin`` route). The one
-        place that shape is defined; ``server.py`` and ``tests/e2e/dump_fixture``
-        both encode this dict rather than re-listing the keys."""
+        """The ``/api/matches/{id}/replay`` JSON body — every field except
+        ``positions`` (served raw by the ``.bin`` route).
+
+        The sole serialization entry point: ``server.py``'s route and
+        ``tests/e2e/dump_fixture`` both call this rather than assembling the dict
+        themselves. It is *not* the wire-shape declaration — that is the
+        ``WIRE_*`` manifest below. See CONTEXT.md "Replay Wire".
+        """
         return {
             "frame_times": self.frame_times,
             "tracked_team": self.tracked_team,
@@ -153,6 +157,48 @@ class ReplayFrames:
             "dead_periods": self.dead_periods,
             "boost_pads": self.boost_pads,
         }
+
+
+# --- the replay wire contract (see CONTEXT.md "Replay Wire") ---
+#
+# These sets are stated here INDEPENDENTLY of the dataclasses on purpose: they
+# are the half of the drift check that must not move when a field is renamed. A
+# set derived from ``fields(ActorSlot)`` would follow a rename automatically and
+# never catch it. ``tests/test_replay_wire.py`` checks the emitted JSON against
+# these, and checks these against the dataclasses in the *reverse* direction (no
+# dataclass field missing from the manifest).
+
+WIRE_META_KEYS = frozenset(
+    {
+        "frame_times",
+        "tracked_team",
+        "game_mode",
+        "slots",
+        "goals",
+        "countdowns",
+        "dead_periods",
+        "boost_pads",
+    }
+)
+
+# Read by static/replay-core.js and static/replay.js — grep `slot\.` in both
+# before changing a name. `identity` and `is_tracked` ride the wire but no JS
+# path reads them today (they are there for a future per-player view); a rename
+# is still a breaking change once that view exists.
+WIRE_SLOT_FIELDS = frozenset(
+    {"identity", "name", "team", "is_tracked", "kind", "segments"}
+)
+
+WIRE_GOAL_FIELDS = frozenset({"frame", "team"})
+
+# Positionally-packed rows on the wire — width is the contract (the client
+# destructures by index). `segments` is nested one level down, inside each slot.
+WIRE_TUPLE_WIDTHS = {
+    "segments": 2,  # (start, end), inclusive frame indices
+    "countdowns": 2,  # (frame, n)
+    "dead_periods": 2,  # (start, end), inclusive frame indices
+    "boost_pads": 5,  # (frame, pad, collected, x, y)
+}
 
 
 @dataclass(eq=False)

@@ -6,7 +6,8 @@ from typing import cast
 
 from config import load_settings
 from db import apply_migrations
-from ingest import Analyzed, analyze_replay, write_match
+from ingest import Analyzed, analyze_replay, build_replay_context, write_match
+from replay_frames import ReplayFrames, extract_replay_frames
 from rrrocket_schema import ReplayJSON
 from rrrocket_schema import parse as parse_replay
 
@@ -20,6 +21,23 @@ def load_replay(name: str) -> ReplayJSON:
     path = TEST_DATA_DIR / name
     with open(path, "r", encoding="utf-8") as f:
         return cast(ReplayJSON, json.load(f))
+
+
+@functools.cache
+def replay_frames_of(name: str) -> ReplayFrames:
+    """``extract_replay_frames`` over a fixture replay, wired through the real
+    Replay Context — the same four kwargs ``replay_view.build_replay_frames``
+    passes. Cached; callers must treat the result as read-only.
+    """
+    replay = parse_replay(load_replay(name))
+    context = build_replay_context(replay, TRACKED_PLAYERS)
+    return extract_replay_frames(
+        replay,
+        tracked_team=context.perspective.team,
+        tracked_identities=context.tracked_identities,
+        player_names=context.player_names,
+        game_mode=context.game_mode,
+    )
 
 
 def in_memory_db() -> sqlite3.Connection:
