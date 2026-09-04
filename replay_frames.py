@@ -820,7 +820,10 @@ def _boost_keyframes(seg: _Segment) -> list[tuple[int, int]]:
 
 
 def _densify_boost(
-    segments: list[_Segment], frame_times: list[float], slot_count: int
+    segments: list[_Segment],
+    frame_times: list[float],
+    slot_count: int,
+    dead_periods: list[tuple[int, int]],
 ) -> "array[int]":
     """Fill a dense F*N uint8 buffer of raw 0-255 boost amounts.
 
@@ -829,15 +832,21 @@ def _densify_boost(
     close to linearly, so a gap that ends lower than it started is lerped by
     wall-clock time, same as pose. A gap that ends *higher* is a pickup — those
     are effectively instantaneous, so it is held at the earlier (lower) value and
-    snaps only at the closing sample, exactly like a kickoff reset. A reset
-    doesn't have to *close* the gap to matter: the boost component isn't
-    re-announced at kickoff (only the car is, via ``seg.resets``), so a reset can
-    land anywhere inside a gap between two ordinary boost samples — a gap is held
-    whenever a reset frame falls anywhere in ``(fa, fb]``, not only when it lands
-    exactly on ``fb``; lerping through it would invent a drain ramp across a
-    round reset that never happened. A segment with no boost samples (component
-    never resolved) is left at 0 — the caller marks such slots ``has_boost=False``
-    so the client never renders the resulting zeros as an empty tank.
+    snaps only at the closing sample, exactly like a round reset (everyone's
+    boost resets to the same value at a kickoff; lerping across the gap would
+    invent a drain ramp that never happened).
+
+    A round reset is identified by ``dead_periods`` (goal → kickoff-resume
+    spans), not ``seg.resets`` (the car-re-announce signal ``_densify`` uses for
+    a pose cut) — a demolition also re-announces the car but doesn't reset its
+    boost (confirmed against the real ``DemolishExtended`` event), so
+    ``seg.resets`` alone over-holds. A gap is held whenever it overlaps a dead
+    period, whether its closing sample is lower (the reset) or higher (a pickup
+    landed in the same gap) — either way nothing drained.
+
+    A segment with no boost samples (component never resolved) is left at 0 —
+    the caller marks such slots ``has_boost=False`` so the client never renders
+    the resulting zeros as an empty tank.
     """
     buf = array("B", bytes(len(frame_times) * slot_count))
 
@@ -852,8 +861,8 @@ def _densify_boost(
         for (fa, va), (fb, vb) in zip(kf, kf[1:], strict=False):
             ta = frame_times[fa]
             span = frame_times[fb] - ta
-            reset_inside = any(fa < r <= fb for r in seg.resets)
-            if span <= 0.0 or vb > va or reset_inside:
+            spans_dead = any(fa <= end and fb >= start for start, end in dead_periods)
+            if span <= 0.0 or vb > va or spans_dead:
                 for fidx in range(fa, fb):
                     buf[fidx * slot_count + lane_off] = va
                 continue
@@ -943,11 +952,11 @@ def extract_replay_frames(
     segments, raw_pickups = _walk(replay, oids, pad_oids)
     slots = _build_slots(segments, tracked_identities, player_names)
     frame_times = [float(f["time"]) for f in replay.frames]
-    buf = _densify(segments, frame_times, len(slots))
-    boost_buf = _densify_boost(segments, frame_times, len(slots))
     goals = _scan_goals(replay, obj.get(NetObj.SCORED_ON_TEAM))
     countdowns = _scan_countdowns(replay, obj.get(NetObj.COUNTDOWN))
     dead_periods = _dead_periods(goals, countdowns)
+    buf = _densify(segments, frame_times, len(slots))
+    boost_buf = _densify_boost(segments, frame_times, len(slots), dead_periods)
     boost_pads = _resolve_pickups(raw_pickups, segments, buf, len(slots))
 
     return ReplayFrames(

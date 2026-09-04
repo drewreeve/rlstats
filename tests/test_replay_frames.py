@@ -555,13 +555,10 @@ def test_boost_pickup_holds_low_then_snaps_at_the_sample() -> None:
 
 
 def test_boost_holds_rather_than_lerps_across_a_kickoff_reset() -> None:
-    # The boost component isn't re-announced at kickoff (only the car is), so
-    # the reset frame and the next real boost sample are two independent
-    # network events — the sample confirming 33 typically lands a few frames
-    # *after* the car's re-announce, not on the same frame. A gap must be held
-    # whenever a reset falls anywhere inside it, not only when it closes the
-    # gap exactly — otherwise this reads as a multi-frame drain from 100 to 33
-    # that never happened, right as normal play resumes.
+    # dead_periods, not the car's re-announce (seg.resets), is the reset
+    # signal — see the sibling demolition test for why. The boost component
+    # isn't re-announced at kickoff, so the confirming sample often lands a
+    # few frames after the reset; the gap must hold across that whole span.
     frames = [
         cast(
             FrameData,
@@ -575,7 +572,10 @@ def test_boost_holds_rather_than_lerps_across_a_kickoff_reset() -> None:
                 ],
             },
         ),
-        _frame(0.1),  # goal replay / dead time
+        _frame(  # the goal — opens the dead period
+            0.1,
+            updated=[{"actor_id": 3, "object_id": _SCORED, "attribute": {"Byte": 0}}],
+        ),
         cast(
             FrameData,
             {
@@ -592,13 +592,61 @@ def test_boost_holds_rather_than_lerps_across_a_kickoff_reset() -> None:
             },
         ),  # the kickoff re-announce itself — no boost sample this frame
         _frame(0.3),
-        _frame(0.4, updated=[_boost_update(2, 33)]),  # first post-kickoff sample
+        _frame(  # "3" tick — closes the dead period the frame before it
+            0.4,
+            updated=[{"actor_id": 3, "object_id": _COUNTDOWN, "attribute": {"Int": 3}}],
+        ),
+        _frame(0.5, updated=[_boost_update(2, 33)]),  # first post-kickoff sample
     ]
     rf = _extract(_replay(frames))
     idx = _car_idx(rf)
     assert _boost_at(rf, 1, idx) == 100  # held, not lerped toward 33
     assert _boost_at(rf, 3, idx) == 100  # still held — the reset was mid-gap
-    assert _boost_at(rf, 4, idx) == 33  # snaps only at the real sample
+    assert _boost_at(rf, 4, idx) == 100  # still held through the "3" tick
+    assert _boost_at(rf, 5, idx) == 33  # snaps only at the real sample
+
+
+def test_boost_lerps_through_a_demolition_even_though_the_car_is_re_announced() -> None:
+    # Same re-announce shape as a kickoff (seg.resets fires), but no goal or
+    # countdown, so no dead period — a demolition doesn't reset boost (see
+    # _densify_boost), so this must still lerp, not hold.
+    frames = [
+        cast(
+            FrameData,
+            {
+                "time": 0.0,
+                "new_actors": [{"actor_id": 1, "object_id": _CAR}],
+                "updated_actors": [
+                    _rb_update(1, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+                    _vehicle_link(2, 1),
+                    _boost_update(2, 100),
+                ],
+            },
+        ),
+        cast(
+            FrameData,
+            {
+                "time": 0.1,
+                "new_actors": [
+                    {
+                        "actor_id": 1,
+                        "object_id": _CAR,
+                        "initial_trajectory": {
+                            "location": {"x": 0.0, "y": 0.0, "z": 0.0}
+                        },
+                    }
+                ],
+            },
+        ),  # a demolition respawn — no goal, no countdown, so no dead period
+        _frame(0.15),
+        _frame(0.2, updated=[_boost_update(2, 50)]),
+    ]
+    rf = _extract(_replay(frames))
+    idx = _car_idx(rf)
+    assert rf.dead_periods == []  # confirms this replay has no real kickoff
+    assert (
+        _boost_at(rf, 1, idx) == 75
+    )  # midpoint of the 100 -> 50 lerp, not held at 100
 
 
 def test_boost_absent_component_leaves_slot_marked_has_boost_false() -> None:
