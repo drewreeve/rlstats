@@ -284,7 +284,6 @@ test("boost-pad orbs hide while collected and pop back in on respawn", async () 
     return {
       boundCount: boostPads.bound.size,
       totalOrbs: byName("boost_orb_big") + byName("boost_orb_small"),
-      totalPlates: byName("boost_plate"),
       before: at(tCollect - 0.05),
       collected: at((tCollect + tRespawn) / 2),
       midPop: at(tRespawn + 0.05), // < BOOST_ORB_POP (0.15) after respawn
@@ -294,7 +293,6 @@ test("boost-pad orbs hide while collected and pop back in on respawn", async () 
 
   expect(probe).not.toBeNull();
   expect(probe.totalOrbs).toBe(34); // fixture replay is standard soccar
-  expect(probe.totalPlates).toBe(34); // a star plate under each orb
   expect(probe.boundCount).toBe(34); // every pad index snapped to its own orb
   expect(probe.before.visible).toBe(true);
   expect(probe.before.scale).toBeCloseTo(1, 5);

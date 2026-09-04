@@ -80,18 +80,6 @@ const BOOST_PAD_SNAP_MAX = 500; // uu — reject a pad-index → orb match farth
 const BOOST_ORB_POP = 0.15; // s — a respawned orb scales up over this window
 const BOOST_ORB_POP_MIN = 0.35; // scale it starts the pop-in at
 
-// The pad plate under the orb, echoing the in-game shape: a three-armed
-// triskelion — a wide rounded paddle at each of 3 arms with deep concave
-// waists between, and a hub ring. Big and small pads share the shape; the big
-// one is just larger. Filled grey so it grounds the orb by masking the floor
-// grid, pale rim like the in-game plate. `tip`/`valley` are arm-tip and
-// between-arm radii in uu.
-const BOOST_PLATE_BIG = { tip: 76, valley: 42, arms: 3 };
-const BOOST_PLATE_SMALL = { tip: 49, valley: 28, arms: 3 };
-const BOOST_PLATE_Z = 0.55; // above the floor grid (0.5), below the half tint (1)
-const BOOST_PLATE_FILL = 0x2a2f3a; // mid-grey slab — reads as a plate on the dark floor
-const BOOST_PLATE_EDGE = 0xd2dae8; // near-white rim, like the in-game plate top
-
 const SEEK_STEP = 5; // seconds, for arrow-key seeking
 // Name-label placement. The tag is bottom-anchored and screen-constant in size:
 // its pill is LABEL_VIEW_FRAC of the viewport height, and its bottom edge sits
@@ -679,36 +667,11 @@ function buildHalfTint(parent, spec, trackedTeam) {
   }
 }
 
-// The plate outline, CCW: per arm a deep waist, an ease point, a wide rounded
-// paddle (two tip corners + a slight centre bulge) and an ease point back down.
-// 6 verts per arm.
-function boostPlateOutline({ tip, valley, arms }) {
-  const pts = [];
-  const step = (Math.PI * 2) / arms;
-  const half = step / 2;
-  const armW = half * 0.42; // paddle half-width at the tip
-  const mid = valley + (tip - valley) * 0.5;
-  const at = (ang, r) => [Math.cos(ang) * r, Math.sin(ang) * r];
-  for (let k = 0; k < arms; k++) {
-    const a = k * step;
-    pts.push(
-      at(a - half, valley), // waist to the previous arm
-      at(a - half * 0.62, mid), // ease out
-      at(a - armW, tip), // paddle corner
-      at(a, tip * 1.02), // paddle centre, slight bulge
-      at(a + armW, tip), // paddle corner
-      at(a + half * 0.62, mid), // ease in
-    );
-  }
-  return pts;
-}
-
 // Per pad: a glowing orb (bright core sphere + additive halo sprite) hovering
-// BOOST_ORB_Z above a flat star plate on the floor. The orb is a Group (the
-// collectible — createBoostPads hides/pops it); the plate is a second, static
-// Group left showing when the boost is gone, like in game. Everything is
-// parented to `field` so it rides the orientation flip (a visual no-op — the
-// layout is symmetric under the 180° spin — but consistent, wrinkle 7).
+// BOOST_ORB_Z above the pad spot. The orb is a Group — the collectible;
+// createBoostPads hides/pops it. Parented to `field` so it rides the
+// orientation flip (a visual no-op — the layout is symmetric under the 180°
+// spin — but consistent, wrinkle 7).
 // Returns `{ mesh: orbGroup, x, y }` per pad (field-local coords).
 function buildBoostPads(parent, spec) {
   // Size-independent — one instance shared across every pad.
@@ -722,54 +685,15 @@ function buildBoostPads(parent, spec) {
     blending: THREE.AdditiveBlending,
     opacity: 0.6,
   });
-  const plateFill = new THREE.MeshBasicMaterial({
-    color: BOOST_PLATE_FILL,
-    transparent: true,
-    opacity: 0.72,
-    depthWrite: false,
-  });
-  const plateEdge = new THREE.LineBasicMaterial({
-    color: BOOST_PLATE_EDGE,
-    transparent: true,
-    opacity: 0.5,
-  });
 
   const orbs = [];
-  for (const [pads, r, plate] of [
-    [spec.bigPads, BOOST_ORB_BIG_R, BOOST_PLATE_BIG],
-    [spec.smallPads, BOOST_ORB_SMALL_R, BOOST_PLATE_SMALL],
+  for (const [pads, r, size] of [
+    [spec.bigPads, BOOST_ORB_BIG_R, "big"],
+    [spec.smallPads, BOOST_ORB_SMALL_R, "small"],
   ]) {
-    const size = plate === BOOST_PLATE_BIG ? "big" : "small";
     const coreGeo = new THREE.SphereGeometry(r, 16, 12);
-    const ring = boostPlateOutline(plate).map(
-      ([px, py]) => new THREE.Vector3(px, py, 0),
-    );
-    const plateGeo = new THREE.ShapeGeometry(new THREE.Shape(ring));
-    const edgeGeo = new THREE.BufferGeometry().setFromPoints(ring);
-    const hubGeo = new THREE.BufferGeometry().setFromPoints(
-      Array.from({ length: 24 }, (_, i) => {
-        const a = (i / 24) * Math.PI * 2;
-        const hr = plate.valley * 0.62;
-        return new THREE.Vector3(Math.cos(a) * hr, Math.sin(a) * hr, 0);
-      }),
-    );
 
     for (const [x, y] of pads) {
-      // Static plate: fill on the floor, rim + hub a hair above it. One Group
-      // carries the (x, y); its matrix never changes, so freeze it.
-      const plateGrp = new THREE.Group();
-      plateGrp.name = "boost_plate";
-      plateGrp.position.set(x, y, BOOST_PLATE_Z);
-      plateGrp.add(new THREE.Mesh(plateGeo, plateFill));
-      for (const g of [edgeGeo, hubGeo]) {
-        const loop = new THREE.LineLoop(g, plateEdge);
-        loop.position.z = 0.05;
-        plateGrp.add(loop);
-      }
-      plateGrp.matrixAutoUpdate = false;
-      plateGrp.updateMatrix();
-      parent.add(plateGrp);
-
       const grp = new THREE.Group();
       grp.position.set(x, y, BOOST_ORB_Z);
       const core = new THREE.Mesh(coreGeo, coreMat);
