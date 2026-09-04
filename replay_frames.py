@@ -20,6 +20,7 @@ Divergences from the ``frame_analysis`` handlers, both deliberate:
 """
 
 import math
+import sys
 from array import array
 from collections.abc import Iterator
 from collections.abc import Set as AbstractSet
@@ -579,34 +580,61 @@ def _build_slots(
     return slots
 
 
+# The near-parallel cutoff for _slerp's fast path, == JS Number.EPSILON.
+_EPSILON = sys.float_info.epsilon
+
+
 def _slerp(
     a: tuple[float, float, float, float],
     b: tuple[float, float, float, float],
     t: float,
 ) -> tuple[float, float, float, float]:
-    """Spherical linear interpolation between two unit quaternions."""
+    """Spherical linear interpolation between two unit quaternions.
+
+    A verbatim port of ``slerpQuat()`` in ``static/replay-core.js`` — itself a
+    port of ``THREE.Quaternion.slerp`` (ADR-0004 §15). The browser re-interpolates
+    between the frames this bakes, so the two must agree; keep them in lockstep.
+    ``tests/test_replay_frames.py`` and ``tests/js/replay-core.test.js`` check
+    both against the same quaternion cases, and the e2e suite pins ``slerpQuat``
+    to THREE — so ``_slerp`` ← analytic cases → ``slerpQuat`` ← e2e → THREE.
+    """
     ax, ay, az, aw = a
     bx, by, bz, bw = b
-    dot = ax * bx + ay * by + az * bz + aw * bw
-    if dot < 0.0:  # take the shorter arc
-        bx, by, bz, bw, dot = -bx, -by, -bz, -bw, -dot
-    if dot > 0.9995:  # almost parallel — normalised lerp dodges sin(θ₀)→0
+    if t == 0.0:
+        return ax, ay, az, aw
+    if t == 1.0:
+        return bx, by, bz, bw
+
+    cos_half_theta = aw * bw + ax * bx + ay * by + az * bz
+    if cos_half_theta < 0.0:  # take the shorter arc
+        bx, by, bz, bw = -bx, -by, -bz, -bw
+        cos_half_theta = -cos_half_theta
+    if cos_half_theta >= 1.0:
+        return ax, ay, az, aw
+
+    sqr_sin_half_theta = 1.0 - cos_half_theta * cos_half_theta
+    if sqr_sin_half_theta <= _EPSILON:  # almost parallel — nlerp dodges sinθ→0
+        s = 1.0 - t
         rx, ry, rz, rw = (
-            ax + t * (bx - ax),
-            ay + t * (by - ay),
-            az + t * (bz - az),
-            aw + t * (bw - aw),
+            s * ax + t * bx,
+            s * ay + t * by,
+            s * az + t * bz,
+            s * aw + t * bw,
         )
-        n = math.sqrt(rx * rx + ry * ry + rz * rz + rw * rw) or 1.0
+        n = math.sqrt(rx * rx + ry * ry + rz * rz + rw * rw)
+        if n == 0.0:
+            return 0.0, 0.0, 0.0, 1.0
         return rx / n, ry / n, rz / n, rw / n
-    theta0 = math.acos(dot)
-    s0 = math.sin(theta0 - t * theta0) / math.sin(theta0)
-    s1 = math.sin(t * theta0) / math.sin(theta0)
+
+    sin_half_theta = math.sqrt(sqr_sin_half_theta)
+    half_theta = math.atan2(sin_half_theta, cos_half_theta)
+    ratio_a = math.sin((1.0 - t) * half_theta) / sin_half_theta
+    ratio_b = math.sin(t * half_theta) / sin_half_theta
     return (
-        ax * s0 + bx * s1,
-        ay * s0 + by * s1,
-        az * s0 + bz * s1,
-        aw * s0 + bw * s1,
+        ax * ratio_a + bx * ratio_b,
+        ay * ratio_a + by * ratio_b,
+        az * ratio_a + bz * ratio_b,
+        aw * ratio_a + bw * ratio_b,
     )
 
 

@@ -503,6 +503,29 @@ test("slerpQuat: near-antipodal inputs hit the linear-renormalize fallback and s
   assert.ok(Math.abs(Math.hypot(...r) - 1) < 1e-9, `norm ${Math.hypot(...r)}`);
 });
 
+test("slerpQuat: same-axis rotations interpolate the angle exactly", () => {
+  // Mirror of test_slerp_is_the_slerpquat_port in tests/test_replay_frames.py —
+  // _slerp there is a verbatim port of this function; the same case list must
+  // hold on both sides. For two rotations about one axis,
+  // slerp(q(a), q(b), t) === q(a + t*(b - a)) (dot > 0, |b - a| < 180deg).
+  const q = (deg) => {
+    const r = (deg * Math.PI) / 360;
+    return [0, 0, Math.sin(r), Math.cos(r)];
+  };
+  const cases = [
+    [0, 90, 0.5],
+    [0, 90, 0.3],
+    [-80, 80, 0.25],
+    [30, 33, 0.5],
+    [0, 3.5, 0.1], // inside the Python pre-port dot > 0.9995 nlerp band
+    [10, 11, 0.3],
+  ];
+  for (const [aDeg, bDeg, t] of cases) {
+    const got = slerpQuat(...q(aDeg), ...q(bDeg), t, [0, 0, 0, 0]);
+    close4(got, q(aDeg + t * (bDeg - aDeg)), 1e-9);
+  }
+});
+
 test("writePoses: both bracket ends dead -> slot hidden, no trail", () => {
   const meta = {
     frame_times: [0, 1, 2, 3],

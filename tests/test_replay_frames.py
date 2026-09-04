@@ -11,6 +11,7 @@ Two layers:
 
 import math
 import struct
+import sys
 from typing import cast
 
 import pytest
@@ -22,6 +23,7 @@ from replay_frames import (
     _dead_periods,  # type: ignore[reportPrivateUsage]
     _scan_countdowns,  # type: ignore[reportPrivateUsage]
     _scan_goals,  # type: ignore[reportPrivateUsage]
+    _slerp,  # type: ignore[reportPrivateUsage]
     _walk,  # type: ignore[reportPrivateUsage]
     extract_replay_frames,
     packed_buffer_bytes,
@@ -324,6 +326,59 @@ def test_held_frame_rotation_is_slerped() -> None:
     )
     half = (0.0, 0.0, math.sin(th / 4), math.cos(th / 4))  # 45° about Z
     assert _pose(rf, 1, _ball_idx(rf))[3:] == pytest.approx(half)  # pyright: ignore[reportUnknownMemberType]
+
+
+def _unit(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    n = math.sqrt(sum(v * v for v in q))
+    return cast("tuple[float, float, float, float]", tuple(v / n for v in q))
+
+
+def test_slerp_is_the_slerpquat_port() -> None:
+    # _slerp is a verbatim port of slerpQuat() in static/replay-core.js — the
+    # same case list is checked against slerpQuat in tests/js/replay-core.test.js;
+    # the e2e suite pins slerpQuat to THREE. For two rotations about one axis,
+    # slerp(q(a), q(b), t) == q(a + t*(b - a)) exactly, provided dot > 0 and
+    # |b - a| < 180° so the short arc is the direct path.
+    def q(deg: float) -> tuple[float, float, float, float]:
+        r = math.radians(deg) / 2.0
+        return (0.0, 0.0, math.sin(r), math.cos(r))
+
+    same_axis = [
+        (0.0, 90.0, 0.5),
+        (0.0, 90.0, 0.3),
+        (-80.0, 80.0, 0.25),
+        (30.0, 33.0, 0.5),
+        (0.0, 3.5, 0.1),  # inside the pre-port dot > 0.9995 nlerp band, off-centre
+        (10.0, 11.0, 0.3),  # ditto — the port takes true slerp here, nlerp did not
+    ]
+    for a_deg, b_deg, t in same_axis:
+        got = _slerp(q(a_deg), q(b_deg), t)
+        want = q(a_deg + t * (b_deg - a_deg))
+        assert got == pytest.approx(want, abs=1e-9)  # pyright: ignore[reportUnknownMemberType]
+
+    a = _unit((0.1, -0.3, 0.5, 0.8))
+    b = _unit((0.6, 0.2, -0.1, 0.7))
+
+    # endpoints returned exactly — both t are reachable from _densify
+    assert _slerp(a, b, 0.0) == a
+    assert _slerp(a, b, 1.0) == b
+
+    # shortest arc: slerp(a, b) == slerp(a, -b)
+    neg_b = cast("tuple[float, float, float, float]", tuple(-v for v in b))
+    for t in (0.2, 0.5, 0.8):
+        assert _slerp(a, b, t) == pytest.approx(_slerp(a, neg_b, t), abs=1e-12)  # pyright: ignore[reportUnknownMemberType]
+
+    # near-parallel fallback (mirrors the JS case) — finite and unit-norm
+    r = _slerp(
+        (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0 - sys.float_info.epsilon / 2), 0.4
+    )
+    assert all(math.isfinite(v) for v in r)
+    assert math.sqrt(sum(v * v for v in r)) == pytest.approx(1.0, abs=1e-9)  # pyright: ignore[reportUnknownMemberType]
+
+    # unit norm preserved on the off-axis pair
+    for t in (0.13, 0.5, 0.87):
+        n = math.sqrt(sum(v * v for v in _slerp(a, b, t)))
+        assert n == pytest.approx(1.0, abs=1e-12)  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_rotation_before_first_sample_is_held_back_position_lerps_from_seed() -> None:
