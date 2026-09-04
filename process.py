@@ -2,14 +2,10 @@ import functools
 import logging
 import os
 import sqlite3
-import subprocess
 import threading
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import cast
-
-import orjson
 
 from config import load_tracked_players
 from file_outcome import (
@@ -28,8 +24,8 @@ from ingest import (
     write_match,
 )
 from player_identity import PlayerIdentity
-from rrrocket_schema import ParsedReplay, ReplayJSON
-from rrrocket_schema import parse as _parse_rrrocket
+from rrrocket import run_rrrocket
+from rrrocket_schema import ParsedReplay
 
 logger = logging.getLogger(__name__)
 
@@ -45,36 +41,6 @@ def open_write_conn(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
-
-
-def run_rrrocket(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:
-    """Run ``rrrocket -n`` on a .replay file and parse its output.
-
-    Returns ``(parsed, None)`` on success, ``(None, error_message)`` on a
-    subprocess/timeout/exit failure. Never touches the file — callers that want
-    a corrupt replay removed do that themselves (see :func:`parse_replay`).
-    """
-    try:
-        result = subprocess.run(
-            ["rrrocket", "-n", str(replay_path)],
-            capture_output=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        logger.warning("rrrocket failed for %s: %s", replay_path.name, exc)
-        return None, f"rrrocket failed: {exc}"
-
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace").strip()
-        logger.warning(
-            "rrrocket failed for %s (exit %d): %s",
-            replay_path.name,
-            result.returncode,
-            stderr,
-        )
-        return None, f"rrrocket failed (exit {result.returncode}): {stderr}"
-
-    return _parse_rrrocket(cast(ReplayJSON, orjson.loads(result.stdout))), None
 
 
 def parse_replay(replay_path: Path) -> tuple[ParsedReplay | None, str | None]:

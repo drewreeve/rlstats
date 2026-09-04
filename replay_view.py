@@ -12,8 +12,8 @@ from pathlib import Path
 import queries
 from ingest import build_replay_context
 from player_identity import PlayerIdentity
-from process import run_rrrocket
 from replay_frames import ReplayFrames, extract_replay_frames
+from rrrocket import run_rrrocket
 
 logger = logging.getLogger(__name__)
 

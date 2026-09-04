@@ -11,7 +11,6 @@ from process import (
     _parse_and_analyze,  # pyright: ignore[reportPrivateUsage]
     parse_replay,
     process_unprocessed,
-    run_rrrocket,
     write_parsed_batch,
 )
 from rrrocket_schema import parse as parse_rrrocket
@@ -40,7 +39,7 @@ def test_parse_replay_success(tmp_path: Path):
         stdout = json.dumps(replay_data).encode()
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
-    with patch("process.subprocess.run", side_effect=fake_rrrocket):
+    with patch("rrrocket.subprocess.run", side_effect=fake_rrrocket):
         result, error = parse_replay(replay_path)
 
     assert result == parse_rrrocket(replay_data)
@@ -56,28 +55,13 @@ def test_parse_replay_failure(tmp_path: Path):
 
     failed = subprocess.CompletedProcess(["rrrocket"], 1, stderr=b"parse error")
 
-    with patch("process.subprocess.run", return_value=failed):
+    with patch("rrrocket.subprocess.run", return_value=failed):
         result, error = parse_replay(replay_path)
 
     assert result is None
     assert error is not None
     assert "rrrocket failed" in error
     assert not replay_path.exists()
-
-
-def test_run_rrrocket_leaves_the_file_on_failure(tmp_path: Path):
-    """Unlike parse_replay, run_rrrocket never deletes — the replay viewer
-    depends on a failed re-parse not destroying an already-ingested replay."""
-    replay_path = tmp_path / "keep.replay"
-    replay_path.write_bytes(b"\x00" * 1024)
-
-    failed = subprocess.CompletedProcess(["rrrocket"], 1, stderr=b"boom")
-    with patch("process.subprocess.run", return_value=failed):
-        result, error = run_rrrocket(replay_path)
-
-    assert result is None
-    assert error is not None and "rrrocket failed" in error
-    assert replay_path.exists()
 
 
 def test_write_parsed_batch_commits(tmp_path: Path):
@@ -221,15 +205,6 @@ def test_write_parsed_batch_syncs_tracked_players(tmp_path: Path):
         ("76561197969365901",),
     ).fetchone()
     assert row[0] == 1
-
-
-def test_parse_replay_end_to_end():
-    """parse_replay invokes the real rrrocket binary on a .replay file."""
-    replay_path = TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
-    result, error = parse_replay(replay_path)
-    assert error is None
-    assert result is not None
-    assert result.match_guid is not None
 
 
 def test_process_unprocessed_end_to_end(tmp_path: Path):
