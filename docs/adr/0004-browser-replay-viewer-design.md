@@ -138,24 +138,30 @@ chain and `NetObj` for name→object-id resolution.
 ```python
 @dataclass(frozen=True)
 class ActorSlot:
-    identity: PlayerIdentity | None    # None for unresolved cars (bots, odd platforms)
-    name: str                          # display name > in-game name > "Player N"
-    team: int | None                   # 0 | 1 for cars (from TeamPaint); None for the ball
+    identity: PlayerIdentity | None  # None for unresolved cars (bots, odd platforms)
+    name: str  # display name > in-game name > "Player N"
+    team: int | None  # 0 | 1 for cars (from TeamPaint); None for the ball
     is_tracked: bool
-    kind: str                          # "car" | "ball"
-    segments: list[tuple[int, int]]    # (start_frame, end_frame) inclusive, frame-index space
+    kind: str  # "car" | "ball"
+    # (start_frame, end_frame) inclusive, frame-index space
+    segments: list[tuple[int, int]]
+
 
 @dataclass(frozen=True)
 class ReplayFrames:
-    frame_times: list[float]           # length F, wall-clock seconds, non-uniform
-    slots: list[ActorSlot]             # ball lane + one car lane per player
-    positions: bytes                   # F * N * 7 little-endian float32, row-major [frame][slot][x,y,z, qx,qy,qz,qw]
+    frame_times: list[float]  # length F, wall-clock seconds, non-uniform
+    slots: list[ActorSlot]  # ball lane + one car lane per player
+    # F * N * 7 little-endian float32, row-major [frame][slot][x,y,z, qx,qy,qz,qw]
+    positions: bytes
     tracked_team: int | None
     game_mode: str | None
-    goals: list[GoalMarker]            # {frame, team} in frame order
-    countdowns: list[tuple[int, int]]  # (frame, n) per kickoff tick (3→2→1→0), frame order
-    dead_periods: list[tuple[int, int]] # (start, end) inclusive frame indices the viewer collapses
-    boost_pads: list[tuple[int, int, int, float, float]]  # (frame, pad, collected, x, y) per pad state flip, frame order
+    goals: list[GoalMarker]  # {frame, team} in frame order
+    # (frame, n) per kickoff tick (3→2→1→0), frame order
+    countdowns: list[tuple[int, int]]
+    # (start, end) inclusive frame indices the viewer collapses
+    dead_periods: list[tuple[int, int]]
+    # (frame, pad, collected, x, y) per pad state flip, frame order
+    boost_pads: list[tuple[int, int, int, float, float]]
 ```
 
 `boost_pads` rows carry a **dense 0-based `pad` index** (ascending pad
