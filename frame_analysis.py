@@ -23,7 +23,7 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from itertools import pairwise
 
 from player_identity import IdentityResolver, PlayerIdentity, from_network_frame
@@ -82,50 +82,43 @@ class PlayerZoneSeconds:
     offensive: float
 
 
+def _counter(net_obj: NetObj) -> int | None:
+    """A recorded-stat field: unknown (None) by default, read from this PRI counter."""
+    return field(default=None, metadata={"counter": net_obj})
+
+
 @dataclass(frozen=True)
 class PlayerRecordedStats:
     """Per-player counters the game keeps itself. See CONTEXT.md: Recorded Stat.
 
-    ``None`` means the replay predates that stat (unknown), not zero.
+    ``None`` means the replay predates that stat (unknown), not zero. Each field
+    names the PRI counter the game records it in; this is the one place a
+    recorded stat is declared (RECORDED_STAT_COUNTERS is derived from it).
     """
 
-    ball_touches: int | None = None
-    car_touches: int | None = None
-    dodges: int | None = None
-    aerial_hits: int | None = None
-    bicycle_hits: int | None = None
-    centers: int | None = None
-    clears: int | None = None
-    epic_saves: int | None = None
-    first_touches: int | None = None
-    flip_resets: int | None = None
-    goal_frame_hits: int | None = None
-    high_fives: int | None = None
-    juggle_hits: int | None = None
-    low_fives: int | None = None
-    pool_shots: int | None = None
-    power_ups_used: int | None = None
+    ball_touches: int | None = _counter(NetObj.BALL_TOUCHES)
+    car_touches: int | None = _counter(NetObj.CAR_TOUCHES)
+    dodges: int | None = _counter(NetObj.DODGES)
+    aerial_hits: int | None = _counter(NetObj.MATCH_AERIAL_HITS)
+    bicycle_hits: int | None = _counter(NetObj.MATCH_BICYCLE_HITS)
+    centers: int | None = _counter(NetObj.MATCH_CENTERS)
+    clears: int | None = _counter(NetObj.MATCH_CLEARS)
+    epic_saves: int | None = _counter(NetObj.MATCH_EPIC_SAVES)
+    first_touches: int | None = _counter(NetObj.MATCH_FIRST_TOUCHES)
+    flip_resets: int | None = _counter(NetObj.MATCH_FLIP_RESETS)
+    # The game calls it "crossbar hits" but counts post hits too.
+    goal_frame_hits: int | None = _counter(NetObj.MATCH_CROSSBAR_HITS)
+    high_fives: int | None = _counter(NetObj.MATCH_HIGH_FIVES)
+    juggle_hits: int | None = _counter(NetObj.MATCH_JUGGLE_HITS)
+    low_fives: int | None = _counter(NetObj.MATCH_LOW_FIVES)
+    pool_shots: int | None = _counter(NetObj.MATCH_POOL_SHOTS)
+    power_ups_used: int | None = _counter(NetObj.POWER_UPS_USED)
 
 
 # Each PlayerRecordedStats field -> the PRI counter the game records it in.
+# A field with no counter metadata raises KeyError at import.
 RECORDED_STAT_COUNTERS: dict[str, NetObj] = {
-    "ball_touches": NetObj.BALL_TOUCHES,
-    "car_touches": NetObj.CAR_TOUCHES,
-    "dodges": NetObj.DODGES,
-    "aerial_hits": NetObj.MATCH_AERIAL_HITS,
-    "bicycle_hits": NetObj.MATCH_BICYCLE_HITS,
-    "centers": NetObj.MATCH_CENTERS,
-    "clears": NetObj.MATCH_CLEARS,
-    "epic_saves": NetObj.MATCH_EPIC_SAVES,
-    "first_touches": NetObj.MATCH_FIRST_TOUCHES,
-    "flip_resets": NetObj.MATCH_FLIP_RESETS,
-    # The game calls it "crossbar hits" but counts post hits too.
-    "goal_frame_hits": NetObj.MATCH_CROSSBAR_HITS,
-    "high_fives": NetObj.MATCH_HIGH_FIVES,
-    "juggle_hits": NetObj.MATCH_JUGGLE_HITS,
-    "low_fives": NetObj.MATCH_LOW_FIVES,
-    "pool_shots": NetObj.MATCH_POOL_SHOTS,
-    "power_ups_used": NetObj.POWER_UPS_USED,
+    f.name: NetObj(f.metadata["counter"]) for f in fields(PlayerRecordedStats)
 }
 
 

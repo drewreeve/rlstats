@@ -8,8 +8,6 @@ The integration tests in test_ingest.py exercise the orchestrator and
 frame-loop ordering invariants; these tests cover handler logic.
 """
 
-import dataclasses
-
 from frame_analysis import (
     RECORDED_STAT_COUNTERS,
     BallZonesHandler,
@@ -440,10 +438,10 @@ def _recorded_handler() -> RecordedStatsHandler:
     )
 
 
-def test_recorded_stat_fields_match_counter_mapping():
-    assert set(RECORDED_STAT_COUNTERS) == {
-        f.name for f in dataclasses.fields(PlayerRecordedStats)
-    }
+def test_recorded_stat_counters_are_unique():
+    # Two stats on one counter would collide in RecordedStatsHandler's
+    # {obj_id: stat} map and leave one column permanently NULL.
+    assert len(set(RECORDED_STAT_COUNTERS.values())) == len(RECORDED_STAT_COUNTERS)
 
 
 def test_recorded_stats_handler_keeps_max_not_update_count():
