@@ -45,6 +45,8 @@ Zone time is tracked both for the ball (on `matches`) and per-player (on `match_
 
 A **recorded stat** is a per-player counter that the game itself keeps and writes into the replay (ball touches, aerial hits, clears, flip resets and so on), as opposed to a **player match stat**, which we compute ourselves from frame analysis. We only read a recorded stat's final value; the game decides what counts. If a player has more than one counter in a match (e.g. after leaving and rejoining), their value is the sum of each counter's final value.
 
+A recorded stat is declared once, as a field on `PlayerRecordedStats` carrying the game's counter as metadata. `RECORDED_STAT_COUNTERS` and the `match_players` row are derived from it, so adding one means that field plus a migration for its column; a drift test fails if the two disagree.
+
 A **goal frame hit** is the ball hitting the crossbar *or* a post. The game calls this counter "crossbar hits", but it counts post hits too, so we use the name that says what it measures.
 
 Two of the game's counters are deliberately not kept as recorded stats, because they duplicate player match stats:

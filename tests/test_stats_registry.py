@@ -1,6 +1,7 @@
 # Guards against the shape of drift that motivated this file: a migration adds a
-# column (or one gets renamed) and MatchRow/MatchPlayerRow isn't updated to match,
-# so the new column is never populated and nothing else notices.
+# column (or one gets renamed) and MatchRow, MatchPlayerRow or a recorded stat
+# field isn't updated to match, so the new column is never populated and
+# nothing else notices.
 
 from typing import Any, is_typeddict
 
@@ -8,6 +9,7 @@ import pytest
 
 import queries
 from db import sql
+from frame_analysis import RECORDED_STAT_COUNTERS
 from ingest import MatchPlayerRow, MatchRow
 from queries import READ_ROW_TYPES
 from tests.fixtures import in_memory_db
@@ -28,21 +30,31 @@ _GUARD_PARAMS: dict[str, Any] = {
 }
 
 
+def _table_columns(table: str) -> set[str]:
+    rows = in_memory_db().execute(f"PRAGMA table_info({table})").fetchall()
+    return {row[1] for row in rows}
+
+
 @pytest.mark.parametrize(
-    "table, row_type, excluded_columns",
+    "table, row_keys, excluded_columns",
     [
-        ("matches", MatchRow, {"id"}),
-        ("match_players", MatchPlayerRow, set[str]()),
+        ("matches", set(MatchRow.__annotations__), {"id"}),
+        (
+            "match_players",
+            set(MatchPlayerRow.__annotations__) | set(RECORDED_STAT_COUNTERS),
+            set[str](),
+        ),
     ],
 )
-def test_row_type_matches_table_columns(
-    table: str, row_type: Any, excluded_columns: set[str]
+def test_row_keys_match_table_columns(
+    table: str, row_keys: set[str], excluded_columns: set[str]
 ):
-    conn = in_memory_db()
-    table_columns = {
-        row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
-    }
-    assert set(row_type.__annotations__) == table_columns - excluded_columns
+    assert row_keys == _table_columns(table) - excluded_columns
+
+
+def test_recorded_stats_dont_shadow_match_player_columns():
+    # _build_match_player_row merges them in; a shared name would overwrite.
+    assert set(RECORDED_STAT_COUNTERS).isdisjoint(MatchPlayerRow.__annotations__)
 
 
 @pytest.mark.parametrize(
@@ -51,7 +63,7 @@ def test_row_type_matches_table_columns(
     ids=[q.__name__ for q in READ_ROW_TYPES],
 )
 def test_read_row_type_matches_query_columns(query: Any, row_type: Any):
-    """Read-side analogue of test_row_type_matches_table_columns: each row
+    """Read-side analogue of test_row_keys_match_table_columns: each row
     type's keys must match the columns its query projects. Runs the query
     against a migrated empty DB and compares cursor.description to the
     TypedDict's keys. Required keys must all appear; every projected column

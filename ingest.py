@@ -3,7 +3,7 @@
 
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, TypedDict
 
 import db
@@ -251,6 +251,8 @@ class MatchRow(TypedDict):
 
 
 class MatchPlayerRow(TypedDict):
+    # Every match_players column except the recorded stats, which are merged in
+    # from PlayerRecordedStats' fields by _build_match_player_row.
     match_id: int
     player_id: int
     team: int | None
@@ -271,22 +273,6 @@ class MatchPlayerRow(TypedDict):
     defensive_zone_seconds: float | None
     neutral_zone_seconds: float | None
     offensive_zone_seconds: float | None
-    ball_touches: int | None
-    car_touches: int | None
-    dodges: int | None
-    aerial_hits: int | None
-    bicycle_hits: int | None
-    centers: int | None
-    clears: int | None
-    epic_saves: int | None
-    first_touches: int | None
-    flip_resets: int | None
-    goal_frame_hits: int | None
-    high_fives: int | None
-    juggle_hits: int | None
-    low_fives: int | None
-    pool_shots: int | None
-    power_ups_used: int | None
 
 
 def _build_match_player_row(
@@ -294,11 +280,11 @@ def _build_match_player_row(
     player_id: int,
     player: PlayerStatEntry,
     stats: PlayerMatchStats,
-) -> MatchPlayerRow:
+) -> dict[str, Any]:
     mv = stats.movement
     pz = stats.zone_seconds
     rec = stats.recorded
-    return MatchPlayerRow(
+    core = MatchPlayerRow(
         match_id=match_id,
         player_id=player_id,
         team=player.get("Team"),
@@ -319,23 +305,8 @@ def _build_match_player_row(
         defensive_zone_seconds=pz.defensive if pz else None,
         neutral_zone_seconds=pz.neutral if pz else None,
         offensive_zone_seconds=pz.offensive if pz else None,
-        ball_touches=rec.ball_touches,
-        car_touches=rec.car_touches,
-        dodges=rec.dodges,
-        aerial_hits=rec.aerial_hits,
-        bicycle_hits=rec.bicycle_hits,
-        centers=rec.centers,
-        clears=rec.clears,
-        epic_saves=rec.epic_saves,
-        first_touches=rec.first_touches,
-        flip_resets=rec.flip_resets,
-        goal_frame_hits=rec.goal_frame_hits,
-        high_fives=rec.high_fives,
-        juggle_hits=rec.juggle_hits,
-        low_fives=rec.low_fives,
-        pool_shots=rec.pool_shots,
-        power_ups_used=rec.power_ups_used,
     )
+    return {**core, **asdict(rec)}
 
 
 def _upsert_match(
