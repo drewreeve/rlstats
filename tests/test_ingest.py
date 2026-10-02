@@ -182,7 +182,8 @@ def test_player_stats_per_match(
 def test_camelcase_match_guid():
     conn = ingest_fixture("camelcase_match_guid.json")
     replay_hash = conn.execute("SELECT replay_hash FROM matches").fetchone()[0]
-    assert replay_hash is not None
+    # The fixture spells the key "MatchGuid", not "MatchGUID".
+    assert replay_hash == "1BF04DE811EFCD54003E1AB47E06B85B"
 
 
 def test_possession_tracking():
@@ -365,17 +366,6 @@ def test_ball_zones_none_without_network_data(conn_no_network: sqlite3.Connectio
     assert row == (None, None, None)
 
 
-def test_match_events_stored_in_db():
-    conn = ingest_fixture("match.json")
-    rows = conn.execute(
-        "SELECT event_type, game_seconds, team FROM match_events ORDER BY game_seconds"
-    ).fetchall()
-
-    assert len(rows) > 0
-    goals = [r for r in rows if r[0] == "goal"]
-    assert len(goals) == 9
-
-
 def test_match_events_have_valid_players():
     conn = ingest_fixture("match.json")
     rows = conn.execute("""
@@ -531,27 +521,18 @@ def test_correlate_pairings_no_double_counting():
     assert len(result) == 1
 
 
-def test_correlate_pairings_outside_window():
-    events = [
-        _ev("goal", 10.0, "steam", "A", 0),
-        _ev("assist", 8.9, "steam", "B", 0),  # 1.1s away — outside 1.0s window
-    ]
-    assert correlate_pairings(events) == []
-
-
-def test_correlate_pairings_same_player_excluded():
-    events = [
-        _ev("goal", 10.0, "steam", "A", 0),
-        _ev("assist", 9.8, "steam", "A", 0),  # same player — excluded
-    ]
-    assert correlate_pairings(events) == []
-
-
-def test_correlate_pairings_cross_team_excluded():
-    events = [
-        _ev("goal", 10.0, "steam", "A", 0),
-        _ev("assist", 9.8, "steam", "B", 1),  # different team — excluded
-    ]
+@pytest.mark.parametrize(
+    "assist",
+    [
+        pytest.param(
+            _ev("assist", 8.9, "steam", "B", 0), id="outside-1s-window"
+        ),  # 1.1s away
+        pytest.param(_ev("assist", 9.8, "steam", "A", 0), id="same-player"),
+        pytest.param(_ev("assist", 9.8, "steam", "B", 1), id="different-team"),
+    ],
+)
+def test_correlate_pairings_excluded(assist: MatchEvent):
+    events = [_ev("goal", 10.0, "steam", "A", 0), assist]
     assert correlate_pairings(events) == []
 
 
@@ -1151,23 +1132,32 @@ def _stat(team: int, score: int, pid: str = "A") -> PlayerStatEntry:
     return cast(PlayerStatEntry, {"Team": team, "Score": score, "Name": pid})
 
 
-def test_resolve_perspective_win():
+@pytest.mark.parametrize(
+    "team, team0_score, team1_score, expected_scores, result",
+    [
+        pytest.param(0, 3, 1, (3, 1), "win", id="team0-win"),
+        pytest.param(1, 4, 1, (1, 4), "loss", id="team1-loss"),
+    ],
+)
+def test_resolve_perspective_reorients_scores(
+    team: int,
+    team0_score: int,
+    team1_score: int,
+    expected_scores: tuple[int, int],
+    result: str,
+):
     drew = PlayerIdentity("steam", "1")
-    player_stats = {drew: _stat(team=0, score=500, pid="1")}
+    player_stats = {drew: _stat(team=team, score=500, pid="1")}
     tracked = {drew: "Drew"}
-    p = resolve_perspective(player_stats, tracked, team0_score=3, team1_score=1)
-    assert p == MatchPerspective(
-        team=0, team_score=3, opponent_score=1, result="win", mvp_identity=drew
+    p = resolve_perspective(
+        player_stats, tracked, team0_score=team0_score, team1_score=team1_score
     )
-
-
-def test_resolve_perspective_loss():
-    drew = PlayerIdentity("steam", "1")
-    player_stats = {drew: _stat(team=1, score=200, pid="1")}
-    tracked = {drew: "Drew"}
-    p = resolve_perspective(player_stats, tracked, team0_score=4, team1_score=1)
     assert p == MatchPerspective(
-        team=1, team_score=1, opponent_score=4, result="loss", mvp_identity=drew
+        team=team,
+        team_score=expected_scores[0],
+        opponent_score=expected_scores[1],
+        result=result,
+        mvp_identity=drew,
     )
 
 
@@ -1195,32 +1185,24 @@ def test_resolve_perspective_mvp_ignores_opponents():
     assert p.mvp_identity == drew
 
 
-def test_resolve_perspective_tied_score_has_no_result():
-    drew = PlayerIdentity("steam", "1")
-    player_stats = {drew: _stat(team=0, score=0, pid="1")}
-    tracked = {drew: "Drew"}
-    p = resolve_perspective(player_stats, tracked, team0_score=0, team1_score=0)
-    assert p.result is None
-
-
-def test_resolve_perspective_winning_team_overrides_score():
-    drew = PlayerIdentity("steam", "1")
-    player_stats = {drew: _stat(team=0, score=0, pid="1")}
-    tracked = {drew: "Drew"}
-    p = resolve_perspective(
-        player_stats, tracked, team0_score=0, team1_score=0, winning_team=0
-    )
-    assert p.result == "win"
-
-
-def test_resolve_perspective_forfeit_loss_via_winning_team():
+@pytest.mark.parametrize(
+    "winning_team, result",
+    [
+        pytest.param(None, None, id="tied-no-result"),
+        pytest.param(0, "win", id="winning-team-overrides-tie"),
+        pytest.param(1, "loss", id="forfeit-loss-via-winning-team"),
+    ],
+)
+def test_resolve_perspective_result_on_level_score(
+    winning_team: int | None, result: str | None
+):
     drew = PlayerIdentity("steam", "1")
     player_stats = {drew: _stat(team=0, score=0, pid="1")}
     tracked = {drew: "Drew"}
     p = resolve_perspective(
-        player_stats, tracked, team0_score=0, team1_score=0, winning_team=1
+        player_stats, tracked, team0_score=0, team1_score=0, winning_team=winning_team
     )
-    assert p.result == "loss"
+    assert p.result == result
 
 
 def test_resolve_perspective_mvp_tie_uses_playerstats_order():

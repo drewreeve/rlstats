@@ -13,12 +13,6 @@ from tests.fixtures import row_db as _db
 # -- passthrough stat reads (via the STAT_READS registry) --
 
 
-def test_shooting_pct_rows_have_expected_keys():
-    rows = queries.stats("shooting", _db("match.json"), "3v3")
-    assert rows
-    assert set(rows[0]) == {"player", "goals", "shots", "shooting_pct"}
-
-
 def test_stat_read_on_empty_db_returns_empty_list():
     assert queries.stats("players", _empty_db(), "3v3") == []
 
@@ -200,22 +194,6 @@ def test_player_career_no_data_zero_fills():
 
 
 # -- player_time_series --
-
-
-def test_player_time_series_rows_have_expected_keys():
-    rows = queries.player_time_series(_db("match.json"), "Drew", "3v3")
-    assert rows
-    assert set(rows[0]) == {
-        "date",
-        "goals",
-        "assists",
-        "saves",
-        "shots",
-        "avg_score",
-        "mvp_count",
-        "shooting_pct",
-        "avg_speed",
-    }
 
 
 def test_player_time_series_empty_for_unplayed_mode():

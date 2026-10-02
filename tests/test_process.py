@@ -226,6 +226,31 @@ def test_process_unprocessed_end_to_end(tmp_path: Path):
     assert replay_path.with_suffix(replay_path.suffix + ".ingested").exists()
 
 
+def test_process_unprocessed_skips_ingested_files_unless_forced(tmp_path: Path):
+    """An .ingested sentinel skips a replay; force=True reprocesses it anyway."""
+    db_path = file_db(tmp_path)
+    replay_dir = tmp_path / "replays"
+    replay_dir.mkdir()
+    replay_path = replay_dir / "BEC7EF8411F170E7DBCA41B0676B6A04.replay"
+    replay_path.write_bytes(
+        (TEST_DATA_DIR / "BEC7EF8411F170E7DBCA41B0676B6A04.replay").read_bytes()
+    )
+    sentinel_path(replay_path).write_text("")
+
+    def match_count() -> int:
+        conn = sqlite3.connect(db_path)
+        try:
+            return int(conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0])
+        finally:
+            conn.close()
+
+    process_unprocessed(db_path, replay_dir, TRACKED_PLAYERS)
+    assert match_count() == 0
+
+    process_unprocessed(db_path, replay_dir, TRACKED_PLAYERS, force=True)
+    assert match_count() == 1
+
+
 def test_process_unprocessed_write_failure_does_not_abort_batch(tmp_path: Path):
     """One replay's write failure doesn't prevent the rest of the batch from ingesting."""
     db_path = file_db(tmp_path)

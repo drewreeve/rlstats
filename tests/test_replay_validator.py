@@ -1,20 +1,24 @@
+import pytest
+
 from server import MAX_UPLOAD_BYTES, secure_filename, validate_upload
 
 VALID_SIZE = 1024  # 1KB
 
 
 class TestSecureFilename:
-    def test_strips_path_traversal(self):
-        assert secure_filename("../../../etc/match.replay") == "match.replay"
-
-    def test_replaces_special_chars(self):
-        assert secure_filename("my file!.replay") == "my_file_.replay"
-
-    def test_strips_leading_dots(self):
-        assert secure_filename("...hidden.replay") == "hidden.replay"
-
-    def test_normal_filename_unchanged(self):
-        assert secure_filename("match.replay") == "match.replay"
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            pytest.param(
+                "../../../etc/match.replay", "match.replay", id="path-traversal"
+            ),
+            pytest.param("my file!.replay", "my_file_.replay", id="special-chars"),
+            pytest.param("...hidden.replay", "hidden.replay", id="leading-dots"),
+            pytest.param("match.replay", "match.replay", id="normal-unchanged"),
+        ],
+    )
+    def test_sanitizes(self, raw: str, expected: str):
+        assert secure_filename(raw) == expected
 
 
 class TestValidateUpload:
@@ -24,19 +28,17 @@ class TestValidateUpload:
         assert status_code == 200
         assert safe_name == "match.replay"
 
-    def test_wrong_extension(self):
-        _, error, status_code = validate_upload("match.txt", VALID_SIZE)
-        assert error is not None
-        assert status_code == 400
-
-    def test_empty_filename(self):
-        _, error, status_code = validate_upload("", VALID_SIZE)
-        assert error is not None
-        assert status_code == 400
-
-    def test_dotfile_edge_case(self):
-        # "....replay" sanitizes to ".replay" (no stem) — must be rejected
-        _, error, status_code = validate_upload("....replay", VALID_SIZE)
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            pytest.param("match.txt", id="wrong-extension"),
+            pytest.param("", id="empty"),
+            # "....replay" sanitizes to ".replay" (no stem) — must be rejected
+            pytest.param("....replay", id="dotfile-no-stem"),
+        ],
+    )
+    def test_rejects_bad_filename(self, filename: str):
+        _, error, status_code = validate_upload(filename, VALID_SIZE)
         assert error is not None
         assert status_code == 400
 

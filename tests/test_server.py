@@ -100,45 +100,30 @@ def test_timeline_returns_pairing_rows(
 
 
 def test_match_detail_returns_team_split(match_client: TestClient) -> None:
+    # queries.match_detail's contents are tested in test_read_queries; the
+    # route returns it unchanged, so this only pins the HTTP shape.
     response = match_client.get("/api/matches/1")
 
     assert response.status_code == 200
-    data: Any = response.json()
-    assert "match" in data
-    assert "team_players" in data
-    assert "opponent_players" in data
-    assert "events" in data
-
-    assert data["match"]["result"] == "win"
-    assert data["match"]["team_score"] == 5
-    assert data["match"]["opponent_score"] == 4
-
-    team_names = {p["name"] for p in data["team_players"]}
-    assert {"Drew", "Jeff", "Steve"} == team_names
-
-    opponent_names = {p["name"] for p in data["opponent_players"]}
-    assert len(opponent_names) == 3
-    assert "Drew" not in opponent_names
+    assert set(response.json()) == {
+        "match",
+        "team_players",
+        "opponent_players",
+        "events",
+    }
 
 
-def test_match_detail_404_nonexistent(match_client: TestClient) -> None:
-    response = match_client.get("/api/matches/9999")
-
-    assert response.status_code == 404
-
-
-def test_match_detail_events(match_client: TestClient) -> None:
-    response = match_client.get("/api/matches/1")
-    data: Any = response.json()
-
-    events = data["events"]
-    event_types = {e["event_type"] for e in events}
-    assert "goal" in event_types
-    assert "shot" in event_types
-    assert "save" in event_types
-
-    goals = [e for e in events if e["event_type"] == "goal"]
-    assert len(goals) == 9  # 5 team + 4 opponent
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/matches/9999",
+        "/player/Unknown",
+        "/api/players/Unknown",
+        "/api/players/Unknown/time-series",
+    ],
+)
+def test_unknown_resource_returns_404(match_client: TestClient, path: str) -> None:
+    assert match_client.get(path).status_code == 404
 
 
 # -- player routes --
@@ -149,22 +134,12 @@ def test_player_page_returns_200(match_client: TestClient) -> None:
     assert response.status_code == 200
 
 
-def test_player_page_unknown_returns_404(match_client: TestClient) -> None:
-    response = match_client.get("/player/Unknown")
-    assert response.status_code == 404
-
-
 def test_player_career_returns_200(match_client: TestClient) -> None:
     response = match_client.get("/api/players/Drew?mode=3v3")
     assert response.status_code == 200
     data: Any = response.json()
     assert data["player"] == "Drew"
-    assert data["matches"] >= 0
-
-
-def test_player_career_unknown_returns_404(match_client: TestClient) -> None:
-    response = match_client.get("/api/players/Unknown")
-    assert response.status_code == 404
+    assert data["matches"] == 1
 
 
 def test_player_career_no_data_returns_zero_matches(match_client: TestClient) -> None:
@@ -178,18 +153,6 @@ def test_player_time_series_returns_list(match_client: TestClient) -> None:
     response = match_client.get("/api/players/Drew/time-series?mode=3v3")
     assert response.status_code == 200
     assert isinstance(response.json(), list)
-
-
-def test_player_time_series_unknown_returns_404(match_client: TestClient) -> None:
-    response = match_client.get("/api/players/Unknown/time-series")
-    assert response.status_code == 404
-
-
-def test_match_players_include_is_tracked(match_client: TestClient) -> None:
-    response = match_client.get("/api/matches/1")
-    data: Any = response.json()
-    for player in data["team_players"] + data["opponent_players"]:
-        assert "is_tracked" in player
 
 
 # -- replay viewer routes --

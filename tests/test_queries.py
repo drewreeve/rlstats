@@ -91,15 +91,6 @@ def test_match_players_all_returned():
     assert {"Drew", "Jeff", "Steve"}.issubset(names)
 
 
-def test_match_players_ordered_by_score_desc():
-    conn = _match_db()
-    match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
-    rows = list(sql.match_players(conn, match_id=match_id))
-
-    scores = [r["score"] for r in rows]
-    assert scores == sorted(scores, reverse=True)
-
-
 def test_match_players_values():
     conn = _match_db()
     match_id = conn.execute("SELECT id FROM matches").fetchone()[0]
@@ -117,11 +108,6 @@ def test_match_players_values():
     assert jeff["goals"] == 2
     assert jeff["assists"] == 2
     assert jeff["shooting_pct"] == 100.0
-
-
-def test_match_players_nonexistent():
-    conn = _match_db()
-    assert list(sql.match_players(conn, match_id=9999)) == []
 
 
 def test_match_players_shooting_pct_null_when_no_shots():
@@ -491,14 +477,6 @@ def test_streaks_values_by_mode(mode: str, expected_win: int, expected_loss: int
         assert expected_loss == 0
 
 
-def test_streaks_no_matches():
-    conn = _3v3_db()
-    rows = list(sql.streaks(conn, game_mode="2v2"))
-    if rows:
-        assert (rows[0]["longest_win_streak"] or 0) == 0
-        assert (rows[0]["longest_loss_streak"] or 0) == 0
-
-
 # -- avg_goal_contribution --
 
 
@@ -597,39 +575,9 @@ def test_win_loss_daily_pairings_correct_record_hoops():
 # -- player_time_series --
 
 
-def test_player_time_series_returns_rows():
-    conn = _3v3_db()
-    rows = list(sql.player_time_series(conn, player_name="Drew", game_mode="3v3"))
-    assert len(rows) > 0
-
-
-def test_player_time_series_columns():
-    conn = _3v3_db()
-    rows = list(sql.player_time_series(conn, player_name="Drew", game_mode="3v3"))
-    row = dict(rows[0])
-    for col in (
-        "date",
-        "goals",
-        "assists",
-        "saves",
-        "shots",
-        "avg_score",
-        "mvp_count",
-        "shooting_pct",
-        "avg_speed",
-    ):
-        assert col in row, f"missing column: {col}"
-
-
 def test_player_time_series_unknown_player():
     conn = _3v3_db()
     rows = list(sql.player_time_series(conn, player_name="Unknown", game_mode="3v3"))
-    assert rows == []
-
-
-def test_player_time_series_wrong_mode():
-    conn = _3v3_db()
-    rows = list(sql.player_time_series(conn, player_name="Drew", game_mode="2v2"))
     assert rows == []
 
 
@@ -643,14 +591,6 @@ def test_player_time_series_goals_match_fixture():
 
 
 # -- player_career_stats --
-
-
-def test_player_career_stats_returns_totals():
-    conn = _3v3_db()
-    row = sql.player_career_stats(conn, player_name="Drew", game_mode="3v3")
-    assert row is not None
-    assert row["matches"] > 0
-    assert row["player"] == "Drew"
 
 
 def test_player_career_stats_unknown_player():

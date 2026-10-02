@@ -988,17 +988,27 @@ def test_real_replay_top_level_shape() -> None:
     assert len(rf.positions) == packed_buffer_bytes(len(rf.frame_times), len(rf.slots))
 
 
-def test_real_replay_has_one_ball_and_four_cars() -> None:
-    rf = _real()
+_TWO_V_TWO_FIXTURES = [
+    pytest.param("team_size_2.json", {"Drew", "Steve"}, 1, id="2v2"),
+    pytest.param("hoops.json", {"Drew", "Jeff"}, 0, id="hoops"),
+]
+
+
+@pytest.mark.parametrize("name", ["team_size_2.json", "hoops.json"])
+def test_two_v_two_replay_has_one_ball_and_four_cars(name: str) -> None:
+    rf = replay_frames_of(name)
     assert sum(s.kind == "ball" for s in rf.slots) == 1
     assert sum(s.kind == "car" for s in rf.slots) == 4
 
 
-def test_real_replay_identifies_the_tracked_pair() -> None:
-    rf = _real()
+@pytest.mark.parametrize("name, tracked_names, tracked_team", _TWO_V_TWO_FIXTURES)
+def test_two_v_two_replay_identifies_the_tracked_pair(
+    name: str, tracked_names: set[str], tracked_team: int
+) -> None:
+    rf = replay_frames_of(name)
     tracked = [s for s in rf.slots if s.is_tracked]
-    assert {s.name for s in tracked} == {"Drew", "Steve"}
-    assert {s.team for s in tracked} == {1}
+    assert {s.name for s in tracked} == tracked_names
+    assert {s.team for s in tracked} == {tracked_team}
     assert all(s.identity is not None for s in tracked)
 
 
@@ -1089,19 +1099,6 @@ def test_hoops_replay_walks_to_a_full_buffer() -> None:
     assert len(rf.frame_times) == 11184
     assert rf.frame_times == sorted(rf.frame_times)
     assert len(rf.positions) == packed_buffer_bytes(len(rf.frame_times), len(rf.slots))
-
-
-def test_hoops_replay_has_one_ball_and_four_cars() -> None:
-    rf = _hoops()
-    assert sum(s.kind == "ball" for s in rf.slots) == 1
-    assert sum(s.kind == "car" for s in rf.slots) == 4
-
-
-def test_hoops_replay_identifies_the_tracked_pair() -> None:
-    rf = _hoops()
-    tracked = [s for s in rf.slots if s.is_tracked]
-    assert {s.name for s in tracked} == {"Drew", "Jeff"}
-    assert all(s.identity is not None for s in tracked)
 
 
 def test_hoops_replay_carries_goals_and_countdowns() -> None:
