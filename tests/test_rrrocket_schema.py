@@ -32,6 +32,22 @@ _EXPECTED = {
     "TAGame.PRI_TA:MatchShots",
     "TAGame.PRI_TA:MatchSaves",
     "TAGame.PRI_TA:MatchAssists",
+    "TAGame.PRI_TA:BallTouches",
+    "TAGame.PRI_TA:CarTouches",
+    "TAGame.PRI_TA:Dodges",
+    "TAGame.PRI_TA:MatchAerialHits",
+    "TAGame.PRI_TA:MatchBicycleHits",
+    "TAGame.PRI_TA:MatchCenters",
+    "TAGame.PRI_TA:MatchClears",
+    "TAGame.PRI_TA:MatchCrossbarHits",
+    "TAGame.PRI_TA:MatchEpicSaves",
+    "TAGame.PRI_TA:MatchFirstTouches",
+    "TAGame.PRI_TA:MatchFlipResets",
+    "TAGame.PRI_TA:MatchHighFives",
+    "TAGame.PRI_TA:MatchJuggleHits",
+    "TAGame.PRI_TA:MatchLowFives",
+    "TAGame.PRI_TA:MatchPoolShots",
+    "TAGame.PRI_TA:PowerUpsUsed",
 }
 
 

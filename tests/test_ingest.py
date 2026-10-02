@@ -1,11 +1,12 @@
 import copy
+import dataclasses
 import sqlite3
 from typing import cast
 
 import pytest
 
 from file_outcome import Skipped, SkipReason
-from frame_analysis import MatchEvent, analyze_frames
+from frame_analysis import MatchEvent, PlayerRecordedStats, analyze_frames
 from ingest import (
     Analyzed,
     MatchPerspective,
@@ -245,6 +246,87 @@ def test_demos_received_stored_in_match_players():
     assert recv_counts["Softycooks"] == 1
     assert recv_counts["stm4000"] == 1
     assert recv_counts["BLM_SCAM"] == 0
+
+
+# -- Recorded stats (season 24+); see CONTEXT.md: Recorded Stat --
+
+RECORDED_STAT_COLUMNS = [f.name for f in dataclasses.fields(PlayerRecordedStats)]
+
+
+def _recorded_stats_by_player(fixture: str) -> dict[str, dict[str, int | None]]:
+    conn = ingest_fixture(fixture)
+    rows = conn.execute(f"""
+        SELECT p.name, {", ".join(f"mp.{c}" for c in RECORDED_STAT_COLUMNS)}
+        FROM match_players mp
+        JOIN players p ON p.id = mp.player_id
+    """).fetchall()
+    return {
+        row[0]: dict(zip(RECORDED_STAT_COLUMNS, row[1:], strict=True)) for row in rows
+    }
+
+
+def test_recorded_stats_stored_for_season_24_replay():
+    stats = _recorded_stats_by_player("season24.json")
+    assert stats["Drew"] == {
+        "ball_touches": 50,
+        "car_touches": 33,
+        "dodges": 64,
+        "aerial_hits": 8,
+        "bicycle_hits": 0,
+        "centers": 6,
+        "clears": 12,
+        "epic_saves": 2,
+        "first_touches": 2,
+        "flip_resets": 1,
+        "goal_frame_hits": 2,
+        "high_fives": 0,
+        "juggle_hits": 0,
+        "low_fives": 0,
+        "pool_shots": 0,
+        "power_ups_used": 0,
+    }
+    assert stats["Steve"]["flip_resets"] == 2
+    assert stats["Steve"]["aerial_hits"] == 12
+    assert stats["Jeff"]["goal_frame_hits"] == 2
+    assert stats["Shwemp"]["goal_frame_hits"] == 3
+    assert stats["Jordans Mustache"]["bicycle_hits"] == 1
+
+
+def test_recorded_stats_never_null_for_season_24_replay():
+    # Every counter is in this replay's object index, so a counter the game
+    # never sent (e.g. juggle_hits, here) is zero, not unknown.
+    stats = _recorded_stats_by_player("season24.json")
+    assert len(stats) == 6
+    for name, player_stats in stats.items():
+        assert None not in player_stats.values(), name
+        assert player_stats["juggle_hits"] == 0, name
+
+
+def test_recorded_stats_null_for_pre_season_24_replay():
+    stats = _recorded_stats_by_player("match.json")
+    assert stats
+    for name, player_stats in stats.items():
+        assert set(player_stats.values()) == {None}, name
+
+
+def test_demos_received_matches_games_times_demolished():
+    # The game's own MatchTimesDemolished counter isn't stored because it
+    # duplicates demos_received; these are that counter's final values in the
+    # fixture, pinning that the two agree.
+    times_demolished = {
+        "Drew": 2,
+        "Steve": 6,
+        "Jeff": 1,
+        "RUSSIANCREAM Ψ": 1,
+        "Shwemp": 0,
+        "Jordans Mustache": 0,
+    }
+    rows = ingest_fixture("season24.json").execute("""
+        SELECT p.name, mp.demos_received
+        FROM match_players mp
+        JOIN players p ON p.id = mp.player_id
+    """)
+    assert dict(rows.fetchall()) == times_demolished
 
 
 def test_ball_zones_tracking():

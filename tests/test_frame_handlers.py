@@ -8,7 +8,10 @@ The integration tests in test_ingest.py exercise the orchestrator and
 frame-loop ordering invariants; these tests cover handler logic.
 """
 
+import dataclasses
+
 from frame_analysis import (
+    RECORDED_STAT_COUNTERS,
     BallZonesHandler,
     BoostStatsHandler,
     DemolitionsHandler,
@@ -17,11 +20,13 @@ from frame_analysis import (
     FrameContext,
     MatchEventsHandler,
     MovementHandler,
+    PlayerRecordedStats,
     PlayerZonesHandler,
     PossessionHandler,
+    RecordedStatsHandler,
 )
 from player_identity import IdentityResolver, PlayerIdentity
-from rrrocket_schema import UpdatedActor
+from rrrocket_schema import NetObj, UpdatedActor
 
 HIT_TEAM_OID = 100
 RB_OID = 101
@@ -417,6 +422,131 @@ def test_demolitions_handler_skips_unknown_identities():
     fa = FrameAnalysis()
     h.finalize(ctx, fa)
     assert fa.per_player() == {}
+
+
+# -- RecordedStatsHandler --
+
+TOUCHES_OID = 120
+FLIP_RESETS_OID = 121
+
+
+def _counter(actor_id: int, object_id: int, value: int) -> UpdatedActor:
+    return {"actor_id": actor_id, "object_id": object_id, "attribute": {"Int": value}}
+
+
+def _recorded_handler() -> RecordedStatsHandler:
+    return RecordedStatsHandler(
+        {TOUCHES_OID: "ball_touches", FLIP_RESETS_OID: "flip_resets"}
+    )
+
+
+def test_recorded_stat_fields_match_counter_mapping():
+    assert set(RECORDED_STAT_COUNTERS) == {
+        f.name for f in dataclasses.fields(PlayerRecordedStats)
+    }
+
+
+def test_recorded_stats_handler_keeps_max_not_update_count():
+    # The game re-sends each counter periodically; repeats must not add up.
+    h = _recorded_handler()
+    ctx = FrameContext()
+    ctx.resolver.set_identity(5, PlayerIdentity("steam", "AAA"))
+    for value in (1, 2, 2, 2):
+        h.on_update(ctx, _counter(5, TOUCHES_OID, value))
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.per_player()[PlayerIdentity("steam", "AAA")].recorded.ball_touches == 2
+
+
+def test_recorded_stats_supported_never_sent_is_zero_unsupported_is_none():
+    h = _recorded_handler()
+    ctx = FrameContext()
+    ctx.resolver.set_identity(5, PlayerIdentity("steam", "AAA"))
+    h.on_update(ctx, _counter(5, TOUCHES_OID, 3))
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    recorded = fa.per_player()[PlayerIdentity("steam", "AAA")].recorded
+    assert recorded.ball_touches == 3
+    assert recorded.flip_resets == 0  # supported, never sent
+    assert recorded.dodges is None  # not in this replay's object index
+
+
+def test_recorded_stats_sums_across_pris_for_one_player():
+    # Leaving and rejoining gives the same identity a second PRI.
+    h = _recorded_handler()
+    ctx = FrameContext()
+    identity = PlayerIdentity("steam", "AAA")
+    ctx.resolver.set_identity(5, identity)
+    h.on_update(ctx, _counter(5, TOUCHES_OID, 4))
+    h.on_deleted_actor(ctx, 5)
+    ctx.resolver.remove_actor(5)
+
+    ctx.resolver.set_identity(6, identity)
+    h.on_update(ctx, _counter(6, TOUCHES_OID, 3))
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.per_player()[identity].recorded.ball_touches == 7
+
+
+def test_recorded_stats_recycled_pri_actor_id_does_not_carry_over():
+    h = _recorded_handler()
+    ctx = FrameContext()
+    ctx.resolver.set_identity(5, PlayerIdentity("steam", "AAA"))
+    h.on_update(ctx, _counter(5, TOUCHES_OID, 4))
+    h.on_deleted_actor(ctx, 5)
+    ctx.resolver.remove_actor(5)
+
+    ctx.resolver.set_identity(5, PlayerIdentity("steam", "BBB"))
+    h.on_update(ctx, _counter(5, TOUCHES_OID, 1))
+
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    pp = fa.per_player()
+    assert pp[PlayerIdentity("steam", "AAA")].recorded.ball_touches == 4
+    assert pp[PlayerIdentity("steam", "BBB")].recorded.ball_touches == 1
+
+
+def test_recorded_stats_handler_skips_unknown_identities():
+    h = _recorded_handler()
+    ctx = FrameContext()
+    h.on_update(ctx, _counter(9, TOUCHES_OID, 4))
+    fa = FrameAnalysis()
+    h.finalize(ctx, fa)
+    assert fa.per_player() == {}
+
+
+def test_recorded_stats_handler_not_created_for_pre_season_24_replay():
+    obj_ids: dict[str, int | None] = {
+        n.value: None for n in RECORDED_STAT_COUNTERS.values()
+    }
+    assert RecordedStatsHandler.create(obj_ids) is None
+
+
+def test_recorded_stats_handler_created_with_only_supported_counters():
+    obj_ids: dict[str, int | None] = {
+        n.value: None for n in RECORDED_STAT_COUNTERS.values()
+    }
+    obj_ids[NetObj.MATCH_CROSSBAR_HITS] = 42
+    h = RecordedStatsHandler.create(obj_ids)
+    assert h is not None
+    assert h.counters == {42: "goal_frame_hits"}
+
+
+def test_stats_for_player_no_handler_saw_gets_supported_zeros():
+    h = _recorded_handler()
+    fa = FrameAnalysis()
+    h.finalize(FrameContext(), fa)
+    recorded = fa.stats_for(PlayerIdentity("steam", "AAA")).recorded
+    assert recorded.ball_touches == 0
+    assert recorded.dodges is None
+
+
+def test_stats_for_without_frame_data_is_all_unknown():
+    stats = FrameAnalysis().stats_for(PlayerIdentity("steam", "AAA"))
+    assert stats.recorded == PlayerRecordedStats()
 
 
 # -- DemosReceivedHandler --

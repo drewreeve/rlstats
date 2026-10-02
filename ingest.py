@@ -271,6 +271,22 @@ class MatchPlayerRow(TypedDict):
     defensive_zone_seconds: float | None
     neutral_zone_seconds: float | None
     offensive_zone_seconds: float | None
+    ball_touches: int | None
+    car_touches: int | None
+    dodges: int | None
+    aerial_hits: int | None
+    bicycle_hits: int | None
+    centers: int | None
+    clears: int | None
+    epic_saves: int | None
+    first_touches: int | None
+    flip_resets: int | None
+    goal_frame_hits: int | None
+    high_fives: int | None
+    juggle_hits: int | None
+    low_fives: int | None
+    pool_shots: int | None
+    power_ups_used: int | None
 
 
 def _build_match_player_row(
@@ -281,6 +297,7 @@ def _build_match_player_row(
 ) -> MatchPlayerRow:
     mv = stats.movement
     pz = stats.zone_seconds
+    rec = stats.recorded
     return MatchPlayerRow(
         match_id=match_id,
         player_id=player_id,
@@ -302,6 +319,22 @@ def _build_match_player_row(
         defensive_zone_seconds=pz.defensive if pz else None,
         neutral_zone_seconds=pz.neutral if pz else None,
         offensive_zone_seconds=pz.offensive if pz else None,
+        ball_touches=rec.ball_touches,
+        car_touches=rec.car_touches,
+        dodges=rec.dodges,
+        aerial_hits=rec.aerial_hits,
+        bicycle_hits=rec.bicycle_hits,
+        centers=rec.centers,
+        clears=rec.clears,
+        epic_saves=rec.epic_saves,
+        first_touches=rec.first_touches,
+        flip_resets=rec.flip_resets,
+        goal_frame_hits=rec.goal_frame_hits,
+        high_fives=rec.high_fives,
+        juggle_hits=rec.juggle_hits,
+        low_fives=rec.low_fives,
+        pool_shots=rec.pool_shots,
+        power_ups_used=rec.power_ups_used,
     )
 
 
@@ -370,14 +403,13 @@ def _insert_match_players(
     match_id: int,
     player_stats: dict[PlayerIdentity, PlayerStatEntry],
     player_id_map: dict[PlayerIdentity, int],
-    per_player: dict[PlayerIdentity, PlayerMatchStats],
+    frame_analysis: FrameAnalysis,
 ):
-    _empty = PlayerMatchStats()
     for identity, player in player_stats.items():
         player_id = player_id_map.get(identity)
         if player_id is None:
             continue
-        stats = per_player.get(identity, _empty)
+        stats = frame_analysis.stats_for(identity)
         row = _build_match_player_row(match_id, player_id, player, stats)
         db.upsert(conn, "match_players", ["match_id", "player_id"], row)
 
@@ -547,7 +579,7 @@ def _write_match(conn: sqlite3.Connection, analysis: ReplayAnalysis) -> None:
         match_id,
         context.player_stats,
         player_id_map,
-        analysis.frame_analysis.per_player(),
+        analysis.frame_analysis,
     )
 
     conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))

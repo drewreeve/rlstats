@@ -56,6 +56,23 @@ class NetObj(StrEnum):
     MATCH_SHOTS = "TAGame.PRI_TA:MatchShots"
     MATCH_SAVES = "TAGame.PRI_TA:MatchSaves"
     MATCH_ASSISTS = "TAGame.PRI_TA:MatchAssists"
+    # Recorded stats (season 24+); see CONTEXT.md: Recorded Stat.
+    BALL_TOUCHES = "TAGame.PRI_TA:BallTouches"
+    CAR_TOUCHES = "TAGame.PRI_TA:CarTouches"
+    DODGES = "TAGame.PRI_TA:Dodges"
+    MATCH_AERIAL_HITS = "TAGame.PRI_TA:MatchAerialHits"
+    MATCH_BICYCLE_HITS = "TAGame.PRI_TA:MatchBicycleHits"
+    MATCH_CENTERS = "TAGame.PRI_TA:MatchCenters"
+    MATCH_CLEARS = "TAGame.PRI_TA:MatchClears"
+    MATCH_CROSSBAR_HITS = "TAGame.PRI_TA:MatchCrossbarHits"
+    MATCH_EPIC_SAVES = "TAGame.PRI_TA:MatchEpicSaves"
+    MATCH_FIRST_TOUCHES = "TAGame.PRI_TA:MatchFirstTouches"
+    MATCH_FLIP_RESETS = "TAGame.PRI_TA:MatchFlipResets"
+    MATCH_HIGH_FIVES = "TAGame.PRI_TA:MatchHighFives"
+    MATCH_JUGGLE_HITS = "TAGame.PRI_TA:MatchJuggleHits"
+    MATCH_LOW_FIVES = "TAGame.PRI_TA:MatchLowFives"
+    MATCH_POOL_SHOTS = "TAGame.PRI_TA:MatchPoolShots"
+    POWER_UPS_USED = "TAGame.PRI_TA:PowerUpsUsed"
 
 
 class PlayerStatEntry(TypedDict, total=False):

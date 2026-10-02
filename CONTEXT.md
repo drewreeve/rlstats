@@ -41,6 +41,22 @@ Zone time is tracked both for the ball (on `matches`) and per-player (on `match_
 
 **Player match stats** are the per-player metrics computed from replay frame analysis: demolitions dealt, demolitions received, movement data (boost per minute, average speed, supersonic percentage, pad pickups), and zone time. They complement the scoreboard stats sourced from the replay's properties blob (goals, assists, saves, shots, score) and are assembled by `FrameAnalysis.per_player()` keyed by player identity.
 
+## Recorded Stat
+
+A **recorded stat** is a per-player counter that the game itself keeps and writes into the replay (ball touches, aerial hits, clears, flip resets and so on), as opposed to a **player match stat**, which we compute ourselves from frame analysis. We only read a recorded stat's final value; the game decides what counts. If a player has more than one counter in a match (e.g. after leaving and rejoining), their value is the sum of each counter's final value.
+
+A **goal frame hit** is the ball hitting the crossbar *or* a post. The game calls this counter "crossbar hits", but it counts post hits too, so we use the name that says what it measures.
+
+Two of the game's counters are deliberately not kept as recorded stats, because they duplicate player match stats:
+
+- **Times demolished** always equals our demos received.
+- **Boost pickups** is our small plus large pad count, except that the game also counts pickups during the dead time after a goal, and it has no small/large split. Our pad counts only cover live play.
+
+Recorded stats first appear in season 24 replays, and each one is either *unknown* or a count:
+
+- **Unknown** — the replay predates that stat, so the game never recorded it. This is not the same as zero, and it must not drag down averages.
+- **Zero** — the replay supports the stat but the player never did it. The game only sends a counter once it goes above zero, so "supported but never sent" means zero.
+
 ## Match Perspective
 
 A **match perspective** is the tracked-team-relative view of a match outcome: which side the tracked players were on (`team`), their score (`team_score`) vs. the opponent's (`opponent_score`), the win/loss `result`, and the tracked-side `mvp_identity` (the tracked player with the highest score). It is computed once per replay by `resolve_perspective()` in `ingest.py`, wrapped in the **Replay Context** (below), and carried on `ReplayAnalysis.context.perspective`. All four pieces of match-outcome knowledge — team assignment, score reorientation, result derivation, and MVP selection — are quarantined inside that function; callers receive a fully typed `MatchPerspective` dataclass and do not need to know how any of them are computed.

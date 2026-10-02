@@ -83,6 +83,53 @@ class PlayerZoneSeconds:
 
 
 @dataclass(frozen=True)
+class PlayerRecordedStats:
+    """Per-player counters the game keeps itself. See CONTEXT.md: Recorded Stat.
+
+    ``None`` means the replay predates that stat (unknown), not zero.
+    """
+
+    ball_touches: int | None = None
+    car_touches: int | None = None
+    dodges: int | None = None
+    aerial_hits: int | None = None
+    bicycle_hits: int | None = None
+    centers: int | None = None
+    clears: int | None = None
+    epic_saves: int | None = None
+    first_touches: int | None = None
+    flip_resets: int | None = None
+    goal_frame_hits: int | None = None
+    high_fives: int | None = None
+    juggle_hits: int | None = None
+    low_fives: int | None = None
+    pool_shots: int | None = None
+    power_ups_used: int | None = None
+
+
+# Each PlayerRecordedStats field -> the PRI counter the game records it in.
+RECORDED_STAT_COUNTERS: dict[str, NetObj] = {
+    "ball_touches": NetObj.BALL_TOUCHES,
+    "car_touches": NetObj.CAR_TOUCHES,
+    "dodges": NetObj.DODGES,
+    "aerial_hits": NetObj.MATCH_AERIAL_HITS,
+    "bicycle_hits": NetObj.MATCH_BICYCLE_HITS,
+    "centers": NetObj.MATCH_CENTERS,
+    "clears": NetObj.MATCH_CLEARS,
+    "epic_saves": NetObj.MATCH_EPIC_SAVES,
+    "first_touches": NetObj.MATCH_FIRST_TOUCHES,
+    "flip_resets": NetObj.MATCH_FLIP_RESETS,
+    # The game calls it "crossbar hits" but counts post hits too.
+    "goal_frame_hits": NetObj.MATCH_CROSSBAR_HITS,
+    "high_fives": NetObj.MATCH_HIGH_FIVES,
+    "juggle_hits": NetObj.MATCH_JUGGLE_HITS,
+    "low_fives": NetObj.MATCH_LOW_FIVES,
+    "pool_shots": NetObj.MATCH_POOL_SHOTS,
+    "power_ups_used": NetObj.POWER_UPS_USED,
+}
+
+
+@dataclass(frozen=True)
 class PlayerMatchStats:
     """Per-player metrics computed from frame analysis. See CONTEXT.md: Player Match Stats."""
 
@@ -90,6 +137,7 @@ class PlayerMatchStats:
     demos_received: int = 0
     movement: PlayerMovementStats | None = None
     zone_seconds: PlayerZoneSeconds | None = None
+    recorded: PlayerRecordedStats = PlayerRecordedStats()
 
 
 @dataclass
@@ -116,27 +164,53 @@ class FrameAnalysis:
     player_zone_seconds: dict[tuple[str, str], PlayerZoneSeconds] = field(
         default_factory=dict[tuple[str, str], PlayerZoneSeconds]
     )
+    # RECORDED_STAT_COUNTERS keys whose counter this replay supports
+    recorded_stats_supported: frozenset[str] = frozenset()
+    recorded_stats: dict[tuple[str, str], dict[str, int]] = field(
+        default_factory=dict[tuple[str, str], dict[str, int]]
+    )
+
+    def _recorded_for(self, identity: tuple[str, str]) -> PlayerRecordedStats:
+        # A supported counter the game never sent for this player is zero; an
+        # unsupported one is unknown (None).
+        counts = self.recorded_stats.get(identity, {})
+        return PlayerRecordedStats(
+            **{
+                stat: counts.get(stat, 0)
+                if stat in self.recorded_stats_supported
+                else None
+                for stat in RECORDED_STAT_COUNTERS
+            }
+        )
+
+    def stats_for(self, identity: tuple[str, str]) -> PlayerMatchStats:
+        """One player's match stats, including a player no handler saw (who
+        still gets zero for every recorded stat this replay supports).
+
+        This and per_player() are the intended interface for external callers
+        (e.g. ingest.py). The raw per-player dicts above are populated by
+        handlers and should not be accessed outside this module.
+        """
+        return PlayerMatchStats(
+            demos=self.demolitions.get(identity, 0),
+            demos_received=self.demos_received.get(identity, 0),
+            movement=self.movement_stats.get(identity),
+            zone_seconds=self.player_zone_seconds.get(identity),
+            recorded=self._recorded_for(identity),
+        )
 
     def per_player(self) -> dict[PlayerIdentity, PlayerMatchStats]:
-        """Assemble per-player match stats keyed by player identity.
-
-        This is the intended interface for external callers (e.g. ingest.py).
-        The raw per-player dicts above are populated by handlers and should not
-        be accessed outside this module.
-        """
+        """Assemble match stats for every player some handler saw, keyed by
+        player identity."""
         identities = (
             self.demolitions.keys()
             | self.demos_received.keys()
             | self.movement_stats.keys()
             | self.player_zone_seconds.keys()
+            | self.recorded_stats.keys()
         )
         return {
-            PlayerIdentity(*identity): PlayerMatchStats(
-                demos=self.demolitions.get(identity, 0),
-                demos_received=self.demos_received.get(identity, 0),
-                movement=self.movement_stats.get(identity),
-                zone_seconds=self.player_zone_seconds.get(identity),
-            )
+            PlayerIdentity(*identity): self.stats_for(identity)
             for identity in identities
         }
 
@@ -444,6 +518,61 @@ class DemolitionsHandler(FrameHandler):
             identity = ctx.resolver.resolve_pri(aid)
             if identity:
                 result.demolitions[identity] = count
+
+
+class RecordedStatsHandler(FrameHandler):
+    """Reads the counters the game keeps on each PRI. See CONTEXT.md: Recorded Stat.
+
+    A counter is supported when the replay's object index lists it, even if it
+    is never sent: the game only sends a counter once it goes above zero. The
+    game also re-sends each value periodically, so we keep the max per PRI
+    rather than counting updates. A player with several PRIs (leaving and
+    rejoining) gets the sum of each PRI's final value.
+    """
+
+    @classmethod
+    def create(cls, obj_ids: dict[str, int | None]) -> "RecordedStatsHandler | None":
+        counters = {
+            obj_id: stat
+            for stat, net_obj in RECORDED_STAT_COUNTERS.items()
+            if (obj_id := obj_ids.get(net_obj)) is not None
+        }
+        if not counters:
+            return None
+        return cls(counters)
+
+    def __init__(self, counters: dict[int, str]) -> None:
+        self.counters = counters
+        self.update_obj_ids = frozenset(counters)
+        self.pri_counts: dict[int, dict[str, int]] = {}
+        self.identity_counts: dict[tuple[str, str], dict[str, int]] = {}
+
+    def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
+        val = actor.get("attribute", {}).get("Int")
+        stat = self.counters.get(actor.get("object_id", -1))
+        if val is None or stat is None:
+            return
+        counts = self.pri_counts.setdefault(actor["actor_id"], {})
+        counts[stat] = max(counts.get(stat, 0), val)
+
+    def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
+        counts = self.pri_counts.pop(aid, None)
+        if counts:
+            self._flush(ctx, aid, counts)
+
+    def _flush(self, ctx: FrameContext, pri_id: int, counts: dict[str, int]) -> None:
+        identity = ctx.resolver.resolve_pri(pri_id)
+        if identity is None:
+            return
+        totals = self.identity_counts.setdefault(identity, {})
+        for stat, val in counts.items():
+            totals[stat] = totals.get(stat, 0) + val
+
+    def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
+        for pri_id, counts in self.pri_counts.items():
+            self._flush(ctx, pri_id, counts)
+        result.recorded_stats_supported = frozenset(self.counters.values())
+        result.recorded_stats = self.identity_counts
 
 
 class DemosReceivedHandler(FrameHandler):
@@ -1023,6 +1152,7 @@ def analyze_frames(
             BallZonesHandler.create(obj_ids, tracked_team),
             PlayerZonesHandler.create(obj_ids, tracked_team),
             DemolitionsHandler.create(obj_ids),
+            RecordedStatsHandler.create(obj_ids),
             BoostStatsHandler.create(obj_ids, tracked_team, big_pads),
             MovementHandler.create(obj_ids, duration, big_pads),
             DemosReceivedHandler.create(obj_ids),
