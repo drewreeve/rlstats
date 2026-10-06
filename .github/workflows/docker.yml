@@ -1,7 +1,11 @@
 name: Docker
 
+# Publish only after the Tests workflow passes on main, so a red commit
+# never becomes :latest.
 on:
-  push:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
     branches: [main]
 
 env:
@@ -9,12 +13,15 @@ env:
 
 jobs:
   build-and-push:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: docker/login-action@v3
         with:
@@ -28,4 +35,4 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:${{ github.event.workflow_run.head_sha }}
