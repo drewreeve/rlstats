@@ -23,6 +23,11 @@ jobs:
 
       - run: uv sync
 
+      # Same hooks as the local pre-commit (ruff + pyright), so commits that
+      # skipped the hook can't land unchecked.
+      - name: Lint and type check
+        run: mise exec -- pre-commit run --all-files --show-diff-on-failure
+
       - run: mise exec -- uv run pytest
 
       # -- Front-end (replay viewer) tests --
