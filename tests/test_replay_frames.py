@@ -20,12 +20,12 @@ from replay_frames import (
     FLOATS_PER_POSE,
     GoalMarker,
     ReplayFrames,
-    _dead_periods,  # type: ignore[reportPrivateUsage]
-    _scan_countdowns,  # type: ignore[reportPrivateUsage]
-    _scan_goals,  # type: ignore[reportPrivateUsage]
-    _slerp,  # type: ignore[reportPrivateUsage]
-    _walk,  # type: ignore[reportPrivateUsage]
-    _WalkObjectIds,  # type: ignore[reportPrivateUsage]
+    _dead_periods,  # pyright: ignore[reportPrivateUsage]
+    _scan_countdowns,  # pyright: ignore[reportPrivateUsage]
+    _scan_goals,  # pyright: ignore[reportPrivateUsage]
+    _slerp,  # pyright: ignore[reportPrivateUsage]
+    _walk,  # pyright: ignore[reportPrivateUsage]
+    _WalkObjectIds,  # pyright: ignore[reportPrivateUsage]
     boost_offset,
     extract_replay_frames,
     packed_buffer_bytes,
@@ -135,15 +135,14 @@ def _boost_update(comp_aid: int, amount: int) -> dict[str, object]:
     }
 
 
-def _extract(rf_replay: ParsedReplay, **kw: object) -> ReplayFrames:
-    base: dict[str, object] = {
-        "tracked_team": None,
-        "tracked_identities": set(),
-        "player_names": {},
-        "game_mode": None,
-    }
-    base.update(kw)
-    return extract_replay_frames(rf_replay, **base)  # type: ignore[arg-type]
+def _extract(rf_replay: ParsedReplay) -> ReplayFrames:
+    return extract_replay_frames(
+        rf_replay,
+        tracked_team=None,
+        tracked_identities=set(),
+        player_names={},
+        game_mode=None,
+    )
 
 
 # --- packed-buffer geometry ---

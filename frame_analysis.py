@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field, fields
 from itertools import pairwise
+from typing import override
 
 from player_identity import IdentityResolver, PlayerIdentity, from_network_frame
 from rrrocket_schema import FrameData, NetObj, ParsedReplay, UpdatedActor
@@ -335,11 +336,13 @@ class PossessionHandler(FrameHandler):
         self.tracked_team = tracked_team
         self.touches: list[tuple[float, int]] = []
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         team_num = actor.get("attribute", {}).get("Byte")
         if team_num is not None:
             self.touches.append((ctx.frame_time, team_num))
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if not self.touches:
             return
@@ -405,6 +408,7 @@ class BallZonesHandler(FrameHandler):
         self.tracked_team = tracked_team
         self.samples: list[tuple[float, float]] = []
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         if not ctx.is_playing:
             return
@@ -414,6 +418,7 @@ class BallZonesHandler(FrameHandler):
         if loc and "y" in loc:
             self.samples.append((ctx.frame_time, loc["y"]))
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if len(self.samples) < 2:
             return
@@ -461,6 +466,7 @@ class PlayerZonesHandler(FrameHandler):
         if identity:
             self._accumulate(identity, samples)
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         if not ctx.is_playing:
             return
@@ -471,9 +477,11 @@ class PlayerZonesHandler(FrameHandler):
         if loc and "y" in loc:
             self.car_samples.setdefault(aid, []).append((ctx.frame_time, loc["y"]))
 
+    @override
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         self._flush_car(ctx, aid)
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         for car_id in list(self.car_samples):
             self._flush_car(ctx, car_id)
@@ -501,11 +509,13 @@ class DemolitionsHandler(FrameHandler):
         self.update_obj_ids = frozenset({demo_obj_id})
         self.actor_demos: dict[int, int] = {}
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         val = actor.get("attribute", {}).get("Int", 0)
         aid = actor["actor_id"]
         self.actor_demos[aid] = max(self.actor_demos.get(aid, 0), val)
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         for aid, count in self.actor_demos.items():
             identity = ctx.resolver.resolve_pri(aid)
@@ -540,6 +550,7 @@ class RecordedStatsHandler(FrameHandler):
         self.pri_counts: dict[int, dict[str, int]] = {}
         self.identity_counts: dict[tuple[str, str], dict[str, int]] = {}
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         val = actor.get("attribute", {}).get("Int")
         stat = self.counters.get(actor.get("object_id", -1))
@@ -548,6 +559,7 @@ class RecordedStatsHandler(FrameHandler):
         counts = self.pri_counts.setdefault(actor["actor_id"], {})
         counts[stat] = max(counts.get(stat, 0), val)
 
+    @override
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         counts = self.pri_counts.pop(aid, None)
         if counts:
@@ -561,6 +573,7 @@ class RecordedStatsHandler(FrameHandler):
         for stat, val in counts.items():
             totals[stat] = totals.get(stat, 0) + val
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         for pri_id, counts in self.pri_counts.items():
             self._flush(ctx, pri_id, counts)
@@ -583,9 +596,11 @@ class DemosReceivedHandler(FrameHandler):
         self.demos_received: dict[tuple[str, str], int] = {}
         self.demolish_last_active: dict[int, bool] = {}
 
+    @override
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         self.demolish_last_active.pop(aid, None)
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         demolish = actor.get("attribute", {}).get("DemolishExtended", {})
         victim = demolish.get("victim", {})
@@ -609,6 +624,7 @@ class DemosReceivedHandler(FrameHandler):
                 self.demos_received.get(victim_identity, 0) + 1
             )
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         result.demos_received = self.demos_received
 
@@ -643,9 +659,11 @@ class BoostStatsHandler(FrameHandler):
         self.collected = {0: 0, 1: 0}
         self.stolen = {0: 0, 1: 0}
 
+    @override
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         self.last_pickup_state.pop(aid, None)
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         if not ctx.is_playing:
             return
@@ -664,6 +682,7 @@ class BoostStatsHandler(FrameHandler):
         if is_stolen:
             self.stolen[team] += boost_value
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if self.collected[0] == 0 and self.collected[1] == 0:
             return
@@ -734,6 +753,7 @@ class MovementHandler(FrameHandler):
         if identity:
             self.identity_speeds.setdefault(identity, []).extend(samples)
 
+    @override
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         self.comp_boost.pop(aid, None)
         self.last_pickup_state.pop(aid, None)
@@ -744,6 +764,7 @@ class MovementHandler(FrameHandler):
         if samples:
             self._flush_speed_samples(ctx, aid, samples)
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         oid = actor.get("object_id")
         aid = actor["actor_id"]
@@ -808,6 +829,7 @@ class MovementHandler(FrameHandler):
                 if is_stolen:
                     pads["stolen_small_pads"] += 1
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         # Deleted-actor data already accumulated; handle remaining live actors
         for comp_id, consumed in self.comp_boost_consumed.items():
@@ -919,6 +941,7 @@ class MatchEventsHandler(FrameHandler):
         self.actor_counters: dict[int, dict[str, int]] = {}
         self.raw_events: list[tuple[str, float, int]] = []
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         obj_id = actor.get("object_id")
         aid = actor["actor_id"]
@@ -942,6 +965,7 @@ class MatchEventsHandler(FrameHandler):
                     self.raw_events.append((event_type, ctx.frame_time, aid))
             self.actor_counters[aid][event_type] = val
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         if not self.clock_updates or not self.raw_events:
             return

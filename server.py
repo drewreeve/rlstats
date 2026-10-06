@@ -164,7 +164,7 @@ def create_app(
     # middleware outermost. Session must wrap CSRF so request.session is available.
     secret_key = settings.secret_key or secrets.token_hex(32)
     app.add_middleware(
-        SessionMiddleware,  # type: ignore[arg-type]
+        SessionMiddleware,
         secret_key=secret_key,
         https_only=True,
     )

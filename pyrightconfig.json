@@ -5,5 +5,6 @@
   "reportUnusedFunction": "none",
   "pythonVersion": "3.14",
   "venvPath": ".",
-  "venv": ".venv"
+  "venv": ".venv",
+  "reportImplicitOverride": "error"
 }

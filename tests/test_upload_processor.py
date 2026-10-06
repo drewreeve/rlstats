@@ -55,7 +55,7 @@ def test_upload_processor_debounce(tmp_path: Path):
             original_flush()
             done.set()
 
-        proc.flush = patched_flush  # type: ignore[method-assign]
+        proc.flush = patched_flush
         # Re-enqueue to trigger our patched flush
         proc.enqueue(tmp_path / "match5.replay")
         done.wait(timeout=2.0)
@@ -77,7 +77,7 @@ def test_upload_processor_flush_end_to_end(tmp_path: Path):
     )
 
     proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir)
-    proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+    proc._schedule_flush = lambda: None  # pyright: ignore[reportPrivateUsage]
     proc.enqueue(replay_path)
 
     proc.flush()
@@ -117,7 +117,7 @@ def test_upload_processor_status_transitions(tmp_path: Path):
         patch("upload_processor.write_parsed_batch", side_effect=fake_write_batch),
     ):
         proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path)
-        proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+        proc._schedule_flush = lambda: None  # pyright: ignore[reportPrivateUsage]
         proc.enqueue(replay_path)
         assert proc.file_status(replay_path.name) == "queued"
         assert proc.batch_progress(replay_path.name) is None
@@ -143,7 +143,7 @@ def test_upload_processor_status_error_path(tmp_path: Path):
     )
 
     proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir)
-    proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+    proc._schedule_flush = lambda: None  # pyright: ignore[reportPrivateUsage]
     proc.enqueue(replay_path)
 
     with patch("process.write_match", side_effect=RuntimeError("ingest broke")):
@@ -192,7 +192,7 @@ def test_upload_processor_overlapping_flushes_do_not_corrupt_batch_progress(
         patch("upload_processor.write_parsed_batch", side_effect=fake_write_batch),
     ):
         proc = UploadProcessor(db_path, TRACKED_PLAYERS, tmp_path)
-        proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+        proc._schedule_flush = lambda: None  # pyright: ignore[reportPrivateUsage]
 
         proc.enqueue(tmp_path / "a.replay")
 
@@ -232,7 +232,7 @@ def test_upload_processor_error_entries_expire(tmp_path: Path):
     )
 
     proc = UploadProcessor(db_path, TRACKED_PLAYERS, replay_dir, error_retention=0.05)
-    proc._schedule_flush = lambda: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+    proc._schedule_flush = lambda: None  # pyright: ignore[reportPrivateUsage]
     proc.enqueue(replay_path)
 
     with patch("process.write_match", side_effect=RuntimeError("ingest broke")):

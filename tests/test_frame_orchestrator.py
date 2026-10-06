@@ -5,14 +5,14 @@ objects list required. The goal is to pin the three-phase ordering invariant
 so that a refactor of _process_frame fails here before it fails in fixtures.
 """
 
-from typing import Any, cast
+from typing import Any, cast, override
 
 from frame_analysis import (
     FrameAnalysis,
     FrameContext,
     FrameHandler,
-    _FrameLoopObjectIds,  # type: ignore[reportPrivateUsage]
-    _process_frame,  # type: ignore[reportPrivateUsage]
+    _FrameLoopObjectIds,  # pyright: ignore[reportPrivateUsage]
+    _process_frame,  # pyright: ignore[reportPrivateUsage]
 )
 from player_identity import PlayerIdentity
 from rrrocket_schema import FrameData, UpdatedActor
@@ -36,12 +36,15 @@ class _SpyHandler(FrameHandler):
         self.update_obj_ids = frozenset({watch_obj_id}) if watch_obj_id else frozenset()
         self.calls: list[Any] = []
 
+    @override
     def on_update(self, ctx: FrameContext, actor: UpdatedActor) -> None:
         self.calls.append(("on_update", actor["actor_id"]))
 
+    @override
     def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
         self.calls.append(("on_deleted_actor", aid, ctx.resolver.resolve_car(aid)))
 
+    @override
     def finalize(self, ctx: FrameContext, result: FrameAnalysis) -> None:
         pass
 
@@ -78,6 +81,7 @@ def test_two_pass_deletion_second_actor_sees_first_in_same_frame() -> None:
     car_present_when_boost_comp_notified: list[bool] = []
 
     class BoostCompSpy(_SpyHandler):
+        @override
         def on_deleted_actor(self, ctx: FrameContext, aid: int) -> None:
             if aid == 11:
                 car_present_when_boost_comp_notified.append(10 in ctx.car_actors)

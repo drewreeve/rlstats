@@ -139,7 +139,7 @@ def test_write_parsed_batch_isolates_failure_from_other_files_in_batch(
     """A failing file's rolled-back savepoint must not affect other files in the
     same batch, before or after it, once they share one connection/transaction."""
     from ingest import (
-        _insert_match_players as real_insert,  # type: ignore[reportPrivateUsage]
+        _insert_match_players as real_insert,  # pyright: ignore[reportPrivateUsage]
     )
 
     conn = _make_conn()
