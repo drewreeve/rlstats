@@ -15,11 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v5
 
       - run: mise run fix-rrrocket
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.3.2
 
       - run: uv sync
 
