@@ -24,6 +24,12 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${PORT}`,
     navigationTimeout: 45_000,
     trace: "on-first-retry",
+    // Locally, use the installed Chrome with its sandbox on: Playwright's pinned
+    // Chromium lags behind security fixes and launches with --no-sandbox by
+    // default. CI keeps the bundled build, because the sandbox can fail to launch
+    // on stock Ubuntu runners.
+    channel: process.env.CI ? undefined : "chrome",
+    launchOptions: { chromiumSandbox: !process.env.CI },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {

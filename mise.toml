@@ -17,8 +17,9 @@ chmod +x "$(mise where github:nickbabcock/rrrocket)/rrrocket"
 
 # Front-end tests for the replay viewer. `test-js` exercises the pure playback
 # core (static/replay-core.js) with Node's built-in runner — no browser, no deps.
-# `test-e2e` drives the real page in headless Chromium and needs `npm ci` +
-# `npx playwright install chromium` first.
+# `test-e2e` drives the real page headlessly and needs `npm ci` first. Locally it
+# uses the installed Google Chrome; with CI set it uses Playwright's bundled
+# Chromium, which needs `npx playwright install chromium`.
 [tasks.test-js]
 run = "node --test 'tests/js/**/*.test.js'"
 
